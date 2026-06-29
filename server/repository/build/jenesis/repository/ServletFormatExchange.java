@@ -10,18 +10,18 @@ import java.io.OutputStream;
 
 /**
  * Adapts a servlet request and response to the framework-neutral {@link FormatExchange} a {@link
- * build.jenesis.repository.format.RepositoryFormat} speaks, so the Spring MVC controller dispatches to the format
- * plugins through the same contract every dispatcher uses. The single-tenant free server passes the full request
- * path through unchanged (no repository-prefix stripping), so a format sees {@code /maven/...}, {@code /v2/...}
- * exactly as the request arrived.
+ * build.jenesis.repository.format.RepositoryFormat} speaks, so a Spring MVC controller dispatches to the format
+ * plugins through the same contract every dispatcher uses. The path a format sees is supplied to the constructor and
+ * returned from {@link #path()} unchanged, so a caller passes either the full request path or one with a routing
+ * prefix already stripped.
  */
-final class ServletFormatExchange implements FormatExchange {
+public final class ServletFormatExchange implements FormatExchange {
 
     private final HttpServletRequest request;
     private final HttpServletResponse response;
     private final String path;
 
-    ServletFormatExchange(HttpServletRequest request, HttpServletResponse response, String path) {
+    public ServletFormatExchange(HttpServletRequest request, HttpServletResponse response, String path) {
         this.request = request;
         this.response = response;
         this.path = path;
