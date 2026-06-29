@@ -1,0 +1,73 @@
+package build.jenesis.repository;
+
+import build.jenesis.repository.format.FormatExchange;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+
+/**
+ * Adapts a servlet request and response to the framework-neutral {@link FormatExchange} a {@link
+ * build.jenesis.repository.format.RepositoryFormat} speaks, so the Spring MVC controller dispatches to the very
+ * format plugins the headless {@link RepositoryServer} does. The single-tenant free server passes the full request
+ * path through unchanged (no repository-prefix stripping), so a format sees {@code /maven/...} exactly as it does
+ * off the JDK server's {@code exchange.getRequestURI().getPath()}.
+ */
+final class ServletFormatExchange implements FormatExchange {
+
+    private final HttpServletRequest request;
+    private final HttpServletResponse response;
+    private final String path;
+
+    ServletFormatExchange(HttpServletRequest request, HttpServletResponse response, String path) {
+        this.request = request;
+        this.response = response;
+        this.path = path;
+    }
+
+    @Override
+    public String method() {
+        return request.getMethod();
+    }
+
+    @Override
+    public String path() {
+        return path;
+    }
+
+    @Override
+    public String requestUri() {
+        return request.getRequestURI();
+    }
+
+    @Override
+    public String queryParameter(String name) {
+        return request.getParameter(name);
+    }
+
+    @Override
+    public String requestHeader(String name) {
+        return request.getHeader(name);
+    }
+
+    @Override
+    public InputStream requestStream() throws IOException {
+        return request.getInputStream();
+    }
+
+    @Override
+    public void setResponseHeader(String name, String value) {
+        response.setHeader(name, value);
+    }
+
+    @Override
+    public OutputStream respond(int status, long contentLength) throws IOException {
+        response.setStatus(status);
+        if (contentLength > 0) {
+            response.setContentLengthLong(contentLength);
+        }
+        return response.getOutputStream();
+    }
+}
