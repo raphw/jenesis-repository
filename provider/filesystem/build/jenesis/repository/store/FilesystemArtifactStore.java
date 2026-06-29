@@ -78,7 +78,11 @@ public final class FilesystemArtifactStore implements ArtifactStore {
             return List.of();
         }
         try (Stream<Path> entries = Files.list(dir)) {
-            return entries.map(path -> path.getFileName().toString()).sorted().toList();
+            return entries.map(path -> path.getFileName().toString())
+                    // Skip an atomic write's in-flight .upload*.tmp file, a sibling here until it is renamed
+                    // into place, so a concurrent listing never returns it as if it were a stored entry.
+                    .filter(name -> !(name.startsWith(".upload") && name.endsWith(".tmp")))
+                    .sorted().toList();
         } catch (IOException _) {
             return List.of();
         }
