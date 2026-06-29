@@ -1,10 +1,8 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.PullThroughCache;
-import build.jenesis.repository.RepositoryServer;
+import build.jenesis.repository.RepositoryApplication;
 import build.jenesis.repository.format.ProxyFormat;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -45,25 +43,22 @@ public class MavenProxyTest {
     @TempDir
     static Path root;
 
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
     private AtomicInteger fetches;
 
     @BeforeAll
-    public void start() throws IOException {
+    public void start() {
         assumeTrue(reachable("repo1.maven.org", 443), "Maven Central must be reachable");
-        ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
         ProxyFormat.Fetcher upstream = PullThroughCache.http();
         fetches = new AtomicInteger();
         ProxyFormat.Fetcher counting = (url, requestHeaders) -> {
             fetches.incrementAndGet();
             return upstream.fetch(url, requestHeaders);
         };
-        running = new RepositoryServer(store)
-                .withProxy(Map.of("maven", URI.create(CENTRAL)), counting)
-                .start(0);
+        running = RepositoryApplication.start(0, Map.of("maven", URI.create(CENTRAL)), counting);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
     }
@@ -73,6 +68,7 @@ public class MavenProxyTest {
         if (running != null) {
             running.close();
         }
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

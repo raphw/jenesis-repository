@@ -1,18 +1,22 @@
 package build.jenesis.repository;
 
+import build.jenesis.repository.format.ProxyFormat;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
 
+import java.net.URI;
+import java.util.Map;
+
 /**
- * The Spring Boot entry point for the dual-layout repository, an additive alternative to the headless
- * {@link RepositoryServer} that runs on the JDK HTTP server. The framework-neutral logic - the dual layout, the
+ * The Spring Boot entry point for the dual-layout repository. The framework-neutral logic - the dual layout, the
  * {@link Authorization} credential model, the {@link build.jenesis.repository.format.RepositoryFormat} plugins, the
- * {@link ImportJobs} migration - carries over unchanged; this module only assembles it behind Spring MVC
- * ({@link RepositoryController}), wires the beans ({@link RepositoryConfig}) and gates the wire with Spring Security
- * ({@link SecurityConfig}). The storage backend is selected by {@code jenesis.repository.store} through
- * {@code ArtifactStoreProvider} (ServiceLoader, filesystem fallback).
+ * pull-through {@link PullThroughCache} proxy and the {@link ImportJobs} migration - is plain domain code; this
+ * module only assembles it behind Spring MVC ({@link RepositoryController}), wires the beans ({@link RepositoryConfig})
+ * and gates the wire with Spring Security ({@link SecurityConfig}). The storage backend is selected by
+ * {@code jenesis.repository.store} through {@code ArtifactStoreProvider} (ServiceLoader, filesystem fallback).
  */
 @SpringBootApplication
 public class RepositoryApplication {
@@ -27,8 +31,37 @@ public class RepositoryApplication {
      * types leaking into its module.
      */
     public static Running start(int port) {
-        ConfigurableApplicationContext context = new SpringApplicationBuilder(RepositoryApplication.class)
-                .run("--server.port=" + port);
+        return start(port, Map.of(), null);
+    }
+
+    /**
+     * Boot the server proxying a local miss to the given upstreams (format name to upstream URI) over the default
+     * HTTP {@link PullThroughCache#http() fetcher}, for a programmatic boot that hits a real upstream.
+     */
+    public static Running start(int port, Map<String, URI> upstreams) {
+        return start(port, upstreams, null);
+    }
+
+    /**
+     * Boot the server proxying a local miss to the given upstreams (format name to upstream URI) through the given
+     * {@link ProxyFormat.Fetcher} (the default HTTP fetch when {@code null}). The upstreams and fetcher are
+     * registered as the {@code upstreams} and {@code fetcher} beans before refresh, overriding the property-driven
+     * defaults in {@link RepositoryConfig}, so a test can supply a fixed upstream and a counting or fake fetcher.
+     */
+    public static Running start(int port, Map<String, URI> upstreams, ProxyFormat.Fetcher fetcher) {
+        Map<String, URI> copy = Map.copyOf(upstreams);
+        SpringApplicationBuilder builder = new SpringApplicationBuilder(RepositoryApplication.class);
+        if (!copy.isEmpty() || fetcher != null) {
+            builder.initializers((ApplicationContextInitializer<ConfigurableApplicationContext>) context -> {
+                if (!copy.isEmpty()) {
+                    context.getBeanFactory().registerSingleton("upstreams", copy);
+                }
+                if (fetcher != null) {
+                    context.getBeanFactory().registerSingleton("fetcher", fetcher);
+                }
+            });
+        }
+        ConfigurableApplicationContext context = builder.run("--server.port=" + port);
         int bound = Integer.parseInt(context.getEnvironment().getProperty("local.server.port"));
         return new Running(bound, context);
     }

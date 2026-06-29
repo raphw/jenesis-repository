@@ -3,13 +3,13 @@
  * and the Jenesis module layout ({@code /module/...}, {@code /artifact/...}), generating the POM and
  * {@code maven-metadata.xml} when a module is uploaded. Headless and stateless over the ArtifactStore SPI
  * (filesystem by default; a cloud backend is selected through ArtifactStoreProvider.resolve via
- * {@code JENESIS_STORE}). It runs on either of two HTTP fronts over the same framework-neutral core: the JDK
- * HTTP server skeleton ({@code RepositoryServer}, the module's declared main) or, additively, a Spring Boot
- * virtual-thread stack ({@code RepositoryApplication}) with Actuator observability and Spring Security gating the
- * wire. Open so Spring can reflect over the beans and controller.
+ * {@code JENESIS_STORE}). It runs on a Spring Boot virtual-thread stack ({@code RepositoryApplication}, the module's
+ * declared main) with Actuator observability and Spring Security gating the wire, dispatching to the
+ * ServiceLoader-discovered formats over the framework-neutral core. Open so Spring can reflect over the beans and
+ * controller.
  *
  * @jenesis.release 25
- * @jenesis.main build.jenesis.repository.RepositoryServer
+ * @jenesis.main build.jenesis.repository.RepositoryApplication
  *
  * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
  * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
@@ -85,7 +85,6 @@
 open module build.jenesis.repository {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.format;
-    requires jdk.httpserver;
     requires java.net.http;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;

@@ -3,9 +3,7 @@ package build.jenesis.repository.test;
 import build.jenesis.RepositoryItem;
 import build.jenesis.maven.MavenDefaultRepository;
 import build.jenesis.module.JenesisModuleRepository;
-import build.jenesis.repository.RepositoryServer;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.RepositoryApplication;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -30,7 +28,7 @@ import java.util.jar.Manifest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Boots the real {@link RepositoryServer} on an ephemeral port over a temporary filesystem store, publishes
+ * Boots the real {@link RepositoryApplication} on an ephemeral port over a temporary filesystem store, publishes
  * artifacts over HTTP (the deploy side), then resolves them through the genuine Jenesis build-side clients -
  * {@link JenesisModuleRepository} for the module layout and {@link MavenDefaultRepository} for the Maven layout,
  * the same code a build's dependency resolution runs. So the bridge is proven both ways against the assembled
@@ -47,18 +45,16 @@ public class RepositoryDualLayoutE2ETest {
     @TempDir
     private static Path mavenLocal;
 
-    private RepositoryServer.Running server;
+    private RepositoryApplication.Running server;
     private HttpClient client;
     private String base;
     private final Executor executor = Runnable::run;
 
     @BeforeAll
-    public void boot() throws IOException {
+    public void boot() {
         System.setProperty("jenesis.repository.insecure", "true");
-        ArtifactStore backend = ArtifactStoreProvider.resolve(
-                "filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? store.toString() : null);
-        server = new RepositoryServer(backend).start(0);
+        System.setProperty("JENESIS_STORE_ROOT", store.toString());
+        server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/";
     }
@@ -69,6 +65,7 @@ public class RepositoryDualLayoutE2ETest {
             server.close();
         }
         System.clearProperty("jenesis.repository.insecure");
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

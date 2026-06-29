@@ -1,9 +1,11 @@
 package build.jenesis.repository;
 
+import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,31 +23,39 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The HTTP surface of the free single-tenant repository, mirroring {@link RepositoryServer#handle} and
- * {@link RepositoryServer} migration trigger but over Spring MVC. A catch-all offers every request the
- * {@link RepositoryFormat} plugins (Maven/module, OCI, raw) over the single store: the first format whose
- * {@code handles(path)} is true serves or accepts the request through a {@link ServletFormatExchange} carrying the
- * full request path; an unclaimed path is a {@code 404}. {@code /admin/import} triggers an asynchronous migration
- * off an incumbent manager (Nexus or Artifactory) through {@link ImportJobs}, and {@code GET /admin/import/<id>}
- * returns its state. Authorization is not done here: {@link SecurityConfig} gates the wire through the
- * {@link Authorization} credential model. The pull-through proxy ({@link PullThroughCache}) is a follow-up; this
- * controller dispatches hosted-only.
+ * The HTTP surface of the free single-tenant repository, mirroring {@link RepositoryApplication}'s framework-neutral
+ * dispatch but over Spring MVC. A catch-all offers every request the {@link RepositoryFormat} plugins (Maven/module,
+ * OCI, raw) over the single store: the first format whose {@code handles(path)} is true serves or accepts the request
+ * through a {@link ServletFormatExchange} carrying the full request path; an unclaimed path is a {@code 404}. When an
+ * upstream is configured for the matched format and the format is a {@link ProxyFormat}, a local miss is served
+ * through the {@link PullThroughCache} from that upstream and cached, so a later read is a local hit. {@code
+ * /admin/import} triggers an asynchronous migration off an incumbent manager (Nexus or Artifactory) through
+ * {@link ImportJobs}, and {@code GET /admin/import/<id>} returns its state. Authorization is not done here:
+ * {@link SecurityConfig} gates the wire through the {@link Authorization} credential model.
  */
 @RestController
 public class RepositoryController {
 
     private final List<RepositoryFormat> formats;
     private final ArtifactStore store;
+    private final Map<String, URI> upstreams;
+    private final ProxyFormat.Fetcher fetcher;
 
-    public RepositoryController(List<RepositoryFormat> formats, ArtifactStore store) {
+    public RepositoryController(List<RepositoryFormat> formats,
+                                ArtifactStore store,
+                                @Qualifier("upstreams") Map<String, URI> upstreams,
+                                ProxyFormat.Fetcher fetcher) {
         this.formats = formats;
         this.store = store;
+        this.upstreams = upstreams;
+        this.fetcher = fetcher;
     }
 
     /**
      * The format catch-all: any request the {@code /admin/import} routes and the Actuator endpoints do not claim is
      * offered to the {@link RepositoryFormat} plugins over the store. More specific routes win in Spring, so this
-     * only sees a format's own paths; an unclaimed one is a {@code 404}.
+     * only sees a format's own paths; an unclaimed one is a {@code 404}. A format with a configured upstream that is
+     * a {@link ProxyFormat} serves a local miss through the {@link PullThroughCache}.
      */
     @RequestMapping(value = "/**", method = {RequestMethod.GET, RequestMethod.HEAD, RequestMethod.PUT,
             RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
@@ -53,11 +63,28 @@ public class RepositoryController {
         String path = request.getRequestURI();
         for (RepositoryFormat format : formats) {
             if (format.handles(path)) {
-                format.handle(new ServletFormatExchange(request, response, path), store);
+                ServletFormatExchange exchange = new ServletFormatExchange(request, response, path);
+                URI base = upstreams.get(format.name());
+                if (base != null && format instanceof ProxyFormat proxy) {
+                    new PullThroughCache(fetcher).serve(format, proxy, base, exchange, store);
+                } else {
+                    format.handle(exchange, store);
+                }
                 return;
             }
         }
         response.setStatus(404);
+    }
+
+    /**
+     * The migration trigger only accepts {@code POST}; any other method on {@code /admin/import} (a {@code GET}
+     * without a job id, say) is a {@code 405}, matching the headless dispatch. The more specific route wins over the
+     * format catch-all, so a stray method is rejected here rather than falling through to a {@code 404}.
+     */
+    @RequestMapping(value = "/admin/import", method = {RequestMethod.GET, RequestMethod.HEAD, RequestMethod.PUT,
+            RequestMethod.PATCH, RequestMethod.DELETE})
+    public void importMethodNotAllowed(HttpServletResponse response) {
+        response.setStatus(405);
     }
 
     /**

@@ -1,8 +1,8 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.NexusSource;
+import build.jenesis.repository.RepositoryApplication;
 import build.jenesis.repository.RepositoryImport;
-import build.jenesis.repository.RepositoryServer;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.sun.net.httpserver.HttpExchange;
@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Proves a migration off an incumbent repository manager end to end, without a real Nexus or the public network. A
  * fake Nexus (a JDK HTTP server) answers the components REST API - paged by continuation token, mixed formats over
  * separate repositories - and serves the asset bytes. The {@link RepositoryImport} walks it through a
- * {@link NexusSource}, then the real {@link RepositoryServer} is booted over the same store and the migrated
+ * {@link NexusSource}, then the real {@link RepositoryApplication} is booted over the same store and the migrated
  * artifacts are pulled back over HTTP exactly as a build would: the Maven jar and its module view (so the
  * dual-layout bridge survives the import), the regenerated {@code maven-metadata.xml} (the source's copy is
  * discarded, not served), and the Docker manifest and layer. A npm repository is migrated by the same walk but,
@@ -59,7 +59,7 @@ public class RepositoryImportTest {
     static Path root;
 
     private HttpServer nexus;
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
     private final Set<String> requested = Collections.synchronizedSet(new HashSet<>());
@@ -77,6 +77,7 @@ public class RepositoryImportTest {
 
     @BeforeAll
     public void setUp() throws IOException {
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
                 key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
 
@@ -142,7 +143,7 @@ public class RepositoryImportTest {
         raw = importer.run(new NexusSource(URI.create(upstream), "raw-hosted"), store);
         npm = importer.run(new NexusSource(URI.create(upstream), "npm-hosted"), store);
 
-        running = new RepositoryServer(store).start(0);
+        running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
     }
@@ -151,6 +152,7 @@ public class RepositoryImportTest {
     public void tearDown() {
         running.close();
         nexus.stop(0);
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

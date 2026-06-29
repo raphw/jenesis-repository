@@ -15,8 +15,10 @@ import java.util.function.Supplier;
  * Authorizes a request against the {@link Authorization} credential model. An anonymous deployment (the headless
  * default) allows everything; an enforcing one reads the {@code Jenesis-Repository-Key} and optional
  * {@code Jenesis-Repository-Name} headers and requires {@code repository:read} for a GET/HEAD and
- * {@code repository:write} for any other method. A denied request is mapped by Spring Security to a {@code 403};
- * distinguishing {@code 401} from {@code 403} is not attempted here.
+ * {@code repository:write} for any other method. The computed {@link Authorization.Decision} is recorded on the
+ * request so {@link RepositoryAuthorizationEntryPoint} can answer {@code 401} for an unauthorized request (no key,
+ * a malformed or expired key) and {@code 403} for a forbidden one (a key that lacks the right), regardless of which
+ * Spring Security failure path the denial takes.
  */
 @Component
 public class RepositoryAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
@@ -38,14 +40,16 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
         String required = method.equals("GET") || method.equals("HEAD")
                 ? Authorization.REPOSITORY_READ
                 : Authorization.REPOSITORY_WRITE;
+        Authorization.Decision decision;
         try {
-            Authorization.Decision decision = authorization.authorize(
+            decision = authorization.authorize(
                     request.getHeader("Jenesis-Repository-Key"),
                     request.getHeader("Jenesis-Repository-Name"),
                     required);
-            return new AuthorizationDecision(decision == Authorization.Decision.ALLOWED);
         } catch (IOException e) {
-            return new AuthorizationDecision(false);
+            decision = Authorization.Decision.FORBIDDEN;
         }
+        request.setAttribute("jenesis.repository.decision", decision);
+        return new AuthorizationDecision(decision == Authorization.Decision.ALLOWED);
     }
 }

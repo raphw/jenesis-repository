@@ -1,8 +1,8 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.ArtifactorySource;
+import build.jenesis.repository.RepositoryApplication;
 import build.jenesis.repository.RepositoryImport;
-import build.jenesis.repository.RepositoryServer;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.sun.net.httpserver.HttpExchange;
@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * server) answers the storage listing API ({@code GET /api/storage/<repo>?list&deep=1}) with a deep file list and
  * serves each file at {@code /<repo>/<path>}. The {@link RepositoryImport} walks it through an
  * {@link ArtifactorySource} - whose listing carries no per-file format, so the repository's package type is given -
- * and the real {@link RepositoryServer} then serves the migrated Maven jar, its module view and the regenerated
+ * and the real {@link RepositoryApplication} then serves the migrated Maven jar, its module view and the regenerated
  * metadata, with the listing's folder entries skipped.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -43,7 +43,7 @@ public class ArtifactoryImportTest {
     static Path root;
 
     private HttpServer artifactory;
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
     private byte[] jar;
@@ -51,6 +51,7 @@ public class ArtifactoryImportTest {
 
     @BeforeAll
     public void setUp() throws IOException {
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
                 key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
 
@@ -80,7 +81,7 @@ public class ArtifactoryImportTest {
         result = new RepositoryImport().run(
                 new ArtifactorySource(URI.create(upstream), "libs-release", "maven"), store);
 
-        running = new RepositoryServer(store).start(0);
+        running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
     }
@@ -89,6 +90,7 @@ public class ArtifactoryImportTest {
     public void tearDown() {
         running.close();
         artifactory.stop(0);
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

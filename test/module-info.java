@@ -1,10 +1,11 @@
 /**
- * End-to-end test of the dual-layout repository. It boots the real {@link build.jenesis.repository.RepositoryServer}
+ * End-to-end test of the dual-layout repository. It boots the real {@link build.jenesis.repository.RepositoryApplication}
  * on an ephemeral port over a temporary filesystem store, publishes artifacts over HTTP, then resolves them back
  * through the actual Jenesis build-side repository clients - {@code JenesisModuleRepository} for the module layout
  * and {@code MavenDefaultRepository} for the Maven layout - so the very resolution code a build runs proves the
  * bridge works both ways: a Maven library that carries a module name is consumable by module name, and a module is
- * consumable by its Maven coordinate, off one content-addressed blob.
+ * consumable by its Maven coordinate, off one content-addressed blob. The {@code jdk.httpserver} requirement backs
+ * the in-test fake Nexus and Artifactory upstreams the import tests drive, not the repository server itself.
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository

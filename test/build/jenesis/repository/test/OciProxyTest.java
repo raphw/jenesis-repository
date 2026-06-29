@@ -1,8 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.RepositoryServer;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.RepositoryApplication;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -30,7 +28,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Proves the {@link build.jenesis.repository.oci.OciFormat} pull-through adapter against the real Docker Hub: a
- * {@link RepositoryServer} configured to proxy {@code /v2/} misses to {@code registry-1.docker.io} serves a real
+ * {@link RepositoryApplication} configured to proxy {@code /v2/} misses to {@code registry-1.docker.io} serves a real
  * public image ({@code library/hello-world}, multi-arch) that was never pushed locally, with the real {@code docker}
  * client - exercising the Distribution bearer-token flow, {@code Accept} negotiation and the manifest-index then
  * per-architecture manifest and blob fetches. Tagged {@code docker}; self-skips without Docker or Docker Hub.
@@ -42,19 +40,16 @@ public class OciProxyTest {
     @TempDir
     static Path root;
 
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private String registry;
     private String lastOutput = "";
 
     @BeforeAll
-    public void start() throws IOException {
+    public void start() {
         assumeTrue(dockerAvailable(), "Docker is required for the OCI proxy integration test");
         assumeTrue(reachable("registry-1.docker.io", 443), "Docker Hub must be reachable");
-        ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
-        running = new RepositoryServer(store)
-                .withProxy(Map.of("oci", URI.create("https://registry-1.docker.io/")))
-                .start(0);
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        running = RepositoryApplication.start(0, Map.of("oci", URI.create("https://registry-1.docker.io/")));
         registry = "localhost:" + running.port();
     }
 
@@ -63,6 +58,7 @@ public class OciProxyTest {
         if (running != null) {
             running.close();
         }
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

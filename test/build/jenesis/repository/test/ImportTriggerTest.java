@@ -1,8 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.RepositoryServer;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.RepositoryApplication;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
@@ -43,7 +41,7 @@ public class ImportTriggerTest {
     static Path root;
 
     private HttpServer nexus;
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
     private String upstream;
@@ -51,8 +49,7 @@ public class ImportTriggerTest {
 
     @BeforeAll
     public void setUp() throws IOException {
-        ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
 
         nexus = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         upstream = "http://localhost:" + nexus.getAddress().getPort();
@@ -83,7 +80,7 @@ public class ImportTriggerTest {
         });
         nexus.start();
 
-        running = new RepositoryServer(store).start(0);
+        running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
     }
@@ -92,6 +89,7 @@ public class ImportTriggerTest {
     public void tearDown() {
         running.close();
         nexus.stop(0);
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

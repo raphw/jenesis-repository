@@ -1,7 +1,7 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.Authorization;
-import build.jenesis.repository.RepositoryServer;
+import build.jenesis.repository.RepositoryApplication;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import org.junit.jupiter.api.AfterAll;
@@ -20,10 +20,11 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * End-to-end proof that the credential model gates the wire. An enforcing {@link RepositoryServer} answers 401
+ * End-to-end proof that the credential model gates the wire. An enforcing {@link RepositoryApplication} answers 401
  * without a key, 403 for a key that lacks the required right, and 201/200 for a key carrying
  * {@code repository:write} / {@code repository:read} - the rights travelling in the {@code Jenesis-Repository-Key}
- * header, off the same grants the unit test exercises in isolation.
+ * header, off the same grants the unit test exercises in isolation. The grants are written through an
+ * {@link Authorization} over the same temporary store the server reads from, so the boot enforces them.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class RepositoryAuthE2ETest {
@@ -31,18 +32,20 @@ public class RepositoryAuthE2ETest {
     @TempDir
     private static Path store;
 
-    private RepositoryServer.Running server;
+    private RepositoryApplication.Running server;
     private HttpClient client;
     private String base;
 
     @BeforeAll
     public void boot() throws IOException {
+        System.setProperty("JENESIS_STORE_ROOT", store.toString());
+        System.setProperty("jenesis.repository.auth", "true");
         ArtifactStore backend = ArtifactStoreProvider.resolve(
                 "filesystem", key -> "JENESIS_STORE_ROOT".equals(key) ? store.toString() : null);
         Authorization authorization = Authorization.enforcing(backend);
         authorization.grant("acme.ci", "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
         authorization.grant("acme.ro", "*", Authorization.REPOSITORY_READ);
-        server = new RepositoryServer(backend).withAuthorization(authorization).start(0);
+        server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/";
     }
@@ -52,6 +55,8 @@ public class RepositoryAuthE2ETest {
         if (server != null) {
             server.close();
         }
+        System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

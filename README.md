@@ -174,7 +174,7 @@ Modules
       s3/                     S3-compatible backend (AWS S3, GCS, MinIO)
       azure/                  Azure Blob backend
     server/                   the apps (not a module itself)
-      repository/             the dual-layout repository server (RepositoryServer)
+      repository/             the dual-layout repository server (RepositoryApplication)
       ui/                     a simple, extendable web console (browse, search, repo config)
 
 The console is an open shell with a **panel-registration SPI**, so additional panels

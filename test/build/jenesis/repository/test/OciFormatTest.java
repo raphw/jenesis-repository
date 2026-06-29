@@ -1,15 +1,12 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.RepositoryServer;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.RepositoryApplication;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -38,22 +35,24 @@ public class OciFormatTest {
     @TempDir
     static Path root;
 
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
 
     @BeforeAll
-    public void start() throws IOException {
-        ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
-        running = new RepositoryServer(store).start(0);
+    public void start() {
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
     }
 
     @AfterAll
     public void stop() {
-        running.close();
+        if (running != null) {
+            running.close();
+        }
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

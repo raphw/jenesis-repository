@@ -1,16 +1,13 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.RepositoryServer;
+import build.jenesis.repository.RepositoryApplication;
 import build.jenesis.repository.format.ProxyFormat;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -29,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Drives the pull-through cache through the raw format against a fixed in-memory upstream (no network): a path only
  * the upstream has is fetched, cached and then served as a local hit; an upstream miss is a 404; and a locally
  * published artifact never touches the upstream. Proves the {@link ProxyFormat} seam and {@code PullThroughCache}
- * end to end over the real {@link RepositoryServer}.
+ * end to end over the real {@link RepositoryApplication}.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class RawProxyTest {
@@ -40,15 +37,14 @@ public class RawProxyTest {
     @TempDir
     static Path root;
 
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
     private AtomicInteger fetches;
 
     @BeforeAll
-    public void start() throws IOException {
-        ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+    public void start() {
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
         Map<String, byte[]> upstream = Map.of("https://upstream.test/dir/file.bin", UPSTREAM);
         fetches = new AtomicInteger();
         ProxyFormat.Fetcher fetcher = (url, requestHeaders) -> {
@@ -58,16 +54,17 @@ public class RawProxyTest {
                     ? new ProxyFormat.Fetched(404, new byte[0], Map.of())
                     : new ProxyFormat.Fetched(200, body, Map.of()));
         };
-        running = new RepositoryServer(store)
-                .withProxy(Map.of("raw", URI.create("https://upstream.test/")), fetcher)
-                .start(0);
+        running = RepositoryApplication.start(0, Map.of("raw", URI.create("https://upstream.test/")), fetcher);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
     }
 
     @AfterAll
     public void stop() {
-        running.close();
+        if (running != null) {
+            running.close();
+        }
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test

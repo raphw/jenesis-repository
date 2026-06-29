@@ -1,8 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.RepositoryServer;
-import build.jenesis.repository.store.ArtifactStore;
-import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.RepositoryApplication;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -26,7 +24,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Proves the {@link build.jenesis.repository.oci.OciFormat} plugin against the real {@code docker} client: it
- * boots a {@link RepositoryServer} (a plain HTTP registry on an ephemeral port, which {@code docker} accepts
+ * boots a {@link RepositoryApplication} (a plain HTTP registry on an ephemeral port, which {@code docker} accepts
  * because it is on {@code localhost}), then pushes a tiny image to it and pulls it back after deleting the local
  * copies, so the round-trip genuinely exercises the registry's blob and manifest serving end to end. The suite
  * skips itself when no Docker daemon is reachable, so a checkout without Docker still builds green.
@@ -40,16 +38,15 @@ public class OciDockerTest {
     @TempDir
     static Path root;
 
-    private RepositoryServer.Running running;
+    private RepositoryApplication.Running running;
     private String registry;
     private String lastOutput = "";
 
     @BeforeAll
-    public void start() throws IOException {
+    public void start() {
         assumeTrue(dockerAvailable(), "Docker is required for the OCI (docker push/pull) integration test");
-        ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
-        running = new RepositoryServer(store).start(0);
+        System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        running = RepositoryApplication.start(0);
         registry = "localhost:" + running.port();
     }
 
@@ -58,6 +55,7 @@ public class OciDockerTest {
         if (running != null) {
             running.close();
         }
+        System.clearProperty("JENESIS_STORE_ROOT");
     }
 
     @Test
