@@ -8,7 +8,6 @@ import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
-import build.jenesis.repository.store.Right;
 
 /**
  * Entry point and HTTP wiring for the dual-layout repository. A {@code PUT} stores the blob (content-addressed,
@@ -130,7 +129,7 @@ public final class RepositoryServer {
             Authorization.Decision decision = authorization.authorize(
                     exchange.getRequestHeaders().getFirst("Jenesis-Repository-Key"),
                     exchange.getRequestHeaders().getFirst("Jenesis-Repository-Name"),
-                    write ? Right.REPOSITORY_WRITE : Right.REPOSITORY_READ);
+                    write ? Authorization.REPOSITORY_WRITE : Authorization.REPOSITORY_READ);
             if (decision == Authorization.Decision.UNAUTHORIZED) {
                 respond(exchange, 401, "");
                 return;
@@ -177,7 +176,7 @@ public final class RepositoryServer {
             Authorization.Decision decision = authorization.authorize(
                     exchange.getRequestHeaders().getFirst("Jenesis-Repository-Key"),
                     exchange.getRequestHeaders().getFirst("Jenesis-Repository-Name"),
-                    status ? Right.REPOSITORY_READ : Right.REPOSITORY_WRITE);
+                    status ? Authorization.REPOSITORY_READ : Authorization.REPOSITORY_WRITE);
             if (decision == Authorization.Decision.UNAUTHORIZED) {
                 respond(exchange, 401, "");
                 return;

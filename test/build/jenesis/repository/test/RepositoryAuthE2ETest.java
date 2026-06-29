@@ -4,7 +4,6 @@ import build.jenesis.repository.Authorization;
 import build.jenesis.repository.RepositoryServer;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
-import build.jenesis.repository.store.Right;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -41,8 +40,8 @@ public class RepositoryAuthE2ETest {
         ArtifactStore backend = ArtifactStoreProvider.resolve(
                 "filesystem", key -> "JENESIS_STORE_ROOT".equals(key) ? store.toString() : null);
         Authorization authorization = Authorization.enforcing(backend);
-        authorization.grant("acme.ci", "*", Right.REPOSITORY_READ, Right.REPOSITORY_WRITE);
-        authorization.grant("acme.ro", "*", Right.REPOSITORY_READ);
+        authorization.grant("acme.ci", "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
+        authorization.grant("acme.ro", "*", Authorization.REPOSITORY_READ);
         server = new RepositoryServer(backend).withAuthorization(authorization).start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/";
