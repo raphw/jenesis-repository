@@ -72,6 +72,18 @@ content-addressed storage, multi-tenancy, authorization, retention and console w
 touching any of them. The OCI/Docker registry is itself the proof: a single
 self-contained module that needs nothing but the SPI and the store.
 
+Two conventions keep this honest:
+
+ - **The server names no plug-in.** The server module only `uses` the SPIs; it never
+   `requires` a concrete format, backend or inspector. So a deployment runs a **plain
+   server with exactly the layouts and backends on its module path** - nothing more.
+   Adding one is dropping a jar on the path; removing one is leaving it off. The
+   distribution (the image's module set) chooses; the core stays generic.
+ - **An implementation lives under its SPI's package.** A format is
+   `build.jenesis.repository.format.<name>` under the `build.jenesis.repository.format`
+   SPI; a storage backend is `build.jenesis.repository.store.<name>` under the store SPI.
+   The module name states which extension point it plugs into.
+
 Writing a plug-in
 -----------------
 
