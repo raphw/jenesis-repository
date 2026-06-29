@@ -66,15 +66,17 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             exchange.respond(404);
             return;
         }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        store.read(key, buffer);
+        byte[] content = buffer.toByteArray();
         exchange.setResponseHeader("Docker-Content-Digest", digest);
+        exchange.setResponseHeader("Content-Type", "application/octet-stream");
         if (exchange.method().equals("HEAD")) {
+            exchange.setResponseHeader("Content-Length", Integer.toString(content.length));
             exchange.respond(200);
             return;
         }
-        exchange.setResponseHeader("Content-Type", "application/octet-stream");
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        store.read(key, buffer);
-        exchange.respond(200, buffer.toByteArray());
+        exchange.respond(200, content);
     }
 
     private void upload(String name, String session, ArtifactStore store, FormatExchange exchange) throws IOException {
@@ -167,15 +169,17 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         String type = store.readVersioned("oci/types/" + hex)
                 .map(versioned -> new String(versioned.content(), StandardCharsets.UTF_8).trim())
                 .orElse(OCI_MANIFEST);
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        store.read("blobs/" + hex, buffer);
+        byte[] content = buffer.toByteArray();
         exchange.setResponseHeader("Content-Type", type);
         exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
         if (exchange.method().equals("HEAD")) {
+            exchange.setResponseHeader("Content-Length", Integer.toString(content.length));
             exchange.respond(200);
             return;
         }
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        store.read("blobs/" + hex, buffer);
-        exchange.respond(200, buffer.toByteArray());
+        exchange.respond(200, content);
     }
 
     private void tags(String name, ArtifactStore store, FormatExchange exchange) throws IOException {
