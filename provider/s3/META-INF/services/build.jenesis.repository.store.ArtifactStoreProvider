@@ -1,1 +1,1 @@
-build.jenesis.repository.s3.S3ArtifactStoreProvider
+build.jenesis.repository.store.s3.S3ArtifactStoreProvider

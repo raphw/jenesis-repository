@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Proves the {@link build.jenesis.repository.oci.OciFormat} pull-through adapter against the real Docker Hub: a
+ * Proves the {@link build.jenesis.repository.format.oci.OciFormat} pull-through adapter against the real Docker Hub: a
  * {@link RepositoryApplication} configured to proxy {@code /v2/} misses to {@code registry-1.docker.io} serves a real
  * public image ({@code library/hello-world}, multi-arch) that was never pushed locally, with the real {@code docker}
  * client - exercising the Distribution bearer-token flow, {@code Accept} negotiation and the manifest-index then

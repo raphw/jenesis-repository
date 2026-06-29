@@ -1,4 +1,4 @@
-package build.jenesis.repository.raw;
+package build.jenesis.repository.format.raw;
 
 import module java.base;
 import build.jenesis.repository.Publication;

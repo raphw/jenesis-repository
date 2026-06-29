@@ -32,9 +32,9 @@ open module build.jenesis.repository.test {
     requires build.jenesis.repository;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.format;
-    requires build.jenesis.repository.maven;
-    requires build.jenesis.repository.oci;
-    requires build.jenesis.repository.raw;
+    requires build.jenesis.repository.format.maven;
+    requires build.jenesis.repository.format.oci;
+    requires build.jenesis.repository.format.raw;
     requires build.jenesis;
     requires java.net.http;
     requires jdk.httpserver;

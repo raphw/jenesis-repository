@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verifies that Helm works against the repository with no Helm-specific code: a Helm 3 chart is an OCI artifact, so
- * {@code helm push} and {@code helm pull} go through the {@link build.jenesis.repository.oci.OciFormat} {@code /v2/}
+ * {@code helm push} and {@code helm pull} go through the {@link build.jenesis.repository.format.oci.OciFormat} {@code /v2/}
  * registry. The test boots a {@link RepositoryApplication} with the OCI plugin, packages a chart, pushes it over plain
  * HTTP, then pulls it back into a clean directory. The suite skips itself when {@code helm} is unavailable.
  */

@@ -6,11 +6,11 @@
  *
  * @jenesis.release 25
  */
-module build.jenesis.repository.oci {
+module build.jenesis.repository.format.oci {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.store;
     provides build.jenesis.repository.format.RepositoryFormat
-            with build.jenesis.repository.oci.OciFormat;
+            with build.jenesis.repository.format.oci.OciFormat;
     provides build.jenesis.repository.format.RepositoryImporter
-            with build.jenesis.repository.oci.OciImporter;
+            with build.jenesis.repository.format.oci.OciImporter;
 }

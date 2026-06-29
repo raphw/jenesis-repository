@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Proves the pull-through cache against the real Maven Central: the {@link build.jenesis.repository.maven.MavenFormat}
+ * Proves the pull-through cache against the real Maven Central: the {@link build.jenesis.repository.format.maven.MavenFormat}
  * proxy adapter, configured with Central as the upstream, fetches a real artifact on a miss, caches it and serves
  * the second read locally without a second fetch. Tagged {@code proxy} so it is network-gated, and self-skips when
  * Central is unreachable.

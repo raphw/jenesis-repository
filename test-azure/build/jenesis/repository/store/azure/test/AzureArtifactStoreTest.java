@@ -1,8 +1,8 @@
-package build.jenesis.repository.azure.test;
+package build.jenesis.repository.store.azure.test;
 
 import module java.base;
 import module org.junit.jupiter.api;
-import build.jenesis.repository.azure.AzureArtifactStore;
+import build.jenesis.repository.store.azure.AzureArtifactStore;
 import build.jenesis.repository.store.ArtifactStore;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;

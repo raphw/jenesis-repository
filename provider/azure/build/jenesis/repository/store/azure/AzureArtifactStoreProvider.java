@@ -1,4 +1,4 @@
-package build.jenesis.repository.azure;
+package build.jenesis.repository.store.azure;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;

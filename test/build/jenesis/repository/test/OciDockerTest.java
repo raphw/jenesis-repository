@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Proves the {@link build.jenesis.repository.oci.OciFormat} plugin against the real {@code docker} client: it
+ * Proves the {@link build.jenesis.repository.format.oci.OciFormat} plugin against the real {@code docker} client: it
  * boots a {@link RepositoryApplication} (a plain HTTP registry on an ephemeral port, which {@code docker} accepts
  * because it is on {@code localhost}), then pushes a tiny image to it and pulls it back after deleting the local
  * copies, so the round-trip genuinely exercises the registry's blob and manifest serving end to end. The suite

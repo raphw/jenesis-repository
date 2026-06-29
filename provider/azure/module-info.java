@@ -60,10 +60,10 @@
  * @jenesis.pin org.reflections/reflections 0.10.2 SHA-256/938a2d08fe54050d7610b944d8ddc3a09355710d9e6be0aac838dbc04e9a2825
  * @jenesis.pin org.slf4j/slf4j-api 1.7.36 SHA-256/d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0
  */
-module build.jenesis.repository.azure {
-    exports build.jenesis.repository.azure to build.jenesis.repository.azure.test;
+module build.jenesis.repository.store.azure {
+    exports build.jenesis.repository.store.azure to build.jenesis.repository.store.azure.test;
     requires build.jenesis.repository.store;
     requires com.azure.storage.blob;
     provides build.jenesis.repository.store.ArtifactStoreProvider
-            with build.jenesis.repository.azure.AzureArtifactStoreProvider;
+            with build.jenesis.repository.store.azure.AzureArtifactStoreProvider;
 }

@@ -64,8 +64,8 @@
  * @jenesis.pin software.amazon.awssdk/utils-lite 2.46.17 SHA-256/1d5bcc1929c7adb9d82d3f66e95b410602bd567c7704f8c73aca4e62c35ab5dd
  * @jenesis.pin software.amazon.eventstream/eventstream 1.0.1 SHA-256/0c37d8e696117f02c302191b8110b0d0eb20fa412fce34c3a269ec73c16ce822
  */
-module build.jenesis.repository.s3 {
-    exports build.jenesis.repository.s3 to build.jenesis.repository.s3.test;
+module build.jenesis.repository.store.s3 {
+    exports build.jenesis.repository.store.s3 to build.jenesis.repository.store.s3.test;
     requires build.jenesis.repository.store;
     requires software.amazon.awssdk.services.s3;
     requires software.amazon.awssdk.core;
@@ -73,5 +73,5 @@ module build.jenesis.repository.s3 {
     requires software.amazon.awssdk.auth;
     requires software.amazon.awssdk.http.urlconnection;
     provides build.jenesis.repository.store.ArtifactStoreProvider
-            with build.jenesis.repository.s3.S3ArtifactStoreProvider;
+            with build.jenesis.repository.store.s3.S3ArtifactStoreProvider;
 }

@@ -6,12 +6,12 @@
  *
  * @jenesis.release 25
  */
-module build.jenesis.repository.raw {
+module build.jenesis.repository.format.raw {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository;
     requires build.jenesis.repository.store;
     provides build.jenesis.repository.format.RepositoryFormat
-            with build.jenesis.repository.raw.RawFormat;
+            with build.jenesis.repository.format.raw.RawFormat;
     provides build.jenesis.repository.format.RepositoryImporter
-            with build.jenesis.repository.raw.RawImporter;
+            with build.jenesis.repository.format.raw.RawImporter;
 }

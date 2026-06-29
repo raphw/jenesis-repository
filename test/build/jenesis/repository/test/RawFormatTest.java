@@ -19,7 +19,7 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Drives the {@link build.jenesis.repository.raw.RawFormat} plugin over HTTP: a file is PUT, served back byte for
+ * Drives the {@link build.jenesis.repository.format.raw.RawFormat} plugin over HTTP: a file is PUT, served back byte for
  * byte, found by HEAD, listed under its directory, and removed by DELETE. Proves the generic file store works as a
  * ServiceLoader-discovered format over the content-addressed store, alongside Maven and OCI.
  */

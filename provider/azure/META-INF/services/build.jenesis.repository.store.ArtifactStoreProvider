@@ -1,1 +1,1 @@
-build.jenesis.repository.azure.AzureArtifactStoreProvider
+build.jenesis.repository.store.azure.AzureArtifactStoreProvider

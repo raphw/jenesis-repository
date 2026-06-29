@@ -2,13 +2,13 @@
  * Integration test for the Azure Blob artifact-store backend, run against an Azurite emulator the test
  * starts and stops itself through the {@code docker} CLI (the {@link Docker} helper drives the container
  * with {@code java.base} alone). It points an azure-storage-blob client at the container and exercises the
- * real {@link build.jenesis.repository.azure.AzureArtifactStore} through the {@code ArtifactStore} contract,
+ * real {@link build.jenesis.repository.store.azure.AzureArtifactStore} through the {@code ArtifactStore} contract,
  * including the conditional compare-and-set of {@code writeVersioned} (create-if-absent and
  * update-if-unchanged, and their rejections). The suite skips itself (JUnit assumptions) when no Docker
  * daemon is reachable, so a checkout without Docker still builds green.
  *
  * @jenesis.release 25
- * @jenesis.test build.jenesis.repository.azure
+ * @jenesis.test build.jenesis.repository.store.azure
  * @jenesis.pin com.azure.storage.blob 12.35.0
  * @jenesis.pin com.azure/azure-core 1.58.1 SHA-256/7b339126e92af79b07fcf96fe16fa5ba2a2854bb8ce7e03ac4776b9474fe7df5
  * @jenesis.pin com.azure/azure-core-http-netty 1.16.5 SHA-256/61091ba5634e711e396721edfcca5c6782be1c1e86f2ecf856eb57aa20260c0c
@@ -82,8 +82,8 @@
  * @jenesis.pin org.reflections/reflections 0.10.2 SHA-256/938a2d08fe54050d7610b944d8ddc3a09355710d9e6be0aac838dbc04e9a2825
  * @jenesis.pin org.slf4j/slf4j-api 1.7.36 SHA-256/d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0
  */
-open module build.jenesis.repository.azure.test {
-    requires build.jenesis.repository.azure;
+open module build.jenesis.repository.store.azure.test {
+    requires build.jenesis.repository.store.azure;
     requires build.jenesis.repository.store;
     requires com.azure.storage.blob;
     requires org.junit.jupiter;

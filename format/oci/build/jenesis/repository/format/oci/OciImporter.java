@@ -1,4 +1,4 @@
-package build.jenesis.repository.oci;
+package build.jenesis.repository.format.oci;
 
 import module java.base;
 import build.jenesis.repository.format.RepositoryImporter;

@@ -1,4 +1,4 @@
-package build.jenesis.repository.s3;
+package build.jenesis.repository.store.s3;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;

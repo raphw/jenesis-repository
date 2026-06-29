@@ -21,7 +21,7 @@ import java.util.HexFormat;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Drives the {@link build.jenesis.repository.oci.OciFormat} plugin over HTTP exactly as a registry client does:
+ * Drives the {@link build.jenesis.repository.format.oci.OciFormat} plugin over HTTP exactly as a registry client does:
  * the {@code /v2/} version check, a blob upload (a session of chunks, finalized with the digest), a manifest put
  * by tag, then a pull of the manifest (by tag and by digest), the config blob, and the tag list. Proves the OCI
  * Distribution protocol round-trips through the content-addressed store, and that the format was discovered as a

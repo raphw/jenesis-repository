@@ -1,8 +1,8 @@
-package build.jenesis.repository.s3.test;
+package build.jenesis.repository.store.s3.test;
 
 import module java.base;
 import module org.junit.jupiter.api;
-import build.jenesis.repository.s3.S3ArtifactStore;
+import build.jenesis.repository.store.s3.S3ArtifactStore;
 import build.jenesis.repository.store.ArtifactStore;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;

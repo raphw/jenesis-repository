@@ -2,14 +2,14 @@
  * Integration test for the S3 artifact-store backend, run against a MinIO S3-compatible container the
  * test starts and stops itself through the {@code docker} CLI (Testcontainers is not a module-path
  * citizen, so the {@link Docker} helper drives the container with {@code java.base} alone). It points
- * an AWS SDK v2 client at the container and exercises the real {@link build.jenesis.repository.s3.S3ArtifactStore}
+ * an AWS SDK v2 client at the container and exercises the real {@link build.jenesis.repository.store.s3.S3ArtifactStore}
  * through the {@code ArtifactStore} contract, including the conditional compare-and-set of
  * {@code writeVersioned} (create-if-absent and update-if-unchanged, and their rejections). The suite
  * skips itself (JUnit assumptions) when no Docker daemon is reachable, so a checkout without Docker
  * still builds green.
  *
  * @jenesis.release 25
- * @jenesis.test build.jenesis.repository.s3
+ * @jenesis.test build.jenesis.repository.store.s3
  * @jenesis.pin com.google.code.findbugs/jsr305 3.0.2 SHA-256/766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7
  * @jenesis.pin com.google.code.gson/gson 2.8.9 SHA-256/d3999291855de495c94c743761b8ab5176cfeabe281a5ab0d8e8d45326fd703e
  * @jenesis.pin commons-io/commons-io 2.20.0 SHA-256/df90bba0fe3cb586b7f164e78fe8f8f4da3f2dd5c27fa645f888100ccc25dd72
@@ -92,8 +92,8 @@
  * @jenesis.pin software.amazon.awssdk/utils-lite 2.46.17 SHA-256/1d5bcc1929c7adb9d82d3f66e95b410602bd567c7704f8c73aca4e62c35ab5dd
  * @jenesis.pin software.amazon.eventstream/eventstream 1.0.1 SHA-256/0c37d8e696117f02c302191b8110b0d0eb20fa412fce34c3a269ec73c16ce822
  */
-open module build.jenesis.repository.s3.test {
-    requires build.jenesis.repository.s3;
+open module build.jenesis.repository.store.s3.test {
+    requires build.jenesis.repository.store.s3;
     requires build.jenesis.repository.store;
     requires software.amazon.awssdk.services.s3;
     requires software.amazon.awssdk.regions;

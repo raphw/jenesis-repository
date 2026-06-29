@@ -1,4 +1,4 @@
-package build.jenesis.repository.s3.test;
+package build.jenesis.repository.store.azure.test;
 
 import module java.base;
 
