@@ -1,2 +1,32 @@
 target/
 .jenesis/
+# Anchored to the repo root: a runtime cache dir, not the build.jenesis.cache package dirs.
+/cache/
+*.class
+/sdk/*
+!/sdk/bin/
+!/sdk/tests/
+
+### IntelliJ IDEA ###
+.idea/*
+*.iws
+*.iml
+*.ipr
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### Agent specification ###
+.claude/
