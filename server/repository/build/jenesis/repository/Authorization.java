@@ -36,9 +36,15 @@ public final class Authorization {
     public static final String MANAGE_WRITE = "manage:write";
 
     private final ArtifactStore store;
+    private final Duration defaultLifetime;
 
     private Authorization(ArtifactStore store) {
+        this(store, Duration.ofDays(90));
+    }
+
+    private Authorization(ArtifactStore store, Duration defaultLifetime) {
         this.store = store;
+        this.defaultLifetime = defaultLifetime;
     }
 
     /** An open deployment: every request is allowed, the headless default for the free single-token deployment. */
@@ -52,6 +58,30 @@ public final class Authorization {
             throw new IllegalArgumentException("An enforcing authorization needs a store to read grants from");
         }
         return new Authorization(store);
+    }
+
+    /** The default lifetime stamped on a credential minted without an explicit expiry (90 days unless overridden);
+     *  a finite default means a credential expires unless a deployment deliberately mints a non-expiring one. */
+    public Authorization withDefaultLifetime(Duration defaultLifetime) {
+        if (defaultLifetime == null || defaultLifetime.isZero() || defaultLifetime.isNegative()) {
+            throw new IllegalArgumentException("A default credential lifetime must be a positive duration");
+        }
+        return new Authorization(store, defaultLifetime);
+    }
+
+    public Duration defaultLifetime() {
+        return defaultLifetime;
+    }
+
+    /** The expiry to stamp on a newly minted credential. A non-null {@code requested} instant is honoured as given;
+     *  a null request yields the default lifetime from now, so a credential expires by default. A credential is only
+     *  ever non-expiring when {@code nonExpiring} is set explicitly - a deliberately unbounded key a deployment may
+     *  discourage but still permits. */
+    public Instant mintExpiry(Instant requested, boolean nonExpiring) {
+        if (nonExpiring) {
+            return null;
+        }
+        return requested != null ? requested : Instant.now().plus(defaultLifetime);
     }
 
     public boolean enforced() {

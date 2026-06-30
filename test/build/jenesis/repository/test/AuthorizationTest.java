@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -132,6 +133,21 @@ class AuthorizationTest {
         assertThat(authorization.authorize(Authorization.mint("acme"), null, Authorization.REPOSITORY_READ))
                 .as("a well-formed but never-provisioned key is forbidden, not unauthorized")
                 .isEqualTo(Authorization.Decision.FORBIDDEN);
+    }
+
+    @Test
+    void a_mint_expires_by_default_and_only_skips_expiry_on_an_explicit_opt_out() {
+        Instant byDefault = authorization.mintExpiry(null, false);
+        assertThat(byDefault).as("a credential expires by default")
+                .isAfter(Instant.now().plus(Duration.ofDays(89)));
+        Instant requested = Instant.now().plus(Duration.ofDays(7));
+        assertThat(authorization.mintExpiry(requested, false))
+                .as("an explicit expiry is honoured as given").isEqualTo(requested);
+        assertThat(authorization.mintExpiry(null, true))
+                .as("non-expiring is only ever an explicit opt-out").isNull();
+
+        assertThat(authorization.withDefaultLifetime(Duration.ofDays(30)).mintExpiry(null, false))
+                .as("the default lifetime is overridable").isBefore(Instant.now().plus(Duration.ofDays(31)));
     }
 
     @Test
