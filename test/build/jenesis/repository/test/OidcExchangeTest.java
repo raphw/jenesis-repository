@@ -59,8 +59,14 @@ class OidcExchangeTest {
 
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         issuer = "http://127.0.0.1:" + server.getAddress().getPort();
-        server.createContext("/.well-known/openid-configuration",
-                respond("{\"jwks_uri\":\"" + issuer + "/jwks\"}"));
+        server.createContext("/.well-known/openid-configuration", respond("{"
+                + "\"issuer\":\"" + issuer + "\","
+                + "\"authorization_endpoint\":\"" + issuer + "/authorize\","
+                + "\"token_endpoint\":\"" + issuer + "/token\","
+                + "\"jwks_uri\":\"" + issuer + "/jwks\","
+                + "\"response_types_supported\":[\"id_token\"],"
+                + "\"subject_types_supported\":[\"public\"],"
+                + "\"id_token_signing_alg_values_supported\":[\"RS256\"]}"));
         RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
         server.createContext("/jwks", respond("{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"k1\",\"n\":\""
                 + unsigned(publicKey.getModulus()) + "\",\"e\":\"" + unsigned(publicKey.getPublicExponent()) + "\"}]}"));

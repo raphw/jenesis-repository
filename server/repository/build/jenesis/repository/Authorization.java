@@ -2,6 +2,7 @@ package build.jenesis.repository;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
+import org.springframework.security.web.util.matcher.IpAddressMatcher;
 
 /**
  * The credential model. A key is {@code jenk_<tenant>.<secret><checksum>} (see {@link #mint}): the {@code jenk_}
@@ -509,30 +510,13 @@ public final class Authorization {
         return false;
     }
 
-    /** Whether {@code address} lies within {@code cidr} (a {@code network/bits} range or a plain address), comparing
-     *  the leading bits of the two addresses; mismatched IPv4/IPv6 families or unparseable input never match. */
+    /** Whether {@code address} lies within {@code cidr} (a {@code network/bits} range or a plain address), via Spring
+     *  Security's {@link IpAddressMatcher} so IPv4/IPv6 normalisation and malformed masks are handled; a malformed
+     *  CIDR or address never matches. */
     private static boolean inRange(String address, String cidr) {
         try {
-            int slash = cidr.indexOf('/');
-            byte[] network = InetAddress.getByName(slash < 0 ? cidr : cidr.substring(0, slash)).getAddress();
-            byte[] candidate = InetAddress.getByName(address).getAddress();
-            if (network.length != candidate.length) {
-                return false;
-            }
-            int bits = slash < 0 ? network.length * 8 : Integer.parseInt(cidr.substring(slash + 1).trim());
-            int fullBytes = bits / 8;
-            for (int i = 0; i < fullBytes; i++) {
-                if (network[i] != candidate[i]) {
-                    return false;
-                }
-            }
-            int remainder = bits % 8;
-            if (remainder > 0) {
-                int mask = (0xFF << (8 - remainder)) & 0xFF;
-                return (network[fullBytes] & mask) == (candidate[fullBytes] & mask);
-            }
-            return true;
-        } catch (UnknownHostException | RuntimeException e) {
+            return new IpAddressMatcher(cidr).matches(address);
+        } catch (IllegalArgumentException e) {
             return false;
         }
     }
