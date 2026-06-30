@@ -15,8 +15,11 @@ import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
@@ -108,6 +111,81 @@ class OidcExchangeTest {
         assertThat(exchange.exchange("globex",
                 jwt("jenesis", "repo:acme/app:ref:refs/heads/main", Instant.now().plusSeconds(300))))
                 .as("no trust for this tenant").isNull();
+    }
+
+    @Test
+    void an_unsigned_none_algorithm_token_is_rejected() throws IOException {
+        String token = header("none", "k1") + "." + body("\"jenesis\"", Instant.now().plusSeconds(300))
+                + "." + b64(new byte[]{1, 2, 3});
+        assertThat(exchange.exchange("acme", token)).as("alg=none mints nothing").isNull();
+    }
+
+    @Test
+    void an_hs256_token_signed_with_the_public_key_is_rejected() throws Exception {
+        String header = header("HS256", "k1");
+        String body = body("\"jenesis\"", Instant.now().plusSeconds(300));
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(keyPair.getPublic().getEncoded(), "HmacSHA256"));
+        String forged = header + "." + body + "."
+                + b64(mac.doFinal((header + "." + body).getBytes(StandardCharsets.US_ASCII)));
+        assertThat(exchange.exchange("acme", forged)).as("an algorithm-confusion token mints nothing").isNull();
+    }
+
+    @Test
+    void a_token_signed_by_a_key_outside_the_jwks_is_rejected() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        PrivateKey foreign = generator.generateKeyPair().getPrivate();
+        assertThat(exchange.exchange("acme",
+                rs256(header("RS256", "k1"), body("\"jenesis\"", Instant.now().plusSeconds(300)), foreign)))
+                .as("a foreign signing key mints nothing").isNull();
+        assertThat(exchange.exchange("acme",
+                rs256(header("RS256", "rotated"), body("\"jenesis\"", Instant.now().plusSeconds(300)), keyPair.getPrivate())))
+                .as("a kid absent from the JWKS mints nothing").isNull();
+    }
+
+    @Test
+    void an_array_audience_is_matched_by_membership() throws IOException {
+        assertThat(exchange.exchange("acme", rs256(header("RS256", "k1"),
+                body("[\"x\",\"jenesis\"]", Instant.now().plusSeconds(300)), keyPair.getPrivate())))
+                .as("the trust audience present in the array is accepted").isNotNull();
+        assertThat(exchange.exchange("acme", rs256(header("RS256", "k1"),
+                body("[\"x\",\"y\"]", Instant.now().plusSeconds(300)), keyPair.getPrivate())))
+                .as("an array without the trust audience is rejected").isNull();
+    }
+
+    @Test
+    void expiry_tolerates_small_clock_skew_but_not_a_stale_token() throws IOException {
+        assertThat(exchange.exchange("acme", rs256(header("RS256", "k1"),
+                body("\"jenesis\"", Instant.now().minusSeconds(30)), keyPair.getPrivate())))
+                .as("a token just past expiry is within the skew").isNotNull();
+        assertThat(exchange.exchange("acme", rs256(header("RS256", "k1"),
+                body("\"jenesis\"", Instant.now().minusSeconds(600)), keyPair.getPrivate())))
+                .as("a long-expired token is rejected").isNull();
+    }
+
+    private String header(String algorithm, String kid) {
+        return base64("{\"alg\":\"" + algorithm + "\",\"kid\":\"" + kid + "\",\"typ\":\"JWT\"}");
+    }
+
+    private String body(String audienceJson, Instant expiry) {
+        return base64("{\"iss\":\"" + issuer + "\",\"aud\":" + audienceJson
+                + ",\"sub\":\"repo:acme/app:ci\",\"exp\":" + expiry.getEpochSecond() + "}");
+    }
+
+    private String rs256(String header, String body, PrivateKey key) {
+        try {
+            Signature signature = Signature.getInstance("SHA256withRSA");
+            signature.initSign(key);
+            signature.update((header + "." + body).getBytes(StandardCharsets.US_ASCII));
+            return header + "." + body + "." + b64(signature.sign());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String b64(byte[] bytes) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     private String jwt(String audience, String subject, Instant expiry) {
