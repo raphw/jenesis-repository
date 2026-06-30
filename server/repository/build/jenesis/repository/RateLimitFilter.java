@@ -8,6 +8,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Sheds excess load before the request reaches the repository: each request is metered against its tenant's rate
@@ -26,11 +27,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final Authorization authorization;
     private final long defaultPermitsPerMinute;
     private final ConcurrentHashMap<String, long[]> ceilings = new ConcurrentHashMap<>();
+    private final AtomicLong rejected = new AtomicLong();
 
     public RateLimitFilter(RateLimiter limiter, Authorization authorization, long defaultPermitsPerMinute) {
         this.limiter = limiter;
         this.authorization = authorization;
         this.defaultPermitsPerMinute = defaultPermitsPerMinute;
+    }
+
+    /** The number of requests shed with {@code 429} since startup - a back-pressure signal a metrics layer can scrape. */
+    public long rejected() {
+        return rejected.get();
     }
 
     @Override
@@ -43,6 +50,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String tenant = Authorization.tenantOf(request.getHeader("Jenesis-Repository-Key"));
         String bucket = tenant == null ? "anonymous" : tenant;
         if (!limiter.allow(bucket, ceiling(bucket, tenant))) {
+            rejected.incrementAndGet();
             response.setStatus(429);
             response.setHeader("Retry-After", "60");
             return;
