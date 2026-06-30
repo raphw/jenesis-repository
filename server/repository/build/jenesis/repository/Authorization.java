@@ -167,9 +167,10 @@ public final class Authorization {
     }
 
     /** A credential as the management surface sees it: its hash, metadata and per-scope grants ({@code scope ->
-     *  comma-separated tokens}). {@code label}, {@code expires} and {@code lastUsed} may be {@code null}. */
+     *  comma-separated tokens}). {@code label}, {@code expires}, {@code lastUsed} and {@code allowedAddresses} (a
+     *  comma-separated source-IP allowlist) may be {@code null}. */
     public record Credential(String hash, String label, Instant created, Instant expires, Instant lastUsed,
-                             Map<String, String> grants) {
+                             String allowedAddresses, Map<String, String> grants) {
     }
 
     /** Whether {@code key} carries {@code required} (a {@code <surface>:<verb>} token) for {@code scope} (a
@@ -295,8 +296,10 @@ public final class Authorization {
             }
         }
         String label = metadata == null ? null : metadata.getProperty("label");
+        String allowedAddresses = metadata == null ? null : metadata.getProperty("allowed-ips");
         return Optional.of(new Credential(hash, label,
-                instant(metadata, "created"), instant(metadata, "expires"), instant(metadata, "lastUsed"), scopes));
+                instant(metadata, "created"), instant(metadata, "expires"), instant(metadata, "lastUsed"),
+                allowedAddresses, scopes));
     }
 
     /** Record a freshly minted credential's metadata (created now, an optional label and optional expiry); the
@@ -351,6 +354,74 @@ public final class Authorization {
             metadata.setProperty("expires", capped.toString());
         }
         write(metadataPath(tenant, hash), metadata);
+    }
+
+    /** Set or clear ({@code null}/blank) a credential's source-IP allowlist: comma-separated CIDRs or plain
+     *  addresses. A request whose source address lies in none of them is forbidden even with a valid key. */
+    public void setAllowedAddresses(String tenant, String hash, String addresses) throws IOException {
+        require();
+        Properties metadata = read(metadataPath(tenant, hash));
+        if (metadata == null) {
+            metadata = new Properties();
+            metadata.setProperty("created", Instant.now().toString());
+        }
+        if (addresses == null || addresses.isBlank()) {
+            metadata.remove("allowed-ips");
+        } else {
+            metadata.setProperty("allowed-ips", addresses.trim());
+        }
+        write(metadataPath(tenant, hash), metadata);
+    }
+
+    /** Whether a credential's source-IP allowlist admits {@code clientAddress}: true when it sets none (the common
+     *  case) and when the address falls in a listed CIDR or matches a listed plain address; false otherwise, so a
+     *  stolen key is useless off its network. A malformed or unprovisioned key is left to the grant check. */
+    public boolean addressAllowed(String key, String clientAddress) throws IOException {
+        if (store == null || !wellFormed(key)) {
+            return true;
+        }
+        Properties metadata = read(metadataPath(tenantOf(key), hash(key)));
+        String allowed = metadata == null ? null : metadata.getProperty("allowed-ips");
+        if (allowed == null || allowed.isBlank()) {
+            return true;
+        }
+        if (clientAddress == null) {
+            return false;
+        }
+        for (String cidr : allowed.split(",")) {
+            if (inRange(clientAddress.trim(), cidr.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether {@code address} lies within {@code cidr} (a {@code network/bits} range or a plain address), comparing
+     *  the leading bits of the two addresses; mismatched IPv4/IPv6 families or unparseable input never match. */
+    private static boolean inRange(String address, String cidr) {
+        try {
+            int slash = cidr.indexOf('/');
+            byte[] network = InetAddress.getByName(slash < 0 ? cidr : cidr.substring(0, slash)).getAddress();
+            byte[] candidate = InetAddress.getByName(address).getAddress();
+            if (network.length != candidate.length) {
+                return false;
+            }
+            int bits = slash < 0 ? network.length * 8 : Integer.parseInt(cidr.substring(slash + 1).trim());
+            int fullBytes = bits / 8;
+            for (int i = 0; i < fullBytes; i++) {
+                if (network[i] != candidate[i]) {
+                    return false;
+                }
+            }
+            int remainder = bits % 8;
+            if (remainder > 0) {
+                int mask = (0xFF << (8 - remainder)) & 0xFF;
+                return (network[fullBytes] & mask) == (candidate[fullBytes] & mask);
+            }
+            return true;
+        } catch (UnknownHostException | RuntimeException e) {
+            return false;
+        }
     }
 
     /** Stamp a credential's last-used time; the off-request usage tracker calls this, at most once per day. */

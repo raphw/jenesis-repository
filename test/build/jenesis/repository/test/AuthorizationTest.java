@@ -210,6 +210,25 @@ class AuthorizationTest {
     }
 
     @Test
+    void a_source_address_allowlist_admits_only_listed_ranges() throws IOException {
+        String key = Authorization.mint("acme");
+        String hash = Authorization.hash(key);
+        authorization.provision("acme", hash, "k", null);
+        assertThat(authorization.addressAllowed(key, "203.0.113.5")).as("no allowlist admits any address").isTrue();
+
+        authorization.setAllowedAddresses("acme", hash, "10.0.0.0/8, 192.168.1.1");
+        assertThat(authorization.addressAllowed(key, "10.1.2.3")).as("inside a listed CIDR").isTrue();
+        assertThat(authorization.addressAllowed(key, "192.168.1.1")).as("an exact listed address").isTrue();
+        assertThat(authorization.addressAllowed(key, "192.168.1.2")).as("outside every range").isFalse();
+        assertThat(authorization.addressAllowed(key, null)).as("a missing address fails a set allowlist").isFalse();
+        assertThat(authorization.credential("acme", hash).orElseThrow().allowedAddresses())
+                .as("the allowlist is read back on the credential").isEqualTo("10.0.0.0/8, 192.168.1.1");
+
+        authorization.setAllowedAddresses("acme", hash, null);
+        assertThat(authorization.addressAllowed(key, "203.0.113.5")).as("a cleared allowlist admits any address").isTrue();
+    }
+
+    @Test
     void a_leaked_key_revokes_only_itself_and_only_when_well_formed_and_provisioned() throws IOException {
         String key = Authorization.mint("acme");
         authorization.grant(key, "*", Authorization.REPOSITORY_READ);
