@@ -274,8 +274,11 @@ class AuthorizationTest {
         assertThat(credential.created()).isNotNull();
         assertThat(credential.grants()).containsEntry("releases", Authorization.REPOSITORY_WRITE);
 
-        authorization.recordUsed("acme", hash, Instant.now());
-        assertThat(authorization.credential("acme", hash).orElseThrow().lastUsed()).isNotNull();
+        authorization.recordUsed("acme", hash, Instant.now(), "10.1.2.3", 3);
+        Authorization.Credential used = authorization.credential("acme", hash).orElseThrow();
+        assertThat(used.lastUsed()).isNotNull();
+        assertThat(used.lastUsedAddress()).isEqualTo("10.1.2.3");
+        assertThat(used.useCount()).isEqualTo(3);
 
         authorization.revoke("acme", hash);
         assertThat(authorization.authorize(key, "releases", Authorization.REPOSITORY_WRITE))

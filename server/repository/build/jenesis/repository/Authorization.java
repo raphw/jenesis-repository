@@ -167,10 +167,12 @@ public final class Authorization {
     }
 
     /** A credential as the management surface sees it: its hash, metadata and per-scope grants ({@code scope ->
-     *  comma-separated tokens}). {@code label}, {@code expires}, {@code lastUsed} and {@code allowedAddresses} (a
-     *  comma-separated source-IP allowlist) may be {@code null}. */
+     *  comma-separated tokens}). {@code label}, {@code expires}, {@code lastUsed}, {@code lastUsedAddress} and
+     *  {@code allowedAddresses} (a comma-separated source-IP allowlist) may be {@code null}; {@code useCount} is the
+     *  running number of authorized uses. */
     public record Credential(String hash, String label, Instant created, Instant expires, Instant lastUsed,
-                             String allowedAddresses, Map<String, String> grants) {
+                             String lastUsedAddress, long useCount, String allowedAddresses,
+                             Map<String, String> grants) {
     }
 
     /** Whether {@code key} carries {@code required} (a {@code <surface>:<verb>} token) for {@code scope} (a
@@ -297,9 +299,11 @@ public final class Authorization {
         }
         String label = metadata == null ? null : metadata.getProperty("label");
         String allowedAddresses = metadata == null ? null : metadata.getProperty("allowed-ips");
+        String lastUsedAddress = metadata == null ? null : metadata.getProperty("lastUsedAddress");
+        long useCount = metadata == null ? 0 : Long.parseLong(metadata.getProperty("useCount", "0"));
         return Optional.of(new Credential(hash, label,
                 instant(metadata, "created"), instant(metadata, "expires"), instant(metadata, "lastUsed"),
-                allowedAddresses, scopes));
+                lastUsedAddress, useCount, allowedAddresses, scopes));
     }
 
     /** Record a freshly minted credential's metadata (created now, an optional label and optional expiry); the
@@ -424,14 +428,22 @@ public final class Authorization {
         }
     }
 
-    /** Stamp a credential's last-used time; the off-request usage tracker calls this, at most once per day. */
-    public void recordUsed(String tenant, String hash, Instant when) throws IOException {
+    /** Stamp a credential's last use - the time, the source {@code address} (kept when {@code null}) and a count
+     *  raised by {@code increment} - for the off-request usage tracker, which batches so the store sees at most one
+     *  write per credential per day. A revoked credential (no metadata) is silently skipped. */
+    public void recordUsed(String tenant, String hash, Instant when, String address, long increment)
+            throws IOException {
         require();
         Properties metadata = read(metadataPath(tenant, hash));
         if (metadata == null) {
             return;
         }
         metadata.setProperty("lastUsed", when.toString());
+        if (address != null) {
+            metadata.setProperty("lastUsedAddress", address);
+        }
+        metadata.setProperty("useCount",
+                Long.toString(Long.parseLong(metadata.getProperty("useCount", "0")) + increment));
         write(metadataPath(tenant, hash), metadata);
     }
 
