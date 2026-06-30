@@ -104,6 +104,27 @@ class AuthorizationTest {
     }
 
     @Test
+    void a_path_prefix_grant_scopes_rights_to_a_subtree_of_the_repository() throws IOException {
+        String key = Authorization.mint("acme");
+        authorization.setGrant("acme", Authorization.hash(key), "releases:maven/com/acme",
+                Authorization.REPOSITORY_READ);
+        assertThat(authorize(key, "releases", "maven/com/acme/lib/1.0/lib-1.0.jar"))
+                .as("a path under the prefix is allowed").isEqualTo(Authorization.Decision.ALLOWED);
+        assertThat(authorize(key, "releases", "maven/com/other/lib/1.0/lib-1.0.jar"))
+                .as("a path outside the prefix is forbidden").isEqualTo(Authorization.Decision.FORBIDDEN);
+        assertThat(authorize(key, "releases", "maven/com/acmexyz/lib"))
+                .as("a sibling sharing only the prefix string is forbidden").isEqualTo(Authorization.Decision.FORBIDDEN);
+        assertThat(authorize(key, "releases", null))
+                .as("a path-scoped grant does not cover a pathless request").isEqualTo(Authorization.Decision.FORBIDDEN);
+        assertThat(authorize(key, "snapshots", "maven/com/acme/x"))
+                .as("the prefix grant is bound to its repository").isEqualTo(Authorization.Decision.FORBIDDEN);
+    }
+
+    private Authorization.Decision authorize(String key, String repository, String path) throws IOException {
+        return authorization.authorize(key, repository, path, Authorization.REPOSITORY_READ);
+    }
+
+    @Test
     void an_all_privileges_grant_covers_every_surface_and_verb() throws IOException {
         String key = Authorization.mint("acme");
         authorization.grantAll(key, "*");

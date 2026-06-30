@@ -175,6 +175,15 @@ public final class Authorization {
     /** Whether {@code key} carries {@code required} (a {@code <surface>:<verb>} token) for {@code scope} (a
      *  repository name, or {@code null} for the default); an expired key is {@code UNAUTHORIZED}. */
     public Decision authorize(String key, String scope, String required) throws IOException {
+        return authorize(key, scope, null, required);
+    }
+
+    /** Whether {@code key} carries {@code required} for {@code scope} on the in-repository {@code path} ({@code null}
+     *  when the surface has no path, as the cache). A grant scope is a repository name (or {@code *}), optionally
+     *  narrowed to a path prefix as {@code <repo>:<prefix>} - a prefix grant covers the request only when {@code path}
+     *  lies under it - so one credential can carry repository-wide and path-scoped rights at once. An expired key is
+     *  {@code UNAUTHORIZED}, an unprovisioned one {@code FORBIDDEN}. */
+    public Decision authorize(String key, String scope, String path, String required) throws IOException {
         if (store == null) {
             return Decision.ALLOWED;
         }
@@ -191,19 +200,55 @@ public final class Authorization {
         if (grants == null) {
             return Decision.FORBIDDEN;
         }
-        String tokens = grants.getProperty(scope == null || scope.isBlank() ? "*" : scope);
-        if (tokens == null) {
-            tokens = grants.getProperty("*");
-        }
-        if (tokens == null) {
-            return Decision.FORBIDDEN;
-        }
-        for (String token : tokens.split(",")) {
-            if (grantedBy(token, required)) {
-                return Decision.ALLOWED;
+        String repository = scope == null || scope.isBlank() ? "*" : scope;
+        for (String grantScope : grants.stringPropertyNames()) {
+            if (!covers(grantScope, repository, path)) {
+                continue;
+            }
+            for (String token : grants.getProperty(grantScope).split(",")) {
+                if (grantedBy(token, required)) {
+                    return Decision.ALLOWED;
+                }
             }
         }
         return Decision.FORBIDDEN;
+    }
+
+    /** Whether a grant scope - a repository ({@code *} matching any), optionally narrowed by a {@code :<prefix>} path
+     *  prefix - covers a request for {@code repository} on {@code path}. A prefix grant matches only a non-null path
+     *  at or under the prefix on a segment boundary, so {@code maven/com/acme} covers {@code maven/com/acme/x} but not
+     *  {@code maven/com/acmexyz}; a bare repository grant covers any path. */
+    private static boolean covers(String grantScope, String repository, String path) {
+        int colon = grantScope.indexOf(':');
+        String repositoryPart = colon < 0 ? grantScope : grantScope.substring(0, colon);
+        if (!repositoryPart.equals("*") && !repositoryPart.equals(repository)) {
+            return false;
+        }
+        if (colon < 0) {
+            return true;
+        }
+        if (path == null) {
+            return false;
+        }
+        String prefix = trimPath(grantScope.substring(colon + 1));
+        String target = trimPath(path);
+        return target.equals(prefix) || target.startsWith(prefix + "/");
+    }
+
+    private static String trimPath(String path) {
+        String value = path.strip();
+        if (value.endsWith("/*")) {
+            value = value.substring(0, value.length() - 2);
+        }
+        int start = 0;
+        int end = value.length();
+        while (start < end && value.charAt(start) == '/') {
+            start++;
+        }
+        while (end > start && value.charAt(end - 1) == '/') {
+            end--;
+        }
+        return value.substring(start, end);
     }
 
     /** Whether a granted token confers a required {@code <surface>:<verb>}: the exact token, the per-surface
