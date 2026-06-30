@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 
@@ -32,7 +33,7 @@ class AuditLogTest {
 
     @Test
     void it_records_and_queries_events_filtered_by_action_and_tenant() throws IOException {
-        AuditLog audit = new AuditLog(store, true);
+        AuditLog audit = new AuditLog(store, true, null);
         audit.record("acme", "hash1", "mint", "cred-x");
         audit.record("acme", "hash1", "revoke", "cred-x");
         audit.record("globex", "hashG", "mint", "cred-y");
@@ -46,7 +47,7 @@ class AuditLogTest {
 
     @Test
     void it_orders_newest_first_and_honours_a_time_bound() throws IOException {
-        AuditLog audit = new AuditLog(store, true);
+        AuditLog audit = new AuditLog(store, true, null);
         audit.record("acme", "a", "mint", "one");
         audit.record("acme", "a", "mint", "two");
         assertThat(audit.query("acme", null, null, null)).first()
@@ -57,8 +58,20 @@ class AuditLogTest {
 
     @Test
     void a_disabled_log_records_nothing() throws IOException {
-        AuditLog audit = new AuditLog(store, false);
+        AuditLog audit = new AuditLog(store, false, null);
         audit.record("acme", "h", "mint", "x");
         assertThat(audit.query("acme", null, null, null)).isEmpty();
+    }
+
+    @Test
+    void it_prunes_day_folders_older_than_the_retention_window() throws IOException {
+        AuditLog audit = new AuditLog(store, true, java.time.Duration.ofDays(30));
+        store.write("audit/acme/2020-01-01/100-1", new java.io.ByteArrayInputStream(
+                "at=2020-01-01T00:00:00Z\nactor=old\naction=stale\ntarget=x\n".getBytes(StandardCharsets.UTF_8)));
+        assertThat(audit.query("acme", null, null, null)).as("the stale event is present before pruning").hasSize(1);
+
+        audit.record("acme", "a", "mint", "fresh");
+        assertThat(audit.query("acme", null, null, null)).extracting(AuditLog.Event::action)
+                .as("a recording prunes the stale day, leaving only fresh events").containsExactly("mint");
     }
 }

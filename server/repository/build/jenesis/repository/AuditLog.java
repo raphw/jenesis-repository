@@ -5,14 +5,17 @@ import build.jenesis.repository.store.ArtifactStore;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -22,7 +25,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * concurrent or replicated deployment never contends on a shared log. {@link #query} reads a tenant's events back,
  * filtered by time range and action and newest-first, for a console to show or an endpoint to export. Recording is
  * synchronous but best-effort: a failed write is dropped rather than failing the operation it audits. A disabled log
- * records nothing.
+ * records nothing. With a {@code retention} set, a tenant's day folders older than the window are pruned at most once
+ * a day (off the back of a recording), so the trail does not grow without bound.
  */
 public final class AuditLog {
 
@@ -32,11 +36,14 @@ public final class AuditLog {
 
     private final ArtifactStore store;
     private final boolean enabled;
+    private final Duration retention;
     private final AtomicLong sequence = new AtomicLong();
+    private final Map<String, LocalDate> prunedDay = new ConcurrentHashMap<>();
 
-    public AuditLog(ArtifactStore store, boolean enabled) {
+    public AuditLog(ArtifactStore store, boolean enabled, Duration retention) {
         this.store = store;
         this.enabled = enabled;
+        this.retention = retention;
     }
 
     public boolean enabled() {
@@ -54,14 +61,40 @@ public final class AuditLog {
         event.setProperty("actor", actor == null ? "" : actor);
         event.setProperty("action", action == null ? "" : action);
         event.setProperty("target", target == null ? "" : target);
-        String day = LocalDate.ofInstant(now, ZoneOffset.UTC).toString();
-        String path = "audit/" + tenant + "/" + day + "/" + now.toEpochMilli() + "-" + sequence.incrementAndGet();
+        LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
+        String path = "audit/" + tenant + "/" + today + "/" + now.toEpochMilli() + "-" + sequence.incrementAndGet();
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             event.store(bytes, null);
             store.write(path, new ByteArrayInputStream(bytes.toByteArray()));
         } catch (IOException e) {
             // best-effort: an audit write must not fail the audited operation
+        }
+        prune(tenant, today);
+    }
+
+    /** Delete a tenant's day folders older than the retention window, at most once a day per tenant. */
+    private void prune(String tenant, LocalDate today) {
+        if (retention == null || today.equals(prunedDay.put(tenant, today))) {
+            return;
+        }
+        LocalDate cutoff = today.minusDays(retention.toDays());
+        for (String day : store.list("audit/" + tenant)) {
+            LocalDate date;
+            try {
+                date = LocalDate.parse(day);
+            } catch (RuntimeException e) {
+                continue;
+            }
+            if (date.isBefore(cutoff)) {
+                for (String name : store.list("audit/" + tenant + "/" + day)) {
+                    try {
+                        store.delete("audit/" + tenant + "/" + day + "/" + name);
+                    } catch (IOException e) {
+                        // best-effort
+                    }
+                }
+            }
         }
     }
 
