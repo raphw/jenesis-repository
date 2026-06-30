@@ -326,6 +326,22 @@ public final class Authorization {
         store.delete(metadataPath(tenant, hash));
     }
 
+    /** Revoke the credential a raw {@code key} resolves to, for when a key is reported leaked: the {@code jenk_}
+     *  checksum and tenant are read straight off the key, so a malformed or unknown key revokes nothing. Returns
+     *  whether a provisioned credential was actually revoked. */
+    public boolean revokeLeaked(String key) throws IOException {
+        if (!wellFormed(key)) {
+            return false;
+        }
+        String tenant = tenantOf(key);
+        String hash = hash(key);
+        if (credential(tenant, hash).isEmpty()) {
+            return false;
+        }
+        revoke(tenant, hash);
+        return true;
+    }
+
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**

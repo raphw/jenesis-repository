@@ -189,6 +189,19 @@ class AuthorizationTest {
     }
 
     @Test
+    void a_leaked_key_revokes_only_itself_and_only_when_well_formed_and_provisioned() throws IOException {
+        String key = Authorization.mint("acme");
+        authorization.grant(key, "*", Authorization.REPOSITORY_READ);
+        assertThat(authorization.revokeLeaked("not-a-jenesis-key"))
+                .as("a malformed report revokes nothing").isFalse();
+        assertThat(authorization.revokeLeaked(Authorization.mint("acme")))
+                .as("a well-formed but unknown key revokes nothing").isFalse();
+        assertThat(authorization.revokeLeaked(key)).as("a provisioned leaked key is revoked").isTrue();
+        assertThat(authorization.authorize(key, null, Authorization.REPOSITORY_READ))
+                .isEqualTo(Authorization.Decision.FORBIDDEN);
+    }
+
+    @Test
     void an_anonymous_repository_allows_everything() throws IOException {
         assertThat(Authorization.anonymous().authorize(null, null, Authorization.REPOSITORY_WRITE))
                 .isEqualTo(Authorization.Decision.ALLOWED);
