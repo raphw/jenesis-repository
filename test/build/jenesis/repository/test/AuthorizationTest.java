@@ -339,4 +339,15 @@ class AuthorizationTest {
                 .isEqualTo(Authorization.Decision.FORBIDDEN);
         assertThat(authorization.credential("acme", hash)).isEmpty();
     }
+
+    @Test
+    void a_tenant_storage_quota_is_stored_set_and_cleared() throws IOException {
+        assertThat(authorization.quota("acme")).as("none set is unlimited").isZero();
+
+        authorization.setQuota("acme", 1_099_511_627_776L);
+        assertThat(authorization.quota("acme")).isEqualTo(1_099_511_627_776L);
+
+        authorization.setQuota("acme", 0);
+        assertThat(authorization.quota("acme")).as("zero clears it").isZero();
+    }
 }

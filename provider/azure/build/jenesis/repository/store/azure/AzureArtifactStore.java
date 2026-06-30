@@ -53,6 +53,15 @@ public final class AzureArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public long size(String key) throws IOException {
+        try {
+            return container.getBlobClient(keyPrefix + key).getProperties().getBlobSize();
+        } catch (BlobStorageException e) {
+            return -1L;
+        }
+    }
+
+    @Override
     public void read(String key, OutputStream out) throws IOException {
         try {
             container.getBlobClient(keyPrefix + key).downloadStream(out);

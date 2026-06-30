@@ -54,6 +54,15 @@ public final class S3ArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public long size(String key) throws IOException {
+        try {
+            return s3.headObject(b -> b.bucket(bucket).key(keyPrefix + key)).contentLength();
+        } catch (S3Exception e) {
+            return -1L;
+        }
+    }
+
+    @Override
     public void read(String key, OutputStream out) throws IOException {
         try (ResponseInputStream<GetObjectResponse> in = s3.getObject(b -> b.bucket(bucket).key(keyPrefix + key))) {
             in.transferTo(out);

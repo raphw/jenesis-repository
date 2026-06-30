@@ -133,6 +133,30 @@ public final class Authorization {
         write(policyPath(tenant), properties);
     }
 
+    /** A tenant's stored-content quota in bytes, or {@code 0} when none is set (unlimited). */
+    public long quota(String tenant) throws IOException {
+        Properties stored = store == null ? null : read(quotaPath(tenant));
+        String value = stored == null ? null : stored.getProperty("max-bytes");
+        return value == null ? 0L : Long.parseLong(value);
+    }
+
+    /** Set ({@code > 0}) or clear ({@code 0}) a tenant's stored-content quota in bytes; a negative value is rejected. */
+    public void setQuota(String tenant, long maxBytes) throws IOException {
+        require();
+        if (maxBytes < 0) {
+            throw new IllegalArgumentException("A storage quota must not be negative");
+        }
+        if (maxBytes == 0) {
+            if (store.readVersioned(quotaPath(tenant)).isPresent()) {
+                store.delete(quotaPath(tenant));
+            }
+            return;
+        }
+        Properties properties = new Properties();
+        properties.setProperty("max-bytes", Long.toString(maxBytes));
+        write(quotaPath(tenant), properties);
+    }
+
     /** A tenant's OIDC trusts, by name. An id-token matching a trust is exchanged for a short-lived credential. */
     public List<Trust> trusts(String tenant) throws IOException {
         Properties stored = store == null ? null : read(oidcPath(tenant));
@@ -725,6 +749,10 @@ public final class Authorization {
 
     private static String policyPath(String tenant) {
         return "auth/" + tenant + "/policy";
+    }
+
+    private static String quotaPath(String tenant) {
+        return "auth/" + tenant + "/quota";
     }
 
     private static String oidcPath(String tenant) {

@@ -3,9 +3,11 @@ package build.jenesis.repository;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
+import build.jenesis.repository.store.QuotaExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -156,6 +158,13 @@ public class RepositoryController {
             return cursor == null ? nexus : nexus.from(cursor);
         }
         return null;
+    }
+
+    /** A write refused by the storage quota maps to {@code 507 Insufficient Storage} - the limit was hit before any
+     *  bytes were stored, so this is a clean rejection the client can surface. */
+    @ExceptionHandler(QuotaExceededException.class)
+    public void quotaExceeded(QuotaExceededException exception, HttpServletResponse response) throws IOException {
+        respond(response, 507, exception.getMessage());
     }
 
     private static void respond(HttpServletResponse response, int status, String body) throws IOException {

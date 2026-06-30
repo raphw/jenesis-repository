@@ -53,6 +53,12 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public long size(String key) throws IOException {
+        Path path = resolve(key);
+        return Files.isRegularFile(path) ? Files.size(path) : -1L;
+    }
+
+    @Override
     public void delete(String key) throws IOException {
         Path path = resolve(key);
         Files.deleteIfExists(path);

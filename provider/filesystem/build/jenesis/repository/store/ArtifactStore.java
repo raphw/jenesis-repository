@@ -27,6 +27,9 @@ public interface ArtifactStore {
     /** Atomically store the blob from {@code in}, so a reader never observes a partial write. */
     void write(String key, InputStream in) throws IOException;
 
+    /** The stored byte length of the blob at this key, or {@code -1} if nothing is stored there. */
+    long size(String key) throws IOException;
+
     /** Delete the blob, tidying any now-empty container it leaves behind. */
     void delete(String key) throws IOException;
 

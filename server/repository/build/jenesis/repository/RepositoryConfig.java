@@ -4,6 +4,7 @@ import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.store.QuotaArtifactStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -34,7 +35,9 @@ public class RepositoryConfig {
 
     @Bean
     public ArtifactStore artifactStore(RepositoryProperties properties, Environment environment) {
-        return ArtifactStoreProvider.resolve(properties.getStore(), environment::getProperty);
+        ArtifactStore store = ArtifactStoreProvider.resolve(properties.getStore(), environment::getProperty);
+        long quota = properties.quotaBytes();
+        return quota > 0 ? new QuotaArtifactStore(store, quota) : store;
     }
 
     @Bean

@@ -194,7 +194,7 @@ plug in through the console's extension points without forking the core.
 
 | Module | Folder | What it is |
 |--------|--------|------------|
-| `build.jenesis.repository.store`    | `provider/filesystem` | The `ArtifactStore` SPI (`read`/`write`/`exists`/`list`/`delete`, plus `writeVersioned` for cross-node compare-and-set, over an object namespace) + the filesystem backend. `java.base` only. |
+| `build.jenesis.repository.store`    | `provider/filesystem` | The `ArtifactStore` SPI (`read`/`write`/`exists`/`size`/`list`/`delete`, plus `writeVersioned` for cross-node compare-and-set, over an object namespace) + the filesystem backend, and the `QuotaArtifactStore` decorator that caps a scope's stored content bytes. `java.base` only. |
 | `build.jenesis.repository.store.s3`       | `provider/s3`         | S3-compatible backend (AWS SDK v2). `JENESIS_STORE=s3`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
 | `build.jenesis.repository.store.azure`    | `provider/azure`      | Azure Blob backend (azure-storage-blob SDK). `JENESIS_STORE=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
 | `build.jenesis.repository.format`   | `format/spi`          | The `RepositoryFormat` SPI + the framework-neutral `FormatExchange`. A layout is a module that depends only on this and `provides RepositoryFormat`; the dispatcher discovers them with `ServiceLoader`, so formats plug in without the core knowing them. `java.base` + the store SPI only. |
@@ -212,6 +212,10 @@ Build & run
     # the repository on the filesystem backend
     JENESIS_STORE_ROOT=/var/lib/jenesis-repository \
       java -Djenesis.execute.module=server+repository build/jenesis/Execute.java
+
+A repository-wide storage cap is optional: `-Djenesis.repository.quota=10GB` (a byte count or a `K`/`M`/`G`/`T`
+suffix) refuses a new artifact once stored content reaches the limit, with `507 Insufficient Storage`. Only
+content blobs count; a deduped re-deploy of bytes already stored needs no new space.
 
 A Jenesis build points at it with the existing knobs - no new client:
 
