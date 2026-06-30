@@ -12,9 +12,12 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Opt-in usage tracking for credentials, off the request path on its own daemon thread. An allowed request offers a
+ * Opt-in usage tracking for credentials, off the request path on its own worker thread - started and stopped
+ * through Spring's bean lifecycle (not a daemon), so {@link #close} interrupts and joins it for a clean shutdown,
+ * and {@link #alive}/{@link #dropped} let a health indicator watch it. An allowed request offers a
  * {@link Hit} (its tenant, the key's hash and the source address) to a bounded in-memory queue (non-blocking, dropped
  * if saturated - usage is an informational signal, not an audit log); the thread drains the queue into a per-credential
  * accumulator that counts every hit and remembers the last address, and flushes each credential through {@link
@@ -41,6 +44,7 @@ public final class KeyUsageTracker implements AutoCloseable {
     private final BlockingQueue<Hit> queue = new LinkedBlockingQueue<>(100_000);
     private final Map<String, Pending> pending = new ConcurrentHashMap<>();
     private final Map<String, LocalDate> writtenDay = new ConcurrentHashMap<>();
+    private final AtomicLong dropped = new AtomicLong();
     private volatile boolean running;
     private Thread thread;
 
@@ -53,10 +57,20 @@ public final class KeyUsageTracker implements AutoCloseable {
         return enabled;
     }
 
-    /** Offer a use for tracking - non-blocking, a no-op when tracking is off, dropped if the queue is full. */
+    /** Whether the worker thread is started and alive; an enabled tracker whose thread has died is unhealthy. */
+    public boolean alive() {
+        return thread != null && thread.isAlive();
+    }
+
+    /** Uses dropped because the in-memory queue was saturated - a back-pressure signal surfaced on health. */
+    public long dropped() {
+        return dropped.get();
+    }
+
+    /** Offer a use for tracking - non-blocking, a no-op when tracking is off, counted as dropped if the queue is full. */
     public void record(String tenant, String hash, String address) {
-        if (enabled && tenant != null && hash != null) {
-            queue.offer(new Hit(tenant, hash, address));
+        if (enabled && tenant != null && hash != null && !queue.offer(new Hit(tenant, hash, address))) {
+            dropped.incrementAndGet();
         }
     }
 
@@ -66,7 +80,6 @@ public final class KeyUsageTracker implements AutoCloseable {
         }
         running = true;
         thread = new Thread(this::loop, "jenesis-repository-key-usage");
-        thread.setDaemon(true);
         thread.start();
     }
 
@@ -75,6 +88,11 @@ public final class KeyUsageTracker implements AutoCloseable {
         running = false;
         if (thread != null) {
             thread.interrupt();
+            try {
+                thread.join(10_000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         LocalDate today = LocalDate.ofInstant(Instant.now(), ZoneOffset.UTC);
         for (Map.Entry<String, Pending> entry : pending.entrySet()) {

@@ -58,4 +58,23 @@ class KeyUsageTrackerTest {
         assertThat(next.useCount()).as("the next day flushes the accumulated delta").isEqualTo(4);
         assertThat(next.lastUsedAddress()).isEqualTo("10.0.0.4");
     }
+
+    @Test
+    void the_worker_is_not_alive_until_started_and_joins_on_close() {
+        KeyUsageTracker tracker = new KeyUsageTracker(authorization, true);
+        assertThat(tracker.alive()).as("not started").isFalse();
+        tracker.start();
+        assertThat(tracker.alive()).as("running after start").isTrue();
+        tracker.close();
+        assertThat(tracker.alive()).as("joined on close").isFalse();
+    }
+
+    @Test
+    void hits_past_the_queue_capacity_are_counted_as_dropped() {
+        KeyUsageTracker tracker = new KeyUsageTracker(authorization, true);
+        for (int index = 0; index < 100_100; index++) {
+            tracker.record("acme", hash, null);
+        }
+        assertThat(tracker.dropped()).as("offers past the 100k bound are dropped").isGreaterThan(0);
+    }
 }
