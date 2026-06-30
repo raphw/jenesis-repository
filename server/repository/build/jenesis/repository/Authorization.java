@@ -93,6 +93,13 @@ public final class Authorization {
     public record Policy(Duration defaultLifetime, Duration maxLifetime) {
     }
 
+    /** A named OIDC trust: an id-token from {@code issuer} (signed by its JWKS) whose {@code audience} and
+     *  {@code subject} (a glob, blank for any) match is exchanged for a short-lived credential of {@code ttl} carrying
+     *  {@code rights} on {@code scope}. A blank {@code audience} accepts any audience. */
+    public record Trust(String name, String issuer, String audience, String subject, String scope, String rights,
+                        Duration ttl) {
+    }
+
     /** The effective policy for {@code tenant}: a stored per-tenant default/ceiling layered over the deployment-wide
      *  values, the ceiling being the stricter (shorter) of the two and the default never exceeding it. */
     public Policy policy(String tenant) throws IOException {
@@ -123,6 +130,66 @@ public final class Authorization {
             properties.setProperty("max-lifetime", maxLifetime.toString());
         }
         write(policyPath(tenant), properties);
+    }
+
+    /** A tenant's OIDC trusts, by name. An id-token matching a trust is exchanged for a short-lived credential. */
+    public List<Trust> trusts(String tenant) throws IOException {
+        Properties stored = store == null ? null : read(oidcPath(tenant));
+        if (stored == null) {
+            return List.of();
+        }
+        Set<String> names = new TreeSet<>();
+        for (String key : stored.stringPropertyNames()) {
+            int dot = key.indexOf('.');
+            if (dot > 0) {
+                names.add(key.substring(0, dot));
+            }
+        }
+        List<Trust> trusts = new ArrayList<>();
+        for (String name : names) {
+            String ttl = stored.getProperty(name + ".ttl");
+            trusts.add(new Trust(name, stored.getProperty(name + ".issuer"),
+                    stored.getProperty(name + ".audience"), stored.getProperty(name + ".subject"),
+                    stored.getProperty(name + ".scope"), stored.getProperty(name + ".rights"),
+                    ttl == null || ttl.isBlank() ? null : Duration.parse(ttl)));
+        }
+        return trusts;
+    }
+
+    /** Add or replace an OIDC trust by name; {@code issuer}, {@code scope} and {@code rights} are required. */
+    public void setTrust(String tenant, Trust trust) throws IOException {
+        require();
+        if (trust.name() == null || trust.name().isBlank() || trust.issuer() == null || trust.issuer().isBlank()
+                || trust.scope() == null || trust.scope().isBlank() || trust.rights() == null || trust.rights().isBlank()) {
+            throw new IllegalArgumentException("An OIDC trust needs a name, an issuer, a scope and rights");
+        }
+        Properties stored = read(oidcPath(tenant));
+        if (stored == null) {
+            stored = new Properties();
+        }
+        String name = trust.name();
+        stored.setProperty(name + ".issuer", trust.issuer());
+        stored.setProperty(name + ".audience", trust.audience() == null ? "" : trust.audience());
+        stored.setProperty(name + ".subject", trust.subject() == null ? "" : trust.subject());
+        stored.setProperty(name + ".scope", trust.scope());
+        stored.setProperty(name + ".rights", trust.rights());
+        stored.setProperty(name + ".ttl", (trust.ttl() == null ? Duration.ofHours(1) : trust.ttl()).toString());
+        write(oidcPath(tenant), stored);
+    }
+
+    /** Remove a tenant's OIDC trust by name. */
+    public void removeTrust(String tenant, String name) throws IOException {
+        require();
+        Properties stored = read(oidcPath(tenant));
+        if (stored == null) {
+            return;
+        }
+        for (String key : new ArrayList<>(stored.stringPropertyNames())) {
+            if (key.startsWith(name + ".")) {
+                stored.remove(key);
+            }
+        }
+        write(oidcPath(tenant), stored);
     }
 
     /** The expiry to stamp on a newly minted credential for {@code tenant}. A non-null {@code requested} instant is
@@ -601,5 +668,9 @@ public final class Authorization {
 
     private static String policyPath(String tenant) {
         return "auth/" + tenant + "/policy";
+    }
+
+    private static String oidcPath(String tenant) {
+        return "auth/" + tenant + "/oidc";
     }
 }
