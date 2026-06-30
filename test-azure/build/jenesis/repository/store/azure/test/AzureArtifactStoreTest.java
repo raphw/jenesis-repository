@@ -79,8 +79,10 @@ public class AzureArtifactStoreTest {
     public void a_blob_round_trips_and_exists_only_after_a_write() throws IOException {
         byte[] body = {0, 1, 2, 3, (byte) 0xFF};
         assertThat(store.exists("blobs/abc")).isFalse();
+        assertThat(store.size("blobs/abc")).as("absent is -1").isEqualTo(-1L);
         store.write("blobs/abc", new ByteArrayInputStream(body));
         assertThat(store.exists("blobs/abc")).isTrue();
+        assertThat(store.size("blobs/abc")).as("the stored byte length").isEqualTo(body.length);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         store.read("blobs/abc", out);
         assertThat(out.toByteArray()).isEqualTo(body);
