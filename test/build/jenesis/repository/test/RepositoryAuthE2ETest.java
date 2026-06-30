@@ -35,6 +35,9 @@ public class RepositoryAuthE2ETest {
     private RepositoryApplication.Running server;
     private HttpClient client;
     private String base;
+    private String ci;
+    private String ro;
+    private String bogus;
 
     @BeforeAll
     public void boot() throws IOException {
@@ -43,8 +46,11 @@ public class RepositoryAuthE2ETest {
         ArtifactStore backend = ArtifactStoreProvider.resolve(
                 "filesystem", key -> "JENESIS_STORE_ROOT".equals(key) ? store.toString() : null);
         Authorization authorization = Authorization.enforcing(backend);
-        authorization.grant("acme.ci", "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
-        authorization.grant("acme.ro", "*", Authorization.REPOSITORY_READ);
+        ci = Authorization.mint("acme");
+        ro = Authorization.mint("acme");
+        bogus = Authorization.mint("acme");
+        authorization.grant(ci, "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
+        authorization.grant(ro, "*", Authorization.REPOSITORY_READ);
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/";
@@ -66,18 +72,18 @@ public class RepositoryAuthE2ETest {
 
     @Test
     public void a_read_only_key_may_not_deploy() throws Exception {
-        assertThat(put("maven/org/example/b/1/b-1.jar", "acme.ro").statusCode()).isEqualTo(403);
+        assertThat(put("maven/org/example/b/1/b-1.jar", ro).statusCode()).isEqualTo(403);
     }
 
     @Test
     public void a_deploy_key_deploys_and_a_read_key_reads() throws Exception {
-        assertThat(put("maven/org/example/c/1/c-1.jar", "acme.ci").statusCode()).isEqualTo(201);
-        assertThat(get("maven/org/example/c/1/c-1.jar", "acme.ro").statusCode()).isEqualTo(200);
+        assertThat(put("maven/org/example/c/1/c-1.jar", ci).statusCode()).isEqualTo(201);
+        assertThat(get("maven/org/example/c/1/c-1.jar", ro).statusCode()).isEqualTo(200);
     }
 
     @Test
     public void an_unknown_key_is_forbidden() throws Exception {
-        assertThat(get("maven/org/example/a/1/a-1.jar", "acme.bogus").statusCode()).isEqualTo(403);
+        assertThat(get("maven/org/example/a/1/a-1.jar", bogus).statusCode()).isEqualTo(403);
     }
 
     private HttpResponse<byte[]> put(String path, String key) throws IOException, InterruptedException {

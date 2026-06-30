@@ -4,8 +4,10 @@ import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
 
 /**
- * The credential model. A key is {@code <tenant>.<secret>}: the tenant travels in the key so the deployment stays
- * stateless and multi-tenant, and only the key's SHA-256 hash is ever stored, never the secret. Under
+ * The credential model. A key is {@code jenk_<tenant>.<secret><checksum>} (see {@link #mint}): the {@code jenk_}
+ * prefix and trailing checksum make a leaked key recognisable and offline-validatable by a secret scanner, the
+ * tenant travels in the key so the deployment stays stateless and multi-tenant, and only the key's SHA-256 hash is
+ * ever stored, never the secret. Under
  * {@code auth/<tenant>/<hash>/} sit two small objects: {@code grants} - a properties map of
  * {@code <scope> -> <rights>} where the scope is a named repository ({@code *} matching all) and the rights are
  * {@code <surface>:<verb>} tokens - and {@code metadata} (label, created, optional expiry, optional last-used).
@@ -75,14 +77,10 @@ public final class Authorization {
         if (store == null) {
             return Decision.ALLOWED;
         }
-        if (key == null || key.isBlank()) {
+        if (!wellFormed(key)) {
             return Decision.UNAUTHORIZED;
         }
-        int dot = key.indexOf('.');
-        if (dot <= 0 || dot == key.length() - 1) {
-            return Decision.UNAUTHORIZED;
-        }
-        String tenant = key.substring(0, dot);
+        String tenant = tenantOf(key);
         String hash = hash(key);
         Instant expires = instant(read(metadataPath(tenant, hash)), "expires");
         if (expires != null && Instant.now().isAfter(expires)) {
@@ -121,12 +119,12 @@ public final class Authorization {
     /** Set {@code key}'s rights for {@code scope} by key, replacing any held for that scope; for provisioning when
      *  the secret is still in hand. */
     public void grant(String key, String scope, String... rights) throws IOException {
-        setGrant(tenant(key), hash(key), scope, String.join(",", rights));
+        setGrant(tenantOf(key), hash(key), scope, String.join(",", rights));
     }
 
     /** Grant every privilege for {@code scope} by key - the all-privileges {@code *} token, an owner/admin key. */
     public void grantAll(String key, String scope) throws IOException {
-        setGrant(tenant(key), hash(key), scope, "*");
+        setGrant(tenantOf(key), hash(key), scope, "*");
     }
 
     /** The credential hashes provisioned for a tenant, for the management surface to list. */
@@ -225,6 +223,53 @@ public final class Authorization {
         store.delete(metadataPath(tenant, hash));
     }
 
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    /**
+     * A freshly minted key for {@code tenant}, in the scannable form {@code jenk_<tenant>.<secret><checksum>}. The
+     * {@code jenk_} prefix and the trailing CRC32 checksum let a secret scanner recognise a leaked Jenesis key and
+     * validate it offline (so a partner scanner can report it for revocation), and let the server
+     * reject a malformed or truncated key with no store lookup. The tenant travels in the key so resolution stays
+     * stateless; only the key's SHA-256 hash is ever stored.
+     */
+    public static String mint(String tenant) {
+        byte[] secret = new byte[24];
+        RANDOM.nextBytes(secret);
+        String body = "jenk_" + tenant + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+        return body + checksum(body);
+    }
+
+    /** Whether {@code key} is a well-formed Jenesis key - the {@code jenk_} prefix, a tenant, a secret and a matching
+     *  trailing checksum - checked before any store lookup so a malformed or truncated key is cheap to reject. */
+    public static boolean wellFormed(String key) {
+        if (key == null || !key.startsWith("jenk_")) {
+            return false;
+        }
+        int dot = key.indexOf('.');
+        if (dot <= 5 || key.length() <= dot + 7) {
+            return false;
+        }
+        int split = key.length() - 6;
+        return key.substring(split).equals(checksum(key.substring(0, split)));
+    }
+
+    /** The tenant carried by a {@code jenk_}-prefixed key, or {@code null} if it is not one. */
+    public static String tenantOf(String key) {
+        if (key == null || !key.startsWith("jenk_")) {
+            return null;
+        }
+        int dot = key.indexOf('.');
+        return dot > 5 ? key.substring(5, dot) : null;
+    }
+
+    private static String checksum(String body) {
+        CRC32 crc = new CRC32();
+        crc.update(body.getBytes(StandardCharsets.UTF_8));
+        long value = crc.getValue();
+        byte[] bytes = {(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value};
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
     /** The lowercase hex SHA-256 of a key, the only form of it that is ever persisted. */
     public static String hash(String key) {
         try {
@@ -265,10 +310,6 @@ public final class Authorization {
         return value == null ? null : Instant.parse(value);
     }
 
-    private static String tenant(String key) {
-        int dot = key.indexOf('.');
-        return dot < 0 ? key : key.substring(0, dot);
-    }
 
     private static String grantsPath(String tenant, String hash) {
         return "auth/" + tenant + "/" + hash + "/grants";

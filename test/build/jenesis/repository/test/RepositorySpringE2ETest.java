@@ -90,7 +90,8 @@ public class RepositorySpringE2ETest {
             ArtifactStore backend = ArtifactStoreProvider.resolve(
                     "filesystem", key -> "JENESIS_STORE_ROOT".equals(key) ? enforcingStore.toString() : null);
             Authorization authorization = Authorization.enforcing(backend);
-            authorization.grant("acme.ci", "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
+            String ci = Authorization.mint("acme");
+            authorization.grant(ci, "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
             String enforcingBase = "http://localhost:" + enforcing.port() + "/";
 
             HttpResponse<byte[]> unkeyed = client.send(
@@ -101,14 +102,14 @@ public class RepositorySpringE2ETest {
 
             HttpResponse<byte[]> keyedPut = client.send(
                     HttpRequest.newBuilder(URI.create(enforcingBase + "maven/org/example/auth/1/auth-1.jar"))
-                            .header("Jenesis-Repository-Key", "acme.ci")
+                            .header("Jenesis-Repository-Key", ci)
                             .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[]{9})).build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             assertThat(keyedPut.statusCode()).isEqualTo(201);
 
             HttpResponse<byte[]> keyedGet = client.send(
                     HttpRequest.newBuilder(URI.create(enforcingBase + "maven/org/example/auth/1/auth-1.jar"))
-                            .header("Jenesis-Repository-Key", "acme.ci").GET().build(),
+                            .header("Jenesis-Repository-Key", ci).GET().build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             assertThat(keyedGet.statusCode()).isEqualTo(200);
         } finally {
