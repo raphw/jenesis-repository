@@ -37,14 +37,16 @@ public final class Authorization {
 
     private final ArtifactStore store;
     private final Duration defaultLifetime;
+    private final Duration maxLifetime;
 
     private Authorization(ArtifactStore store) {
-        this(store, Duration.ofDays(90));
+        this(store, Duration.ofDays(90), null);
     }
 
-    private Authorization(ArtifactStore store, Duration defaultLifetime) {
+    private Authorization(ArtifactStore store, Duration defaultLifetime, Duration maxLifetime) {
         this.store = store;
         this.defaultLifetime = defaultLifetime;
+        this.maxLifetime = maxLifetime;
     }
 
     /** An open deployment: every request is allowed, the headless default for the free single-token deployment. */
@@ -60,28 +62,97 @@ public final class Authorization {
         return new Authorization(store);
     }
 
-    /** The default lifetime stamped on a credential minted without an explicit expiry (90 days unless overridden);
-     *  a finite default means a credential expires unless a deployment deliberately mints a non-expiring one. */
+    /** The deployment-wide default lifetime for a credential minted without an explicit expiry (90 days unless
+     *  overridden); a tenant policy may narrow it further (see {@link #policy}). */
     public Authorization withDefaultLifetime(Duration defaultLifetime) {
         if (defaultLifetime == null || defaultLifetime.isZero() || defaultLifetime.isNegative()) {
             throw new IllegalArgumentException("A default credential lifetime must be a positive duration");
         }
-        return new Authorization(store, defaultLifetime);
+        return new Authorization(store, defaultLifetime, maxLifetime);
+    }
+
+    /** The deployment-wide ceiling on a credential's lifetime (none unless set); no credential of any tenant may
+     *  outlive it, and a tenant policy can only cap further, never beyond it. */
+    public Authorization withMaxLifetime(Duration maxLifetime) {
+        if (maxLifetime != null && (maxLifetime.isZero() || maxLifetime.isNegative())) {
+            throw new IllegalArgumentException("A maximum credential lifetime must be a positive duration");
+        }
+        return new Authorization(store, defaultLifetime, maxLifetime);
     }
 
     public Duration defaultLifetime() {
         return defaultLifetime;
     }
 
-    /** The expiry to stamp on a newly minted credential. A non-null {@code requested} instant is honoured as given;
-     *  a null request yields the default lifetime from now, so a credential expires by default. A credential is only
-     *  ever non-expiring when {@code nonExpiring} is set explicitly - a deliberately unbounded key a deployment may
-     *  discourage but still permits. */
-    public Instant mintExpiry(Instant requested, boolean nonExpiring) {
-        if (nonExpiring) {
-            return null;
+    public Duration maxLifetime() {
+        return maxLifetime;
+    }
+
+    /** A tenant's effective credential-lifetime policy: the default to stamp on a blank-expiry mint and the optional
+     *  ceiling beyond which no key may live. {@code maxLifetime} is {@code null} when nothing caps the lifetime. */
+    public record Policy(Duration defaultLifetime, Duration maxLifetime) {
+    }
+
+    /** The effective policy for {@code tenant}: a stored per-tenant default/ceiling layered over the deployment-wide
+     *  values, the ceiling being the stricter (shorter) of the two and the default never exceeding it. */
+    public Policy policy(String tenant) throws IOException {
+        Properties stored = store == null ? null : read(policyPath(tenant));
+        Duration tenantDefault = duration(stored, "default-lifetime");
+        Duration ceiling = shorter(duration(stored, "max-lifetime"), maxLifetime);
+        Duration effectiveDefault = tenantDefault != null ? tenantDefault : defaultLifetime;
+        if (ceiling != null && effectiveDefault.compareTo(ceiling) > 0) {
+            effectiveDefault = ceiling;
         }
-        return requested != null ? requested : Instant.now().plus(defaultLifetime);
+        return new Policy(effectiveDefault, ceiling);
+    }
+
+    /** Set or clear ({@code null}) a tenant's per-tenant default and maximum lifetimes; a value must be positive. */
+    public void setPolicy(String tenant, Duration defaultLifetime, Duration maxLifetime) throws IOException {
+        require();
+        if (defaultLifetime != null && (defaultLifetime.isZero() || defaultLifetime.isNegative())) {
+            throw new IllegalArgumentException("A default credential lifetime must be a positive duration");
+        }
+        if (maxLifetime != null && (maxLifetime.isZero() || maxLifetime.isNegative())) {
+            throw new IllegalArgumentException("A maximum credential lifetime must be a positive duration");
+        }
+        Properties properties = new Properties();
+        if (defaultLifetime != null) {
+            properties.setProperty("default-lifetime", defaultLifetime.toString());
+        }
+        if (maxLifetime != null) {
+            properties.setProperty("max-lifetime", maxLifetime.toString());
+        }
+        write(policyPath(tenant), properties);
+    }
+
+    /** The expiry to stamp on a newly minted credential for {@code tenant}. A non-null {@code requested} instant is
+     *  honoured, a null request yields the tenant default from now, and {@code nonExpiring} asks for an unbounded key
+     *  - granted only when no ceiling applies, otherwise pulled back to the ceiling. So a credential expires by
+     *  default and never outlives the policy. */
+    public Instant mintExpiry(String tenant, Instant requested, boolean nonExpiring) throws IOException {
+        Policy policy = policy(tenant);
+        Instant base = nonExpiring
+                ? null
+                : requested != null ? requested : Instant.now().plus(policy.defaultLifetime());
+        return cap(base, policy.maxLifetime());
+    }
+
+    private static Instant cap(Instant expires, Duration maxLifetime) {
+        if (maxLifetime == null) {
+            return expires;
+        }
+        Instant ceiling = Instant.now().plus(maxLifetime);
+        return expires == null || expires.isAfter(ceiling) ? ceiling : expires;
+    }
+
+    private static Duration shorter(Duration left, Duration right) {
+        if (left == null) {
+            return right;
+        }
+        if (right == null) {
+            return left;
+        }
+        return left.compareTo(right) <= 0 ? left : right;
     }
 
     public boolean enforced() {
@@ -219,18 +290,20 @@ public final class Authorization {
         write(grantsPath(tenant, hash), grants);
     }
 
-    /** Set or clear a credential's expiry; {@code null} removes it (the key no longer expires). */
+    /** Set or clear a credential's expiry; {@code null} removes it (the key no longer expires) unless the tenant
+     *  policy caps the lifetime, in which case a cleared or too-distant expiry is pulled back to the ceiling. */
     public void setExpiry(String tenant, String hash, Instant expires) throws IOException {
         require();
+        Instant capped = cap(expires, policy(tenant).maxLifetime());
         Properties metadata = read(metadataPath(tenant, hash));
         if (metadata == null) {
             metadata = new Properties();
             metadata.setProperty("created", Instant.now().toString());
         }
-        if (expires == null) {
+        if (capped == null) {
             metadata.remove("expires");
         } else {
-            metadata.setProperty("expires", expires.toString());
+            metadata.setProperty("expires", capped.toString());
         }
         write(metadataPath(tenant, hash), metadata);
     }
@@ -340,6 +413,13 @@ public final class Authorization {
         return value == null ? null : Instant.parse(value);
     }
 
+    private static Duration duration(Properties properties, String key) {
+        if (properties == null) {
+            return null;
+        }
+        String value = properties.getProperty(key);
+        return value == null ? null : Duration.parse(value);
+    }
 
     private static String grantsPath(String tenant, String hash) {
         return "auth/" + tenant + "/" + hash + "/grants";
@@ -347,5 +427,9 @@ public final class Authorization {
 
     private static String metadataPath(String tenant, String hash) {
         return "auth/" + tenant + "/" + hash + "/metadata";
+    }
+
+    private static String policyPath(String tenant) {
+        return "auth/" + tenant + "/policy";
     }
 }

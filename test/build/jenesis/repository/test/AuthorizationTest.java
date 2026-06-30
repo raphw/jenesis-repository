@@ -136,18 +136,56 @@ class AuthorizationTest {
     }
 
     @Test
-    void a_mint_expires_by_default_and_only_skips_expiry_on_an_explicit_opt_out() {
-        Instant byDefault = authorization.mintExpiry(null, false);
+    void a_mint_expires_by_default_and_only_skips_expiry_on_an_explicit_opt_out() throws IOException {
+        Instant byDefault = authorization.mintExpiry("acme", null, false);
         assertThat(byDefault).as("a credential expires by default")
                 .isAfter(Instant.now().plus(Duration.ofDays(89)));
         Instant requested = Instant.now().plus(Duration.ofDays(7));
-        assertThat(authorization.mintExpiry(requested, false))
+        assertThat(authorization.mintExpiry("acme", requested, false))
                 .as("an explicit expiry is honoured as given").isEqualTo(requested);
-        assertThat(authorization.mintExpiry(null, true))
+        assertThat(authorization.mintExpiry("acme", null, true))
                 .as("non-expiring is only ever an explicit opt-out").isNull();
 
-        assertThat(authorization.withDefaultLifetime(Duration.ofDays(30)).mintExpiry(null, false))
+        assertThat(authorization.withDefaultLifetime(Duration.ofDays(30)).mintExpiry("acme", null, false))
                 .as("the default lifetime is overridable").isBefore(Instant.now().plus(Duration.ofDays(31)));
+    }
+
+    @Test
+    void a_tenant_policy_caps_the_lifetime_and_overrides_a_non_expiring_request() throws IOException {
+        authorization.setPolicy("acme", Duration.ofDays(7), Duration.ofDays(30));
+        Authorization.Policy policy = authorization.policy("acme");
+        assertThat(policy.defaultLifetime()).isEqualTo(Duration.ofDays(7));
+        assertThat(policy.maxLifetime()).isEqualTo(Duration.ofDays(30));
+
+        assertThat(authorization.mintExpiry("acme", null, false))
+                .as("a blank expiry uses the tenant default").isBefore(Instant.now().plus(Duration.ofDays(8)));
+        assertThat(authorization.mintExpiry("acme", Instant.now().plus(Duration.ofDays(365)), false))
+                .as("a too-distant expiry is pulled back to the ceiling")
+                .isBefore(Instant.now().plus(Duration.ofDays(31)));
+        assertThat(authorization.mintExpiry("acme", null, true))
+                .as("a non-expiring request is capped, not honoured, under a policy")
+                .isAfter(Instant.now()).isBefore(Instant.now().plus(Duration.ofDays(31)));
+
+        String key = Authorization.mint("acme");
+        String hash = Authorization.hash(key);
+        authorization.provision("acme", hash, "k", null);
+        authorization.setExpiry("acme", hash, null);
+        assertThat(authorization.credential("acme", hash).orElseThrow().expires())
+                .as("clearing an expiry under a ceiling pulls it back to the ceiling, never unbounded")
+                .isNotNull().isBefore(Instant.now().plus(Duration.ofDays(31)));
+    }
+
+    @Test
+    void a_deployment_ceiling_bounds_every_tenant_and_a_tenant_can_only_narrow_it() throws IOException {
+        Authorization capped = authorization.withMaxLifetime(Duration.ofDays(60));
+        assertThat(capped.policy("acme").maxLifetime())
+                .as("the deployment ceiling applies with no tenant policy").isEqualTo(Duration.ofDays(60));
+        capped.setPolicy("acme", null, Duration.ofDays(365));
+        assertThat(capped.policy("acme").maxLifetime())
+                .as("a tenant cannot raise its ceiling past the deployment ceiling").isEqualTo(Duration.ofDays(60));
+        capped.setPolicy("acme", null, Duration.ofDays(10));
+        assertThat(capped.policy("acme").maxLifetime())
+                .as("a tenant can narrow its ceiling further").isEqualTo(Duration.ofDays(10));
     }
 
     @Test
