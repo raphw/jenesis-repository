@@ -46,6 +46,11 @@ public class RepositoryConfig {
     }
 
     @Bean
+    public RateLimiter rateLimiter() {
+        return new RateLimiter();
+    }
+
+    @Bean
     public List<RepositoryFormat> formats() {
         List<RepositoryFormat> formats = new ArrayList<>();
         ServiceLoader.load(RepositoryFormat.class).forEach(formats::add);

@@ -24,7 +24,10 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                   RepositoryAuthorizationManager authorizationManager)
+                                                   RepositoryAuthorizationManager authorizationManager,
+                                                   RateLimiter rateLimiter,
+                                                   Authorization authorization,
+                                                   RepositoryProperties properties)
             throws Exception {
         RepositoryAuthorizationEntryPoint entryPoint = new RepositoryAuthorizationEntryPoint();
         http
@@ -38,6 +41,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .anyRequest().access(authorizationManager))
+                .addFilterBefore(new RateLimitFilter(rateLimiter, authorization, properties.getRateLimit()),
+                        UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(new KeyAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

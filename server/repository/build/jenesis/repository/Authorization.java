@@ -157,6 +157,31 @@ public final class Authorization {
         write(quotaPath(tenant), properties);
     }
 
+    /** A tenant's request rate ceiling in permits per minute, or {@code 0} when none is set (the deployment default). */
+    public long rateLimit(String tenant) throws IOException {
+        Properties stored = store == null ? null : read(rateLimitPath(tenant));
+        String value = stored == null ? null : stored.getProperty("permits-per-minute");
+        return value == null ? 0L : Long.parseLong(value);
+    }
+
+    /** Set ({@code > 0}) or clear ({@code 0}) a tenant's request rate ceiling in permits per minute; a negative
+     *  value is rejected. */
+    public void setRateLimit(String tenant, long permitsPerMinute) throws IOException {
+        require();
+        if (permitsPerMinute < 0) {
+            throw new IllegalArgumentException("A rate limit must not be negative");
+        }
+        if (permitsPerMinute == 0) {
+            if (store.readVersioned(rateLimitPath(tenant)).isPresent()) {
+                store.delete(rateLimitPath(tenant));
+            }
+            return;
+        }
+        Properties properties = new Properties();
+        properties.setProperty("permits-per-minute", Long.toString(permitsPerMinute));
+        write(rateLimitPath(tenant), properties);
+    }
+
     /** A tenant's OIDC trusts, by name. An id-token matching a trust is exchanged for a short-lived credential. */
     public List<Trust> trusts(String tenant) throws IOException {
         Properties stored = store == null ? null : read(oidcPath(tenant));
@@ -753,6 +778,10 @@ public final class Authorization {
 
     private static String quotaPath(String tenant) {
         return "auth/" + tenant + "/quota";
+    }
+
+    private static String rateLimitPath(String tenant) {
+        return "auth/" + tenant + "/ratelimit";
     }
 
     private static String oidcPath(String tenant) {

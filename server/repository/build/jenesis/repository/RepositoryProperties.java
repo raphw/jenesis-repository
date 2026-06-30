@@ -23,6 +23,8 @@ public class RepositoryProperties {
 
     private String quota = "";
 
+    private long rateLimit = 0;
+
     private Map<String, String> proxy = new LinkedHashMap<>();
 
     public String getStore() {
@@ -39,6 +41,14 @@ public class RepositoryProperties {
 
     public void setQuota(String quota) {
         this.quota = quota;
+    }
+
+    public long getRateLimit() {
+        return rateLimit;
+    }
+
+    public void setRateLimit(long rateLimit) {
+        this.rateLimit = rateLimit;
     }
 
     /** The repository-wide storage ceiling in bytes: a plain count or a number with a {@code K/M/G/T} (1024-based)

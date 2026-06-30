@@ -350,4 +350,15 @@ class AuthorizationTest {
         authorization.setQuota("acme", 0);
         assertThat(authorization.quota("acme")).as("zero clears it").isZero();
     }
+
+    @Test
+    void a_tenant_rate_limit_is_stored_set_and_cleared() throws IOException {
+        assertThat(authorization.rateLimit("acme")).as("none set is the deployment default").isZero();
+
+        authorization.setRateLimit("acme", 600);
+        assertThat(authorization.rateLimit("acme")).isEqualTo(600);
+
+        authorization.setRateLimit("acme", 0);
+        assertThat(authorization.rateLimit("acme")).as("zero clears it").isZero();
+    }
 }

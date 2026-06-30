@@ -217,6 +217,10 @@ A repository-wide storage cap is optional: `-Djenesis.repository.quota=10GB` (a 
 suffix) refuses a new artifact once stored content reaches the limit, with `507 Insufficient Storage`. Only
 content blobs count; a deduped re-deploy of bytes already stored needs no new space.
 
+A request rate ceiling is optional too: `-Djenesis.repository.rate-limit=600` (permits per minute) sheds excess
+load with `429 Too Many Requests` and a `Retry-After`. It is metered per tenant (the key's tenant, or a shared
+anonymous bucket), and the Actuator probes are never throttled.
+
 A Jenesis build points at it with the existing knobs - no new client:
 
     -Djenesis.module.uri=https://repo.example.com/ -Djenesis.module.token=<tenant>.<secret>
