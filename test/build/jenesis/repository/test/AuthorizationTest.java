@@ -229,6 +229,21 @@ class AuthorizationTest {
     }
 
     @Test
+    void the_client_address_ignores_a_forwarded_header_from_an_untrusted_peer() {
+        List<String> trusted = List.of("10.0.0.0/8");
+        assertThat(Authorization.clientAddress("10.0.0.1", "203.0.113.9, 10.0.0.1", trusted))
+                .as("a trusted proxy's forwarded client is taken").isEqualTo("203.0.113.9");
+        assertThat(Authorization.clientAddress("10.0.0.2", "198.51.100.7, 10.0.0.9, 10.0.0.2", trusted))
+                .as("the walk skips trusted hops to the real client").isEqualTo("198.51.100.7");
+        assertThat(Authorization.clientAddress("203.0.113.50", "10.0.0.5", trusted))
+                .as("an untrusted peer's forwarded header is ignored (anti-spoofing)").isEqualTo("203.0.113.50");
+        assertThat(Authorization.clientAddress("203.0.113.50", "1.2.3.4", List.of()))
+                .as("with no trusted proxies the peer is always the client").isEqualTo("203.0.113.50");
+        assertThat(Authorization.clientAddress("10.0.0.1", null, trusted))
+                .as("a trusted peer with no forwarded header is the client").isEqualTo("10.0.0.1");
+    }
+
+    @Test
     void a_leaked_key_revokes_only_itself_and_only_when_well_formed_and_provisioned() throws IOException {
         String key = Authorization.mint("acme");
         authorization.grant(key, "*", Authorization.REPOSITORY_READ);

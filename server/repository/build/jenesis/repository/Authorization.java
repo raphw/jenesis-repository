@@ -537,6 +537,37 @@ public final class Authorization {
         }
     }
 
+    /** The real client address for a request given its TCP {@code peer} and any {@code X-Forwarded-For}. A forwarded
+     *  header is trusted only when {@code peer} is itself one of {@code trustedProxies}: then the rightmost forwarded
+     *  hop that is not also a trusted proxy is the client (walking back through the proxy chain). Otherwise the peer is
+     *  the client - a forwarded header from an untrusted source is ignored, so the source-IP allowlist cannot be
+     *  spoofed by a client that sets its own {@code X-Forwarded-For}. */
+    public static String clientAddress(String peer, String forwardedFor, List<String> trustedProxies) {
+        if (peer == null || trustedProxies == null || trustedProxies.isEmpty() || !withinAny(peer, trustedProxies)) {
+            return peer;
+        }
+        if (forwardedFor == null || forwardedFor.isBlank()) {
+            return peer;
+        }
+        String[] hops = forwardedFor.split(",");
+        for (int i = hops.length - 1; i >= 0; i--) {
+            String hop = hops[i].trim();
+            if (!hop.isEmpty() && !withinAny(hop, trustedProxies)) {
+                return hop;
+            }
+        }
+        return peer;
+    }
+
+    private static boolean withinAny(String address, List<String> cidrs) {
+        for (String cidr : cidrs) {
+            if (inRange(address, cidr.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Stamp a credential's last use - the time, the source {@code address} (kept when {@code null}) and a count
      *  raised by {@code increment} - for the off-request usage tracker, which batches so the store sees at most one
      *  write per credential per day. A revoked credential (no metadata) is silently skipped. */
