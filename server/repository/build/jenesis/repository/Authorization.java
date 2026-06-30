@@ -192,6 +192,48 @@ public final class Authorization {
         write(oidcPath(tenant), stored);
     }
 
+    /** A tenant's named roles (a role bundles grant tokens), built-in defaults overlaid with stored custom roles. The
+     *  defaults form a hierarchy - read-only reads, deploy adds writes, admin grants everything - so a console can
+     *  offer a friendly role instead of raw {@code <surface>:<verb>} tokens. A custom role may override a default. */
+    public Map<String, String> roles(String tenant) throws IOException {
+        Map<String, String> roles = new LinkedHashMap<>();
+        roles.put("read-only", "cache:read,repository:read");
+        roles.put("deploy", "cache:read,cache:write,repository:read,repository:write");
+        roles.put("admin", "*");
+        Properties stored = store == null ? null : read(rolesPath(tenant));
+        if (stored != null) {
+            for (String name : stored.stringPropertyNames()) {
+                roles.put(name, stored.getProperty(name));
+            }
+        }
+        return roles;
+    }
+
+    /** Add or replace a custom role on a tenant; a built-in name can be overridden. */
+    public void setRole(String tenant, String name, String tokens) throws IOException {
+        require();
+        if (name == null || name.isBlank() || tokens == null || tokens.isBlank()) {
+            throw new IllegalArgumentException("A role needs a name and tokens");
+        }
+        Properties stored = read(rolesPath(tenant));
+        if (stored == null) {
+            stored = new Properties();
+        }
+        stored.setProperty(name.trim(), tokens.trim());
+        write(rolesPath(tenant), stored);
+    }
+
+    /** Remove a stored custom role (a built-in default reappears unless it was overriding one). */
+    public void removeRole(String tenant, String name) throws IOException {
+        require();
+        Properties stored = read(rolesPath(tenant));
+        if (stored == null) {
+            return;
+        }
+        stored.remove(name);
+        write(rolesPath(tenant), stored);
+    }
+
     /** The expiry to stamp on a newly minted credential for {@code tenant}. A non-null {@code requested} instant is
      *  honoured, a null request yields the tenant default from now, and {@code nonExpiring} asks for an unbounded key
      *  - granted only when no ceiling applies, otherwise pulled back to the ceiling. So a credential expires by
@@ -672,5 +714,9 @@ public final class Authorization {
 
     private static String oidcPath(String tenant) {
         return "auth/" + tenant + "/oidc";
+    }
+
+    private static String rolesPath(String tenant) {
+        return "auth/" + tenant + "/roles";
     }
 }

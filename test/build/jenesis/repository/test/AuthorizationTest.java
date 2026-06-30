@@ -267,6 +267,20 @@ class AuthorizationTest {
     }
 
     @Test
+    void named_roles_default_to_a_hierarchy_and_accept_custom_additions() throws IOException {
+        java.util.Map<String, String> roles = authorization.roles("acme");
+        assertThat(roles).containsKeys("read-only", "deploy", "admin");
+        assertThat(roles.get("read-only")).contains("repository:read").doesNotContain("repository:write");
+        assertThat(roles.get("deploy")).contains("repository:write");
+        assertThat(roles.get("admin")).isEqualTo("*");
+
+        authorization.setRole("acme", "publisher", "repository:read,repository:write");
+        assertThat(authorization.roles("acme")).containsEntry("publisher", "repository:read,repository:write");
+        authorization.removeRole("acme", "publisher");
+        assertThat(authorization.roles("acme")).doesNotContainKey("publisher");
+    }
+
+    @Test
     void an_anonymous_repository_allows_everything() throws IOException {
         assertThat(Authorization.anonymous().authorize(null, null, Authorization.REPOSITORY_WRITE))
                 .isEqualTo(Authorization.Decision.ALLOWED);
