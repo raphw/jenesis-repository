@@ -1,22 +1,19 @@
 package build.jenesis.repository;
 
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+
 import java.io.IOException;
-import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
-import java.security.KeyFactory;
-import java.security.Signature;
-import java.security.interfaces.RSAPublicKey;
-import java.security.spec.RSAPublicKeySpec;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,13 +22,14 @@ import java.util.regex.Pattern;
 
 /**
  * Exchanges a workload's OIDC id-token for a short-lived Jenesis credential, so a CI job authenticates with the token
- * its platform already issues - no static secret to store or leak. The token (a JWT) is validated against the tenant's
- * trust policy ({@link Authorization#trusts}): the issuer must name a configured trust, the RS256 signature must verify
- * against that issuer's published JWKS (discovered at {@code <issuer>/.well-known/openid-configuration} and cached by
- * key id), the token must be unexpired, and its audience and subject (a glob) must match the trust. On a match a new
- * key is minted carrying the trust's grant and expiring after the trust's ttl. Only after the signature verifies are
- * the claims trusted, and an issuer is honoured only when a trust already names it, so a forged or foreign token mints
- * nothing. JSON is read by field extraction rather than a parser, which the flat claim and JWK shapes allow.
+ * its platform already issues - no static secret to store or leak. The token is validated against the tenant's trust
+ * policy ({@link Authorization#trusts}): the issuer must name a configured trust, and the token must pass a per-issuer
+ * {@link NimbusJwtDecoder} (RS256 only, signature verified against the issuer's discovered JWKS with key rotation and
+ * caching, issuer and expiry checked with the usual clock skew). The decoder is the vetted Spring Security/Nimbus one
+ * rather than hand-rolled crypto; only the JWKS-uri discovery and the trust's audience and subject (a glob) matching
+ * stay here, since no library knows a deployment's trust store. On a match a new key is minted carrying the trust's
+ * grant and expiring after the trust's ttl. An issuer is honoured only when a trust already names it, so a forged or
+ * foreign token mints nothing.
  */
 public final class OidcExchange {
 
@@ -41,7 +39,7 @@ public final class OidcExchange {
 
     private final Authorization authorization;
     private final HttpClient http;
-    private final Map<String, Map<String, RSAPublicKey>> keysByIssuer = new ConcurrentHashMap<>();
+    private final Map<String, JwtDecoder> decoders = new ConcurrentHashMap<>();
 
     public OidcExchange(Authorization authorization) {
         this.authorization = authorization;
@@ -51,33 +49,18 @@ public final class OidcExchange {
     /** Validate {@code token} against {@code tenant}'s trusts and, on a match, mint and return a short-lived
      *  credential; {@code null} when no trust matches or the token fails validation. */
     public Exchanged exchange(String tenant, String token) throws IOException {
-        String[] parts = token == null ? new String[0] : token.split("\\.");
-        if (parts.length != 3) {
+        if (token == null || token.isBlank()) {
             return null;
         }
-        String header = decode(parts[0]);
-        String payload = decode(parts[1]);
-        if (header == null || payload == null || !"RS256".equals(stringField(header, "alg"))) {
-            return null;
-        }
-        String issuer = stringField(payload, "iss");
-        if (issuer == null) {
-            return null;
-        }
-        String kid = stringField(header, "kid");
         for (Authorization.Trust trust : authorization.trusts(tenant)) {
-            if (!issuer.equals(trust.issuer())) {
+            Jwt jwt;
+            try {
+                jwt = decoder(trust.issuer()).decode(token);
+            } catch (JwtException | IOException e) {
                 continue;
             }
-            RSAPublicKey key = publicKey(issuer, kid);
-            if (key == null || !signatureValid(parts, key)) {
-                continue;
-            }
-            long exp = longField(payload, "exp");
-            if (exp == 0 || Instant.now().getEpochSecond() > exp + 60) {
-                continue;
-            }
-            if (!audienceMatches(payload, trust.audience()) || !subjectMatches(stringField(payload, "sub"), trust.subject())) {
+            if (!audienceMatches(jwt.getAudience(), trust.audience())
+                    || !subjectMatches(jwt.getSubject(), trust.subject())) {
                 continue;
             }
             String minted = Authorization.mint(tenant);
@@ -90,56 +73,21 @@ public final class OidcExchange {
         return null;
     }
 
-    private boolean signatureValid(String[] parts, RSAPublicKey key) {
-        try {
-            Signature signature = Signature.getInstance("SHA256withRSA");
-            signature.initVerify(key);
-            signature.update((parts[0] + "." + parts[1]).getBytes(StandardCharsets.US_ASCII));
-            return signature.verify(Base64.getUrlDecoder().decode(parts[2]));
-        } catch (GeneralSecurityException | IllegalArgumentException e) {
-            return false;
+    private JwtDecoder decoder(String issuer) throws IOException {
+        JwtDecoder cached = decoders.get(issuer);
+        if (cached != null) {
+            return cached;
         }
-    }
-
-    private RSAPublicKey publicKey(String issuer, String kid) throws IOException {
-        Map<String, RSAPublicKey> keys = keysByIssuer.get(issuer);
-        if (keys == null || (kid != null && !keys.containsKey(kid))) {
-            keys = fetchKeys(issuer);
-            keysByIssuer.put(issuer, keys);
-        }
-        if (kid != null) {
-            return keys.get(kid);
-        }
-        return keys.values().stream().findFirst().orElse(null);
-    }
-
-    private Map<String, RSAPublicKey> fetchKeys(String issuer) throws IOException {
         String base = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer;
-        String jwksUri = stringField(get(base + "/.well-known/openid-configuration"), "jwks_uri");
+        String jwksUri = jwksUri(get(base + "/.well-known/openid-configuration"));
         if (jwksUri == null) {
-            return Map.of();
+            throw new IOException("No jwks_uri advertised by " + issuer);
         }
-        Map<String, RSAPublicKey> keys = new LinkedHashMap<>();
-        for (String entry : keyObjects(get(jwksUri))) {
-            if (!"RSA".equals(stringField(entry, "kty"))) {
-                continue;
-            }
-            String modulus = stringField(entry, "n");
-            String exponent = stringField(entry, "e");
-            if (modulus == null || exponent == null) {
-                continue;
-            }
-            try {
-                RSAPublicKey key = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(new RSAPublicKeySpec(
-                        new BigInteger(1, Base64.getUrlDecoder().decode(modulus)),
-                        new BigInteger(1, Base64.getUrlDecoder().decode(exponent))));
-                String entryKid = stringField(entry, "kid");
-                keys.put(entryKid == null ? "" : entryKid, key);
-            } catch (GeneralSecurityException | IllegalArgumentException ignored) {
-                // skip an unusable key
-            }
-        }
-        return keys;
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwksUri)
+                .jwsAlgorithm(SignatureAlgorithm.RS256).build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
+        decoders.put(issuer, decoder);
+        return decoder;
     }
 
     private String get(String url) throws IOException {
@@ -157,36 +105,13 @@ public final class OidcExchange {
         }
     }
 
-    private static List<String> keyObjects(String jwks) {
-        Matcher array = Pattern.compile("\"keys\"\\s*:\\s*\\[(.*)]", Pattern.DOTALL).matcher(jwks);
-        if (!array.find()) {
-            return List.of();
-        }
-        List<String> objects = new ArrayList<>();
-        for (String part : array.group(1).split("}\\s*,\\s*\\{")) {
-            objects.add(part);
-        }
-        return objects;
+    private static String jwksUri(String discovery) {
+        Matcher matcher = Pattern.compile("\"jwks_uri\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(discovery);
+        return matcher.find() ? matcher.group(1).replace("\\/", "/") : null;
     }
 
-    private static boolean audienceMatches(String payload, String audience) {
-        if (audience == null || audience.isBlank()) {
-            return true;
-        }
-        String single = stringField(payload, "aud");
-        if (single != null) {
-            return audience.equals(single);
-        }
-        Matcher array = Pattern.compile("\"aud\"\\s*:\\s*\\[([^]]*)]").matcher(payload);
-        if (array.find()) {
-            Matcher value = Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(array.group(1));
-            while (value.find()) {
-                if (audience.equals(value.group(1))) {
-                    return true;
-                }
-            }
-        }
-        return false;
+    private static boolean audienceMatches(List<String> audiences, String required) {
+        return required == null || required.isBlank() || audiences.contains(required);
     }
 
     private static boolean subjectMatches(String subject, String pattern) {
@@ -204,24 +129,5 @@ public final class OidcExchange {
             regex.append(Pattern.quote(literal));
         }
         return subject.matches(regex.toString());
-    }
-
-    private static String decode(String base64url) {
-        try {
-            return new String(Base64.getUrlDecoder().decode(base64url), StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    private static String stringField(String json, String field) {
-        Matcher matcher = Pattern.compile("\"" + Pattern.quote(field) + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
-                .matcher(json);
-        return matcher.find() ? matcher.group(1).replace("\\/", "/") : null;
-    }
-
-    private static long longField(String json, String field) {
-        Matcher matcher = Pattern.compile("\"" + Pattern.quote(field) + "\"\\s*:\\s*(\\d+)").matcher(json);
-        return matcher.find() ? Long.parseLong(matcher.group(1)) : 0;
     }
 }
