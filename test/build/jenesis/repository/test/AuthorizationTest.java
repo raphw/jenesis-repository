@@ -242,6 +242,31 @@ class AuthorizationTest {
     }
 
     @Test
+    void rotation_mints_a_successor_with_the_same_grants_and_expires_the_old_after_the_overlap() throws IOException {
+        String key = Authorization.mint("acme");
+        String hash = Authorization.hash(key);
+        authorization.provision("acme", hash, "ci", null);
+        authorization.setGrant("acme", hash, "releases", Authorization.REPOSITORY_WRITE);
+        authorization.setAllowedAddresses("acme", hash, "10.0.0.0/8");
+
+        Authorization.Rotated rotated = authorization.rotate("acme", hash, Duration.ofDays(2));
+        String successor = rotated.key();
+        assertThat(authorization.authorize(successor, "releases", Authorization.REPOSITORY_WRITE))
+                .as("the successor inherits the grants").isEqualTo(Authorization.Decision.ALLOWED);
+        assertThat(authorization.addressAllowed(successor, "10.1.2.3"))
+                .as("the successor inherits the allowlist").isTrue();
+        assertThat(authorization.addressAllowed(successor, "192.168.0.1")).isFalse();
+        assertThat(authorization.credential("acme", Authorization.hash(successor)).orElseThrow().label())
+                .isEqualTo("ci");
+
+        assertThat(authorization.authorize(key, "releases", Authorization.REPOSITORY_WRITE))
+                .as("the old key still works during the overlap").isEqualTo(Authorization.Decision.ALLOWED);
+        assertThat(authorization.credential("acme", hash).orElseThrow().expires())
+                .as("the old key is set to expire after the overlap")
+                .isNotNull().isBefore(Instant.now().plus(Duration.ofDays(3)));
+    }
+
+    @Test
     void an_anonymous_repository_allows_everything() throws IOException {
         assertThat(Authorization.anonymous().authorize(null, null, Authorization.REPOSITORY_WRITE))
                 .isEqualTo(Authorization.Decision.ALLOWED);

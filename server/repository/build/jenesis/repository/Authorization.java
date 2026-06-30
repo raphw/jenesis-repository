@@ -470,6 +470,32 @@ public final class Authorization {
         return true;
     }
 
+    /** A freshly minted successor key and the expiry stamped on it. */
+    public record Rotated(String key, Instant expires) {
+    }
+
+    /** Rotate a credential: mint a successor that inherits the same label, grants and source-IP allowlist with a fresh
+     *  default lifetime, and set the old credential to expire after {@code overlap} (7 days when null) so callers can
+     *  swap over with no downtime. Returns the successor's raw key (shown once); the old hash keeps working until the
+     *  overlap elapses, then expires on its own. */
+    public Rotated rotate(String tenant, String hash, Duration overlap) throws IOException {
+        require();
+        Credential previous = credential(tenant, hash).orElseThrow(
+                () -> new IllegalArgumentException("No such credential to rotate"));
+        String key = mint(tenant);
+        String successor = hash(key);
+        Instant expires = mintExpiry(tenant, null, false);
+        provision(tenant, successor, previous.label(), expires);
+        for (Map.Entry<String, String> grant : previous.grants().entrySet()) {
+            setGrant(tenant, successor, grant.getKey(), grant.getValue());
+        }
+        if (previous.allowedAddresses() != null) {
+            setAllowedAddresses(tenant, successor, previous.allowedAddresses());
+        }
+        setExpiry(tenant, hash, Instant.now().plus(overlap == null ? Duration.ofDays(7) : overlap));
+        return new Rotated(key, expires);
+    }
+
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
