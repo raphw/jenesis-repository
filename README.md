@@ -102,9 +102,8 @@ and serves it back on `GET`, straight over the shared content-addressed store:
     import build.jenesis.repository.format.FormatExchange;
     import build.jenesis.repository.format.RepositoryFormat;
     import build.jenesis.repository.store.ArtifactStore;
-    import java.io.ByteArrayInputStream;
-    import java.io.ByteArrayOutputStream;
     import java.io.IOException;
+    import java.io.OutputStream;
 
     public final class FilesFormat implements RepositoryFormat {
 
@@ -119,17 +118,17 @@ and serves it back on `GET`, straight over the shared content-addressed store:
         public void handle(FormatExchange exchange, ArtifactStore store) throws IOException {
             String key = "files/" + exchange.path().substring("/files/".length());
             switch (exchange.method()) {
-                case "PUT" -> {
-                    store.write(key, new ByteArrayInputStream(exchange.requestBytes()));
+                case "PUT" -> {                                  // request body streams straight into the store
+                    store.write(key, exchange.requestStream());
                     exchange.respond(201);
                 }
                 case "GET" -> {
                     if (!store.exists(key)) {
                         exchange.respond(404);
-                    } else {
-                        ByteArrayOutputStream body = new ByteArrayOutputStream();
-                        store.read(key, body);
-                        exchange.respond(200, body.toByteArray());
+                    } else {                                     // and streams straight back out, never buffered
+                        try (OutputStream out = exchange.respond(200, store.size(key))) {
+                            store.read(key, out);
+                        }
                     }
                 }
                 default -> exchange.respond(405);
@@ -181,6 +180,37 @@ availability (multi-AZ) are the managed cloud's job, not yours. So:
  - you run it in your own cloud account, so durability and uptime are the managed
    cloud's, not an operations burden.
 
+Streams end to end, never buffering a blob
+------------------------------------------
+
+An artifact moves **from the network straight to storage and back** - it is never held
+whole in memory. An upload streams from the request body through the digest into the
+store; a download streams from the store to the response. The heap cost of a transfer is
+one fixed-size buffer, not the artifact, so a 4 KB POM and a 4 GB image layer cost the
+same memory and a small, fixed heap serves arbitrarily large artifacts under arbitrary
+concurrency. This is a structural property, not an optimization - it holds on every path:
+
+ - **The store speaks streams.** `write(key, InputStream)` and `read(key, OutputStream)`
+   copy through; `writeBlob(InputStream)` content-addresses a blob *as it streams*,
+   digesting on the way to `blobs/<sha256>`. A backend that needs the length up front
+   (S3 `PutObject`) spills to a temp file, never to the heap.
+ - **Formats never see a `byte[]` body.** `FormatExchange` hands the request out as an
+   `InputStream` and the response as an `OutputStream` - there is no "give me the whole
+   body" call to reach for, so a plug-in streams by default.
+ - **Even inspection streams.** Cross-publishing a modular jar into the module layout
+   needs the jar's module name, so the Maven layout stores the blob first and reads the
+   name back *from storage* rather than buffering the jar to look inside it.
+ - **Chunked `docker push` streams.** Each uploaded chunk lands in storage as it
+   arrives; finalizing concatenates the chunks as one stream into `writeBlob`, so a
+   multi-hundred-megabyte layer never accumulates in memory.
+ - **The pull-through mirror and the importers stream too.** An upstream miss or a
+   migrated asset is copied from upstream to the store as a stream, digest and all.
+
+The only bytes ever fully in memory are **small, bounded metadata** - a generated
+`maven-metadata.xml`, a checksum, a manifest's media type, a compare-and-set pointer -
+never an artifact, a layer or an image. Together with the statelessness above, this is
+what lets the server run serverless in a tiny, fixed footprint.
+
 Modules
 -------
 
@@ -197,7 +227,7 @@ plug in through the console's extension points without forking the core.
 
 | Module | Folder | What it is |
 |--------|--------|------------|
-| `build.jenesis.repository.store`    | `provider/filesystem` | The `ArtifactStore` SPI (`read`/`write`/`exists`/`size`/`list`/`delete`, plus `writeVersioned` for cross-node compare-and-set, over an object namespace) + the filesystem backend, the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through. `java.base` only, so a format plugin builds on it without pulling in the server. |
+| `build.jenesis.repository.store`    | `provider/filesystem` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace) + the filesystem backend, the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through. `java.base` only, so a format plugin builds on it without pulling in the server. |
 | `build.jenesis.repository.store.s3`       | `provider/s3`         | S3-compatible backend (AWS SDK v2). `JENESIS_STORE=s3`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
 | `build.jenesis.repository.store.azure`    | `provider/azure`      | Azure Blob backend (azure-storage-blob SDK). `JENESIS_STORE=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
 | `build.jenesis.repository.format`   | `format/spi`          | The `RepositoryFormat` SPI + the framework-neutral `FormatExchange`. A layout is a module that depends only on this and `provides RepositoryFormat`; the dispatcher discovers them with `ServiceLoader`, so formats plug in without the core knowing them. `java.base` + the store SPI only. |

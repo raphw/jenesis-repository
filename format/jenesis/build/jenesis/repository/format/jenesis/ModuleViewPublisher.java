@@ -14,9 +14,8 @@ import build.jenesis.repository.store.ArtifactStore;
 public final class ModuleViewPublisher implements ModuleView {
 
     @Override
-    public void publish(String moduleName, String version, byte[] jar, ArtifactStore store) throws IOException {
+    public void publish(String moduleName, String version, String hash, ArtifactStore store) throws IOException {
         Publication publication = new Publication(store);
-        String hash = publication.storeBlob(jar);
         publication.link("/module/" + moduleName + "/" + version + "/" + moduleName + ".jar", hash);
         publication.link("/module/" + moduleName + "/" + moduleName + ".jar", hash);
     }

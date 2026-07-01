@@ -24,6 +24,15 @@ public interface ArtifactStore {
     /** Stream the blob to {@code out}. */
     void read(String key, OutputStream out) throws IOException;
 
+    /**
+     * Open the blob at this key for reading, so a caller that must pull the bytes through an existing stream
+     * consumer - the SHA-256 concatenation that finalizes a chunked upload, or the jar inspection that reads a
+     * just-stored artifact back rather than buffering it from the network - streams it without holding it whole in
+     * memory. The symmetric counterpart of {@link #write(String, InputStream)}. The key must exist; the caller
+     * closes the returned stream.
+     */
+    InputStream open(String key) throws IOException;
+
     /** Atomically store the blob from {@code in}, so a reader never observes a partial write. */
     void write(String key, InputStream in) throws IOException;
 

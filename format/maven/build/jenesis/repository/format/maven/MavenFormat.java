@@ -38,7 +38,7 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat {
         String path = exchange.path();
         if (exchange.method().equals("PUT")) {
             if (!MavenMetadata.isMetadataRequest(path)) {
-                publish(store, path, exchange.requestBytes());
+                publish(store, path, exchange.requestStream());
             }
             exchange.respond(201);
             return;
@@ -48,28 +48,36 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat {
             exchange.respond(200, generated.get());
             return;
         }
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        if (new Publication(store).serve(path, buffer)) {
-            exchange.respond(200, buffer.toByteArray());
-        } else {
+        Optional<String> key = new Publication(store).located(path);
+        if (key.isEmpty()) {
             exchange.respond(404);
+            return;
+        }
+        try (OutputStream out = exchange.respond(200, store.size(key.get()))) {
+            store.read(key.get(), out);
         }
     }
 
-    /** Store the artifact, and if it is a modular jar, cross-publish its module view through the Jenesis layout. */
-    static void publish(ArtifactStore store, String path, byte[] body) throws IOException {
+    /** Store the artifact (streamed straight to storage), and if it is a modular jar, cross-publish its module view
+     *  through the Jenesis layout - reading the module name back from the just-stored blob rather than buffering the
+     *  jar in memory to inspect it. */
+    static void publish(ArtifactStore store, String path, InputStream body) throws IOException {
         Publication publication = new Publication(store);
-        publication.publish(path, body);
+        String hash = publication.storeBlob(body);
+        publication.link(path, hash);
         String[] coordinate = JavaLayout.mavenCoordinate(path);
         if (!path.endsWith(".jar") || coordinate == null) {
             return;
         }
-        String module = JavaLayout.moduleName(body);
+        String module;
+        try (InputStream in = store.open("blobs/" + hash)) {
+            module = JavaLayout.moduleName(in);
+        }
         if (module == null) {
             return;
         }
         for (ModuleView view : MODULE_VIEWS) {
-            view.publish(module, coordinate[2], body, store);
+            view.publish(module, coordinate[2], hash, store);
         }
     }
 
@@ -87,12 +95,17 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat {
         }
         String rest = path.substring("/maven/".length());
         String root = upstream.toString();
-        Optional<ProxyFormat.Fetched> fetched = fetcher.fetch(
+        Optional<ProxyFormat.Download> fetched = fetcher.download(
                 URI.create(root.endsWith("/") ? root + rest : root + "/" + rest), Map.of());
-        if (fetched.isEmpty() || fetched.get().status() != 200) {
+        if (fetched.isEmpty()) {
             return false;
         }
-        publish(store, path, fetched.get().body());
+        try (ProxyFormat.Download download = fetched.get()) {
+            if (download.status() != 200) {
+                return false;
+            }
+            publish(store, path, download.body());
+        }
         handle(exchange, store);
         return true;
     }

@@ -19,34 +19,17 @@ public final class Publication {
         this.store = store;
     }
 
-    /** Resolve a request path to the blob bytes; false if nothing is published there or the blob is gone. */
-    public boolean serve(String requestPath, OutputStream out) throws IOException {
-        Optional<ArtifactStore.Versioned> pointer = store.readVersioned("publish" + requestPath);
-        if (pointer.isEmpty()) {
-            return false;
-        }
-        String hash = new String(pointer.get().content(), StandardCharsets.UTF_8).trim();
-        if (!store.exists("blobs/" + hash)) {
-            return false;
-        }
-        store.read("blobs/" + hash, out);
-        return true;
+    /** The blob key ({@code blobs/<hash>}) a path resolves to when it is published and the blob is present - what a
+     *  streaming {@code GET} sets its {@code Content-Length} from (through {@link ArtifactStore#size}) and then copies
+     *  to the response (through {@link ArtifactStore#read}), instead of buffering the blob to learn its length. Empty
+     *  when nothing is published there or the blob is gone. */
+    public Optional<String> located(String requestPath) throws IOException {
+        return blob(requestPath).map(hash -> "blobs/" + hash).filter(store::exists);
     }
 
-    /** Store the blob once (content-addressed, deduped) and point the request path at it. */
-    public void publish(String requestPath, byte[] content) throws IOException {
-        link(requestPath, storeBlob(content));
-    }
-
-    /** Store content once, content-addressed, and return its hash - the primitive a staging deploy or a cross-publish
+    /** Stream content once, content-addressed while it is read, and return its hash - so a large artifact goes from the
+     *  network to storage without being buffered whole in memory. The primitive a staging deploy or a cross-publish
      *  uses to hold bytes before any view points at them. */
-    public String storeBlob(byte[] content) throws IOException {
-        return storeBlob(new ByteArrayInputStream(content));
-    }
-
-    /** Stream content once, content-addressed while it is read, and return its hash - the streaming counterpart of
-     *  {@link #storeBlob(byte[])} that lets a large artifact go from the network to storage without being buffered
-     *  whole in memory. */
     public String storeBlob(InputStream content) throws IOException {
         return store.writeBlob(content);
     }

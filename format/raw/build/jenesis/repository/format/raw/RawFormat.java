@@ -36,7 +36,7 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         String path = exchange.path();
         switch (exchange.method()) {
             case "PUT" -> {
-                publication.link(path, publication.storeBlob(exchange.requestBytes()));
+                publication.link(path, publication.storeBlob(exchange.requestStream()));
                 exchange.respond(201);
             }
             case "DELETE" -> {
@@ -49,12 +49,14 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
                     listing(path, store, exchange);
                     return;
                 }
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                if (publication.serve(path, buffer)) {
-                    exchange.setResponseHeader("Content-Type", "application/octet-stream");
-                    exchange.respond(200, buffer.toByteArray());
-                } else {
+                Optional<String> key = publication.located(path);
+                if (key.isEmpty()) {
                     exchange.respond(404);
+                    return;
+                }
+                exchange.setResponseHeader("Content-Type", "application/octet-stream");
+                try (OutputStream out = exchange.respond(200, store.size(key.get()))) {
+                    store.read(key.get(), out);
                 }
             }
         }
@@ -69,13 +71,18 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         }
         String rest = path.substring("/raw/".length());
         String root = upstream.toString();
-        Optional<ProxyFormat.Fetched> fetched = fetcher.fetch(
+        Optional<ProxyFormat.Download> fetched = fetcher.download(
                 URI.create(root.endsWith("/") ? root + rest : root + "/" + rest), Map.of());
-        if (fetched.isEmpty() || fetched.get().status() != 200) {
+        if (fetched.isEmpty()) {
             return false;
         }
         Publication publication = new Publication(store);
-        publication.link(path, publication.storeBlob(fetched.get().body()));
+        try (ProxyFormat.Download download = fetched.get()) {
+            if (download.status() != 200) {
+                return false;
+            }
+            publication.link(path, publication.storeBlob(download.body()));
+        }
         handle(exchange, store);
         return true;
     }

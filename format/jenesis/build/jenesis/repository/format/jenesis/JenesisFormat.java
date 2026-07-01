@@ -28,16 +28,19 @@ public final class JenesisFormat implements RepositoryFormat {
     @Override
     public void handle(FormatExchange exchange, ArtifactStore store) throws IOException {
         String path = exchange.path();
+        Publication publication = new Publication(store);
         if (exchange.method().equals("PUT")) {
-            new Publication(store).publish(path, exchange.requestBytes());
+            publication.link(path, publication.storeBlob(exchange.requestStream()));
             exchange.respond(201);
             return;
         }
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        if (new Publication(store).serve(path, buffer)) {
-            exchange.respond(200, buffer.toByteArray());
-        } else {
+        Optional<String> key = publication.located(path);
+        if (key.isEmpty()) {
             exchange.respond(404);
+            return;
+        }
+        try (OutputStream out = exchange.respond(200, store.size(key.get()))) {
+            store.read(key.get(), out);
         }
     }
 }

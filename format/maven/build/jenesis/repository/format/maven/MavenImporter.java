@@ -26,8 +26,8 @@ public final class MavenImporter implements RepositoryImporter {
         if (name.startsWith("maven-metadata.xml")) {
             return;
         }
-        // A modular jar is cross-published into the module layout, which reads the jar's module name and stores its
-        // bytes, so this importer must inspect the content: it buffers rather than streaming blindly.
-        MavenFormat.publish(store, "/maven/" + relative, content.readAllBytes());
+        // A modular jar is cross-published into the module layout, which needs the jar's module name; publish streams
+        // the content to storage and reads the module name back from there, so the importer never buffers it.
+        MavenFormat.publish(store, "/maven/" + relative, content);
     }
 }

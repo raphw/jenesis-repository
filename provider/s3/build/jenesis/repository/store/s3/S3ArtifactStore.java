@@ -72,6 +72,15 @@ public final class S3ArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public InputStream open(String key) throws IOException {
+        try {
+            return s3.getObject(b -> b.bucket(bucket).key(keyPrefix + key));
+        } catch (S3Exception e) {
+            throw new IOException("Could not read " + key, e);
+        }
+    }
+
+    @Override
     public void write(String key, InputStream in) throws IOException {
         // S3 PutObject needs the content length up front, so buffer the (possibly large) body to a
         // temp file rather than into memory, then upload from the file.

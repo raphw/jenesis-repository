@@ -13,9 +13,10 @@ public final class JavaLayout {
     }
 
     /** The module name a jar declares - its {@code module-info} name, or its {@code Automatic-Module-Name} - or null
-     *  when it carries neither (a plain jar, not a module). */
-    public static String moduleName(byte[] jar) {
-        try (JarInputStream in = new JarInputStream(new ByteArrayInputStream(jar))) {
+     *  when it carries neither (a plain jar, not a module). The jar is read as a stream (typically opened back from
+     *  storage after the blob was streamed in), so the artifact is never buffered whole in memory to be inspected. */
+    public static String moduleName(InputStream jar) {
+        try (JarInputStream in = new JarInputStream(jar)) {
             String automatic = in.getManifest() == null ? null
                     : in.getManifest().getMainAttributes().getValue("Automatic-Module-Name");
             for (JarEntry entry; (entry = in.getNextJarEntry()) != null; ) {
