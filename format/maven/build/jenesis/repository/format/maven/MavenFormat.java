@@ -69,7 +69,7 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         for (ModuleView view : MODULE_VIEWS) {
-            view.publish(module, coordinate[2], body, publication);
+            view.publish(module, coordinate[2], body, store);
         }
     }
 

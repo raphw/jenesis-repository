@@ -12,6 +12,21 @@ public final class JavaLayout {
     private JavaLayout() {
     }
 
+    /** The module descriptor a modular jar carries, or empty for a plain or automatic-module jar (one that declares no
+     *  dependencies of its own). Read from {@code module-info.class}. */
+    public static Optional<ModuleDescriptor> descriptor(byte[] jar) {
+        try (JarInputStream in = new JarInputStream(new ByteArrayInputStream(jar))) {
+            for (JarEntry entry; (entry = in.getNextJarEntry()) != null; ) {
+                if (entry.getName().equals("module-info.class")) {
+                    return Optional.of(ModuleDescriptor.read(in));
+                }
+            }
+        } catch (IOException | RuntimeException _) {
+            return Optional.empty();
+        }
+        return Optional.empty();
+    }
+
     /** The module name a jar declares - its {@code module-info} name, or its {@code Automatic-Module-Name} - or null
      *  when it carries neither (a plain jar, not a module). */
     public static String moduleName(byte[] jar) {

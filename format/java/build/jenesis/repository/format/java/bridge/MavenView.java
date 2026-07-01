@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.java.bridge;
 
 import module java.base;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.ArtifactStore;
 
 /**
  * The Maven-layout side of cross-publishing: provided by the Maven format, used by the Jenesis format. Given a module
@@ -12,5 +12,5 @@ import build.jenesis.repository.Publication;
  */
 public interface MavenView {
 
-    void publish(String moduleName, String version, byte[] jar, Publication publication) throws IOException;
+    void publish(String moduleName, String version, byte[] jar, ArtifactStore store) throws IOException;
 }

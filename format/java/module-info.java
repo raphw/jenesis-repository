@@ -9,7 +9,6 @@
  * @jenesis.release 25
  */
 module build.jenesis.repository.format.java {
-    requires build.jenesis.repository;
     requires build.jenesis.repository.store;
     exports build.jenesis.repository.format.java;
     exports build.jenesis.repository.format.java.bridge

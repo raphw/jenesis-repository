@@ -41,7 +41,7 @@ public final class JenesisFormat implements RepositoryFormat {
             String[] reference = JavaLayout.moduleReference(path);
             if (path.endsWith(".jar") && reference != null) {
                 for (MavenView view : MAVEN_VIEWS) {
-                    view.publish(reference[0], reference[1], body, publication);
+                    view.publish(reference[0], reference[1], body, store);
                 }
             }
             exchange.respond(201);

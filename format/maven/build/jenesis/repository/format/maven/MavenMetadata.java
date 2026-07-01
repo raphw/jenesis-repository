@@ -61,6 +61,13 @@ public final class MavenMetadata {
         return Optional.of(xml);
     }
 
+    /** The highest published version of a coordinate, by the same Maven-style order the metadata uses, or empty when
+     *  the repository holds none of it (published locally or cached from a proxied upstream). */
+    public Optional<String> latest(String groupId, String artifactId) {
+        List<String> versions = versions(groupId.replace('.', '/') + "/" + artifactId);
+        return versions.isEmpty() ? Optional.empty() : Optional.of(versions.getLast());
+    }
+
     private List<String> versions(String coordinatePath) {
         List<String> versions = new ArrayList<>();
         for (String child : store.list("publish/maven/" + coordinatePath)) {
