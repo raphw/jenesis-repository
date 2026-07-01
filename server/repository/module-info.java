@@ -13,14 +13,15 @@
  *
  * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
  * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
- * @jenesis.pin com.fasterxml.jackson.core/jackson-annotations 2.21 SHA-256/53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b
+ * @jenesis.pin com.fasterxml.jackson.core/jackson-annotations 2.22 SHA-256/21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0
+ * @jenesis.pin com.nimbusds/nimbus-jose-jwt 10.9 SHA-256/64d613d91140bad0dab8f0c41960f919ec8705a9ced9418146598b4b3ae71349
  * @jenesis.pin commons-logging/commons-logging 1.3.5 SHA-256/6d7a744e4027649fbb50895df9497d109f98c766a637062fe8d2eabbb3140ba4
- * @jenesis.pin io.micrometer/micrometer-commons 1.16.6 SHA-256/45aff76226830db257f4bc39a5bcff83d633e572fee9dc4e45cfa12af9a0a49a
+ * @jenesis.pin io.micrometer/micrometer-commons 1.17.0 SHA-256/03919dc71e2417ec4b5c254c4ba924963c972e124190f73cdcb68ed51c6eede6
  * @jenesis.pin io.micrometer/micrometer-core 1.17.0 SHA-256/73503e701a377fafeaf33b71b9b8910a8d7884cbba88ab27971b33b3753b65aa
  * @jenesis.pin io.micrometer/micrometer-jakarta9 1.17.0 SHA-256/4ae9dbc9072fea8c36684a745e0e944b9540fd15027dfe7af0a186f8df43272c
- * @jenesis.pin io.micrometer/micrometer-observation 1.16.6 SHA-256/4c0826d5e7c8522a8e111470b4e77f77b0a10f520eb5502ddd143fdbcedb2340
+ * @jenesis.pin io.micrometer/micrometer-observation 1.17.0 SHA-256/2fc95a327578d3b2a81c3ff40e646a4a21e46b0153ccbbf91690142bf80d9661
  * @jenesis.pin jakarta.annotation/jakarta.annotation-api 3.0.0 SHA-256/b01f55552284cfb149411e64eabca75e942d26d2e1786b32914250e4330afaa2
- * @jenesis.pin org.hdrhistogram/HdrHistogram 2.2.2 SHA-256/22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8
+ * @jenesis.pin micrometer.observation 1.17.0
  * @jenesis.pin org.apache.logging.log4j/log4j-api 2.25.4 SHA-256/c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d
  * @jenesis.pin org.apache.logging.log4j/log4j-to-slf4j 2.25.4 SHA-256/d7b78fc0aaaa5e8ada388b29d718b0ab187e512965bed0b259bb4ab299f13db2
  * @jenesis.pin org.apache.tomcat.embed.core 11.0.22
@@ -28,9 +29,11 @@
  * @jenesis.pin org.apache.tomcat.embed/tomcat-embed-el 11.0.22 SHA-256/1b34c33b858c141df36c501b4d809e68036c406bca3671a86facae297917c7de
  * @jenesis.pin org.apache.tomcat.embed/tomcat-embed-websocket 11.0.22 SHA-256/210e0c7ab194a76cc7283df0be365276091b042369dae125fb477828ba67e922
  * @jenesis.pin org.apache.tomcat/tomcat-annotations-api 11.0.22 SHA-256/fbe1a2ee12ea472b773bf3a6237d95b66a002c5c4fa6d38a54e69c019558cfd4
+ * @jenesis.pin org.hdrhistogram/HdrHistogram 2.2.2 SHA-256/22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8
  * @jenesis.pin org.jspecify/jspecify 1.0.0 SHA-256/1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab
+ * @jenesis.pin org.slf4j 2.0.18
  * @jenesis.pin org.slf4j/jul-to-slf4j 2.0.18 SHA-256/cbb7d1aaaa9e871eb1a06594abd911bf97027152976edf1edc315be75239204e
- * @jenesis.pin org.slf4j/slf4j-api 2.0.17 SHA-256/7b751d952061954d5abfed7181c1f645d336091b679891591d63329c622eb832
+ * @jenesis.pin org.slf4j/slf4j-api 2.0.18 SHA-256/44508fd1576500688c790b190acdd16fec4f8c79a3e0b900afd70503cf055f55
  * @jenesis.pin org.springframework.boot/spring-boot 4.1.0 SHA-256/b23951a3a7f867e38db4729b8594e1b72374516f386b1dd9cf4d5317d6d3f91f
  * @jenesis.pin org.springframework.boot/spring-boot-actuator 4.1.0 SHA-256/10279d87ab47a9a41cb69c56fc69494a54a3b84f25c853141ed234d4832e85b4
  * @jenesis.pin org.springframework.boot/spring-boot-actuator-autoconfigure 4.1.0 SHA-256/1124c22bc848e5ed557fe4543698056ef7090f134f2ccbcafb3d6c18a5613b13
@@ -45,8 +48,8 @@
  * @jenesis.pin org.springframework.boot/spring-boot-starter 4.1.0 SHA-256/40352b3fc0834d5830f66d40100fc8afa8ac73e24a134c7779bd42b72f2d6506
  * @jenesis.pin org.springframework.boot/spring-boot-starter-actuator 4.1.0 SHA-256/f6f6c4166430953515336ecf3b25ea467e24c4e5705cbcc8cefa273a4bd6bde8
  * @jenesis.pin org.springframework.boot/spring-boot-starter-jackson 4.1.0 SHA-256/4214c534cca5c7c7e1cf92db90f178a3dffdede503fb68ac3c0dd905f331431f
- * @jenesis.pin org.springframework.boot/spring-boot-starter-micrometer-metrics 4.1.0 SHA-256/ad4a34ba880e6a8c811e90c1c034b937b8a78030eae60ec5b43826c42590c802
  * @jenesis.pin org.springframework.boot/spring-boot-starter-logging 4.1.0 SHA-256/73a6a42d2b6a589bd722aa107800829d0b20b731d94135f53c4b744db8beafbf
+ * @jenesis.pin org.springframework.boot/spring-boot-starter-micrometer-metrics 4.1.0 SHA-256/ad4a34ba880e6a8c811e90c1c034b937b8a78030eae60ec5b43826c42590c802
  * @jenesis.pin org.springframework.boot/spring-boot-starter-security 4.1.0 SHA-256/5370ad6bd847e85675ee81a2da98f5fabcfc8649197b0a873417a051aa435c41
  * @jenesis.pin org.springframework.boot/spring-boot-starter-tomcat 4.1.0 SHA-256/3e8cbd141ee6f4f2acfaf6320f1951307816f086de426d08eac19ef4a57d7e90
  * @jenesis.pin org.springframework.boot/spring-boot-starter-tomcat-runtime 4.1.0 SHA-256/135fa0b7a4232c64b975f348cab39e2259d36a18e14768f5f213147a4febf68d
@@ -57,14 +60,9 @@
  * @jenesis.pin org.springframework.security/spring-security-config 7.1.0 SHA-256/3234035bb5ccd45a9367ce526723d6b8da501c5c3f725b54a98354f922c2e978
  * @jenesis.pin org.springframework.security/spring-security-core 7.1.0 SHA-256/f8cecce9e65db9fe9ea42ca92b04d6e4e4320ff9d492aa60b753716ea397262c
  * @jenesis.pin org.springframework.security/spring-security-crypto 7.1.0 SHA-256/6f6957548a28451712e53b94a3e77057735b2fcec04c99ca6dd555b574453a98
- * @jenesis.pin org.springframework.security/spring-security-web 7.1.0 SHA-256/1deee612104ce85ec815076b80578cd8e82c07067e122068f09fbfef860b3cb1
  * @jenesis.pin org.springframework.security/spring-security-oauth2-core 7.1.0 SHA-256/68c6bfbace2a429cdd277ce848f8a1a6ea8e33bb386fa2ba19636821457c376f
  * @jenesis.pin org.springframework.security/spring-security-oauth2-jose 7.1.0 SHA-256/a1620a4424e40035dc33d3a53d98a9e978a96d98334a43aaef0bbd60268d0f8c
- * @jenesis.pin com.github.stephenc.jcip/jcip-annotations 1.0-1 SHA-256/4fccff8382aafc589962c4edb262f6aa595e34f1e11e61057d1c6a96e8fc7323
- * @jenesis.pin com.nimbusds/nimbus-jose-jwt 10.9 SHA-256/64d613d91140bad0dab8f0c41960f919ec8705a9ced9418146598b4b3ae71349
- * @jenesis.pin net.minidev/accessors-smart 2.6.0 SHA-256/222c9f547bb20a99fc486403a398352d1306fb671b38abd7ecab6401df170e61
- * @jenesis.pin net.minidev/json-smart 2.6.0 SHA-256/1ae4b561458afb540be8ec5c6dbb4f2e715a319a7ae64854998aaf924770d61b
- * @jenesis.pin org.ow2.asm/asm 9.7.1 SHA-256/8cadd43ac5eb6d09de05faecca38b917a040bb9139c7edeb4cc81c740b713281
+ * @jenesis.pin org.springframework.security/spring-security-web 7.1.0 SHA-256/1deee612104ce85ec815076b80578cd8e82c07067e122068f09fbfef860b3cb1
  * @jenesis.pin org.springframework/spring-aop 7.0.8 SHA-256/1178f039e087884174e2affc46e484f4a8bd7f2a4e011d33dd9137709f740f80
  * @jenesis.pin org.springframework/spring-beans 7.0.8 SHA-256/6ec2e361a8872a71d8b1ff66f1bcb8cfa29fcc437931998919da7cecfb59b45b
  * @jenesis.pin org.springframework/spring-context 7.0.8 SHA-256/1eb7d552414ebac00e30ab3e809138d810785f6d2c4271db77cdf0181f308f19
@@ -88,8 +86,9 @@
  * @jenesis.pin spring.security.oauth2.jose 7.1.0
  * @jenesis.pin spring.security.web 7.1.0
  * @jenesis.pin spring.web 7.0.8
- * @jenesis.pin tools.jackson.core/jackson-core 3.1.4 SHA-256/3bda1cd6eff0a8d47bdfcaeae7c2bd5311d6c8ed494ef5f3e51029bb44aa9bdf
- * @jenesis.pin tools.jackson.core/jackson-databind 3.1.4 SHA-256/14034bfdf392b6ebec1b4bb6c1de29d604f0aa97251259a19d5f19af8719bb20
+ * @jenesis.pin tools.jackson.core/jackson-core 3.2.0 SHA-256/5e353ce53c6901105dfcbf183e3220c17072e334e552b818a4bb1b99decea596
+ * @jenesis.pin tools.jackson.core/jackson-databind 3.2.0 SHA-256/3ef94a3dddeafc247c50230fad0315981b2ce4ae6e91cfb4368a86f328904e4f
+ * @jenesis.pin tools.jackson.databind 3.2.0
  */
 open module build.jenesis.repository {
     requires build.jenesis.repository.store;
