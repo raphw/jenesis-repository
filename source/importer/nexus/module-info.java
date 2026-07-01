@@ -16,7 +16,7 @@ module build.jenesis.repository.importer.nexus {
     requires build.jenesis.repository.importer;
     requires build.jenesis.repository.format;
     requires tools.jackson.databind;
-    exports build.jenesis.repository.importer.nexus to build.jenesis.repository.test;
+    exports build.jenesis.repository.importer.nexus to build.jenesis.repository.test, build.jenesis.repository.importer.nexus.test;
     provides build.jenesis.repository.importer.ImportSourceProvider
             with build.jenesis.repository.importer.nexus.NexusSourceProvider;
 }

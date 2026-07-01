@@ -16,6 +16,7 @@ module build.jenesis.repository.format.oci {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.store;
     requires tools.jackson.databind;
+    exports build.jenesis.repository.format.oci to build.jenesis.repository.format.oci.test;
     provides build.jenesis.repository.format.RepositoryFormat
             with build.jenesis.repository.format.oci.OciFormat;
     provides build.jenesis.repository.format.RepositoryImporter

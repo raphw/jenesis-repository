@@ -11,6 +11,7 @@ module build.jenesis.repository.format.jenesis {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.format.java;
+    exports build.jenesis.repository.format.jenesis to build.jenesis.repository.format.jenesis.test;
     provides build.jenesis.repository.format.RepositoryFormat
             with build.jenesis.repository.format.jenesis.JenesisFormat;
     provides build.jenesis.repository.format.java.bridge.ModuleView

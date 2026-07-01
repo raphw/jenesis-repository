@@ -10,6 +10,7 @@ module build.jenesis.repository.format.raw {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.store;
     requires java.xml;
+    exports build.jenesis.repository.format.raw to build.jenesis.repository.format.raw.test;
     provides build.jenesis.repository.format.RepositoryFormat
             with build.jenesis.repository.format.raw.RawFormat;
     provides build.jenesis.repository.format.RepositoryImporter
