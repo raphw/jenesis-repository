@@ -1,4 +1,4 @@
-package build.jenesis.repository.test;
+package build.jenesis.repository.store.test;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;

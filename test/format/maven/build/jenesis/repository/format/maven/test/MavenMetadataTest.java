@@ -1,4 +1,4 @@
-package build.jenesis.repository.test;
+package build.jenesis.repository.format.maven.test;
 
 import build.jenesis.repository.format.maven.MavenMetadata;
 import build.jenesis.repository.store.Publication;
@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

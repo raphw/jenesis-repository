@@ -9,6 +9,6 @@
  * @jenesis.release 25
  */
 module build.jenesis.repository.importer {
-    requires build.jenesis.repository.format;
+    requires transitive build.jenesis.repository.format;
     exports build.jenesis.repository.importer;
 }

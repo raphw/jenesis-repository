@@ -8,6 +8,6 @@
  * @jenesis.release 25
  */
 module build.jenesis.repository.format {
-    requires build.jenesis.repository.store;
+    requires transitive build.jenesis.repository.store;
     exports build.jenesis.repository.format;
 }
