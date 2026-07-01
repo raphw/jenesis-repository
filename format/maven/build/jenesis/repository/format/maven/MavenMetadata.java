@@ -1,4 +1,4 @@
-package build.jenesis.repository;
+package build.jenesis.repository.format.maven;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;

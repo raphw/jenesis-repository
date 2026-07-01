@@ -1,16 +1,15 @@
-package build.jenesis.repository;
+package build.jenesis.repository.format.java;
 
 import module java.base;
 
 /**
- * Emits the {@code .pom} (and the {@code maven-metadata.xml} entry) for a module uploaded under
- * {@code /module/...}, so Maven clients can consume it. A skeleton: the production generator reuses the
- * jenesis {@code MavenPomEmitter} and the module-descriptor parser to read the module-info, derive the
- * coordinate, and carry the resolved dependencies as {@code <dependencies>}.
+ * Emits the {@code .pom} for a module cross-published under its Maven coordinate, so Maven clients can consume a
+ * Jenesis module. A coordinate-only POM today; the richer generator additionally reads the module descriptor and
+ * carries its {@code requires}, mapped through the module bridge, as {@code <dependencies>}.
  */
 public final class PomGenerator {
 
-    /** A minimal POM for a coordinate. The production generator additionally carries dependencies and metadata. */
+    /** A minimal POM for a coordinate. */
     public String pom(String groupId, String artifactId, String version) {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
