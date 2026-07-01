@@ -5,6 +5,8 @@ import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The OCI / Docker registry format (the {@code /v2/} Distribution API), so {@code docker push} and
@@ -16,6 +18,8 @@ import build.jenesis.repository.store.ArtifactStore;
  * returns it verbatim. Stateless: the dispatcher passes the tenant-and-repository-scoped store on each call.
  */
 public final class OciFormat implements RepositoryFormat, ProxyFormat {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
@@ -183,14 +187,11 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     }
 
     private void tags(String name, ArtifactStore store, FormatExchange exchange) throws IOException {
-        List<String> tags = store.list("oci/" + name + "/tags");
-        StringBuilder json = new StringBuilder("{\"name\":\"").append(name).append("\",\"tags\":[");
-        for (int index = 0; index < tags.size(); index++) {
-            json.append(index == 0 ? "" : ",").append('"').append(tags.get(index)).append('"');
-        }
-        json.append("]}");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("name", name);
+        body.put("tags", store.list("oci/" + name + "/tags"));
         exchange.setResponseHeader("Content-Type", "application/json");
-        exchange.respond(200, json.toString().getBytes(StandardCharsets.UTF_8));
+        exchange.respond(200, JSON.writeValueAsString(body).getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -301,18 +302,9 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         if (response.isEmpty() || response.get().status() != 200) {
             return null;
         }
-        String json = new String(response.get().body(), StandardCharsets.UTF_8);
-        for (String field : new String[]{"\"token\"", "\"access_token\""}) {
-            int at = json.indexOf(field);
-            if (at >= 0) {
-                int open = json.indexOf('"', json.indexOf(':', at) + 1);
-                int close = json.indexOf('"', open + 1);
-                if (open >= 0 && close > open) {
-                    return json.substring(open + 1, close);
-                }
-            }
-        }
-        return null;
+        JsonNode token = JSON.readTree(new String(response.get().body(), StandardCharsets.UTF_8));
+        String bearer = token.path("token").asString(null);
+        return bearer != null ? bearer : token.path("access_token").asString(null);
     }
 
     private static String hex(String digest) {

@@ -3,6 +3,7 @@ package build.jenesis.repository.format.oci;
 import module java.base;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactStore;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Imports a Docker / OCI registry (Nexus {@code docker}, Artifactory {@code docker}) from an incumbent manager.
@@ -14,6 +15,8 @@ import build.jenesis.repository.store.ArtifactStore;
  * field, since an import carries no response headers. This is the Docker half of the core's import capability.
  */
 public final class OciImporter implements RepositoryImporter {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
@@ -56,14 +59,11 @@ public final class OciImporter implements RepositoryImporter {
     }
 
     private static String mediaType(byte[] manifest) {
-        String text = new String(manifest, StandardCharsets.UTF_8);
-        int at = text.indexOf("\"mediaType\"");
-        if (at < 0) {
+        try {
+            return JSON.readTree(new String(manifest, StandardCharsets.UTF_8)).path("mediaType").asString(OCI_MANIFEST);
+        } catch (RuntimeException _) {
             return OCI_MANIFEST;
         }
-        int open = text.indexOf('"', text.indexOf(':', at) + 1);
-        int close = text.indexOf('"', open + 1);
-        return open >= 0 && close > open ? text.substring(open + 1, close) : OCI_MANIFEST;
     }
 
     private static String sha256(byte[] content) {
