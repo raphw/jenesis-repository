@@ -90,6 +90,32 @@ public final class QuotaArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public String writeBlob(InputStream in) throws IOException {
+        if (limit <= 0) {
+            return delegate.writeBlob(in);
+        }
+        // The content-addressed key is only known once the stream is digested, so buffer to a temp file while
+        // hashing, then route the stored bytes through this store's own metered write, which enforces the quota and
+        // counts the blob exactly as a keyed publish would (freshness, refusal at the limit, usage adjustment).
+        Path temporary = Files.createTempFile("quota-blob-", null);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (OutputStream out = Files.newOutputStream(temporary)) {
+                new DigestInputStream(in, digest).transferTo(out);
+            }
+            String hash = HexFormat.of().formatHex(digest.digest());
+            try (InputStream stored = Files.newInputStream(temporary)) {
+                write(BLOBS + hash, stored);
+            }
+            return hash;
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    @Override
     public void delete(String key) throws IOException {
         if (limit > 0 && key.startsWith(BLOBS)) {
             long size = delegate.size(key);

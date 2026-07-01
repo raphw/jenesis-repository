@@ -27,6 +27,16 @@ public interface ArtifactStore {
     /** Atomically store the blob from {@code in}, so a reader never observes a partial write. */
     void write(String key, InputStream in) throws IOException;
 
+    /**
+     * Store a blob content-addressed by its SHA-256, computed as {@code in} streams through, and return the hex
+     * digest. The content lands at {@code blobs/<hash>} - the same content-addressed key a keyed {@link #write}
+     * would use - so an identical blob already present is left untouched. This is the primitive a large artifact
+     * streams through on the way from the network to storage: the store never has the hash (and so the key) before
+     * it has read the bytes, and there is no move once written, so the backend digests while it writes rather than
+     * buffering the whole body in memory to hash it first.
+     */
+    String writeBlob(InputStream in) throws IOException;
+
     /** The stored byte length of the blob at this key, or {@code -1} if nothing is stored there. */
     long size(String key) throws IOException;
 

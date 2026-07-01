@@ -81,6 +81,35 @@ public final class AzureArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public String writeBlob(InputStream in) throws IOException {
+        // A content-addressed key is the hash of the bytes being written, so the key is unknown until the stream is
+        // read; buffer the (possibly large) body to a temp file while digesting it, then upload from the file under
+        // blobs/<hash> - never holding the whole artifact in memory.
+        Path temporary = Files.createTempFile("azure-artifact-", null);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (OutputStream out = Files.newOutputStream(temporary)) {
+                new DigestInputStream(in, digest).transferTo(out);
+            }
+            String key = "blobs/" + HexFormat.of().formatHex(digest.digest());
+            if (!exists(key)) {
+                BlockBlobClient blob = container.getBlobClient(keyPrefix + key).getBlockBlobClient();
+                try (InputStream stored = Files.newInputStream(temporary);
+                     BlobOutputStream out = blob.getBlobOutputStream(true)) {
+                    stored.transferTo(out);
+                }
+            }
+            return key.substring("blobs/".length());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        } catch (BlobStorageException e) {
+            throw new IOException("Could not write blob", e);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    @Override
     public void delete(String key) throws IOException {
         try {
             container.getBlobClient(keyPrefix + key).deleteIfExists();

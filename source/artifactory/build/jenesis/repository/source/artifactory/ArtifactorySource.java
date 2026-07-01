@@ -65,18 +65,15 @@ public final class ArtifactorySource implements ImportSource {
             }
             String path = uri.startsWith("/") ? uri.substring(1) : uri;
             URI download = URI.create(prefix + URLEncoder.encode(repository, StandardCharsets.UTF_8) + "/" + path);
-            consumer.accept(format, path, () -> download(download));
+            consumer.accept(format, path, () -> open(download));
         }
         // the storage listing is a single response, so there is no mid-walk resume point: one terminal checkpoint.
         checkpoint.reached(null);
     }
 
-    private byte[] download(URI url) throws IOException {
-        ProxyFormat.Fetched fetched = get(url);
-        if (fetched.status() != 200) {
-            throw new IOException("Download failed (" + fetched.status() + ") for " + url);
-        }
-        return fetched.body();
+    private InputStream open(URI url) throws IOException {
+        Map<String, String> headers = authorization == null ? Map.of() : Map.of("Authorization", authorization);
+        return fetcher.open(url, headers).orElseThrow(() -> new IOException("No response from " + url));
     }
 
     private ProxyFormat.Fetched get(URI url) throws IOException {

@@ -21,7 +21,7 @@ public final class RawImporter implements RepositoryImporter {
     }
 
     @Override
-    public void importArtifact(String path, byte[] content, ArtifactStore store) throws IOException {
+    public void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException {
         String relative = path.startsWith("/") ? path.substring(1) : path;
         Publication publication = new Publication(store);
         publication.link("/raw/" + relative, publication.storeBlob(content));

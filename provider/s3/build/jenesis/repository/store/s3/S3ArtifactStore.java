@@ -87,6 +87,31 @@ public final class S3ArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public String writeBlob(InputStream in) throws IOException {
+        // S3 PutObject needs the content length and the key up front, but a content-addressed key is the hash of
+        // the very bytes being written; buffer the (possibly large) body to a temp file while digesting it, then
+        // upload from the file under blobs/<hash> - never holding the whole artifact in memory.
+        Path temporary = Files.createTempFile("s3-artifact-", null);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (OutputStream out = Files.newOutputStream(temporary)) {
+                new DigestInputStream(in, digest).transferTo(out);
+            }
+            String key = "blobs/" + HexFormat.of().formatHex(digest.digest());
+            if (!exists(key)) {
+                s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key), RequestBody.fromFile(temporary));
+            }
+            return key.substring("blobs/".length());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        } catch (S3Exception e) {
+            throw new IOException("Could not write blob", e);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    @Override
     public void delete(String key) throws IOException {
         try {
             s3.deleteObject(b -> b.bucket(bucket).key(keyPrefix + key));

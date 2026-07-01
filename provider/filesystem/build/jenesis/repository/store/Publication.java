@@ -41,11 +41,14 @@ public final class Publication {
     /** Store content once, content-addressed, and return its hash - the primitive a staging deploy or a cross-publish
      *  uses to hold bytes before any view points at them. */
     public String storeBlob(byte[] content) throws IOException {
-        String hash = sha256(content);
-        if (!store.exists("blobs/" + hash)) {
-            store.write("blobs/" + hash, new ByteArrayInputStream(content));
-        }
-        return hash;
+        return storeBlob(new ByteArrayInputStream(content));
+    }
+
+    /** Stream content once, content-addressed while it is read, and return its hash - the streaming counterpart of
+     *  {@link #storeBlob(byte[])} that lets a large artifact go from the network to storage without being buffered
+     *  whole in memory. */
+    public String storeBlob(InputStream content) throws IOException {
+        return store.writeBlob(content);
     }
 
     /** Point a request path at an already-stored blob - the primitive promotion and cross-publishing use to publish a
@@ -66,14 +69,6 @@ public final class Publication {
     public void unpublish(String requestPath) throws IOException {
         if (store.readVersioned("publish" + requestPath).isPresent()) {
             store.delete("publish" + requestPath);
-        }
-    }
-
-    private static String sha256(byte[] content) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
         }
     }
 }

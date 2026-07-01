@@ -41,7 +41,9 @@ public final class RepositoryImport {
         source.forEach((format, path, content) -> {
             for (RepositoryImporter importer : importers) {
                 if (importer.handles(format)) {
-                    importer.importArtifact(path, content.read(), store);
+                    try (InputStream in = content.open()) {
+                        importer.importArtifact(path, in, store);
+                    }
                     imported.incrementAndGet();
                     listener.imported();
                     return;

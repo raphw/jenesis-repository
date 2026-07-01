@@ -29,10 +29,12 @@ public interface ImportSource {
         void accept(String format, String path, Content content) throws IOException;
     }
 
-    /** A deferred download of one asset's bytes, read only once an importer has claimed the asset's format. */
+    /** A deferred download of one asset's bytes, opened only once an importer has claimed the asset's format. The
+     *  stream copies straight from the source to storage, so a large artifact is never buffered whole; the caller
+     *  owns and closes it. */
     @FunctionalInterface
     interface Content {
-        byte[] read() throws IOException;
+        InputStream open() throws IOException;
     }
 
     /** Notified after a batch is fully consumed with the cursor to resume from (the next page's token), or

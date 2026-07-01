@@ -71,7 +71,7 @@ public final class NexusSource implements ImportSource {
                     if (path == null || downloadUrl == null) {
                         continue;
                     }
-                    consumer.accept(format, path, () -> download(URI.create(downloadUrl)));
+                    consumer.accept(format, path, () -> open(URI.create(downloadUrl)));
                 }
             }
             token = body.path("continuationToken").asString(null);
@@ -79,12 +79,9 @@ public final class NexusSource implements ImportSource {
         } while (token != null);
     }
 
-    private byte[] download(URI url) throws IOException {
-        ProxyFormat.Fetched fetched = get(url);
-        if (fetched.status() != 200) {
-            throw new IOException("Download failed (" + fetched.status() + ") for " + url);
-        }
-        return fetched.body();
+    private InputStream open(URI url) throws IOException {
+        Map<String, String> headers = authorization == null ? Map.of() : Map.of("Authorization", authorization);
+        return fetcher.open(url, headers).orElseThrow(() -> new IOException("No response from " + url));
     }
 
     private ProxyFormat.Fetched get(URI url) throws IOException {

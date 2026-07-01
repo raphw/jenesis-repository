@@ -53,6 +53,33 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public String writeBlob(InputStream in) throws IOException {
+        Path blobs = resolve("blobs");
+        Files.createDirectories(blobs);
+        Path temp = Files.createTempFile(blobs, ".upload", ".tmp");
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (OutputStream out = Files.newOutputStream(temp)) {
+                new DigestInputStream(in, digest).transferTo(out);
+            }
+            String hash = HexFormat.of().formatHex(digest.digest());
+            Path blob = blobs.resolve(hash);
+            if (Files.isRegularFile(blob)) {
+                Files.delete(temp);
+            } else {
+                Files.move(temp, blob, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            }
+            return hash;
+        } catch (NoSuchAlgorithmException e) {
+            Files.deleteIfExists(temp);
+            throw new IllegalStateException(e);
+        } catch (IOException e) {
+            Files.deleteIfExists(temp);
+            throw e;
+        }
+    }
+
+    @Override
     public long size(String key) throws IOException {
         Path path = resolve(key);
         return Files.isRegularFile(path) ? Files.size(path) : -1L;

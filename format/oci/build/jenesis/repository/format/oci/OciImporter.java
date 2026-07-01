@@ -26,22 +26,19 @@ public final class OciImporter implements RepositoryImporter {
     }
 
     @Override
-    public void importArtifact(String path, byte[] content, ArtifactStore store) throws IOException {
+    public void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException {
         String rest = path.startsWith("/") ? path.substring(1) : path;
         if (rest.startsWith("v2/")) {
             rest = rest.substring("v2/".length());
         }
         int manifests = rest.indexOf("/manifests/");
         if (manifests >= 0) {
-            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()), content, store);
+            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()),
+                    content.readAllBytes(), store);
             return;
         }
-        int blobs = rest.indexOf("/blobs/");
-        if (blobs >= 0) {
-            String hex = sha256(content);
-            if (!store.exists("blobs/" + hex)) {
-                store.write("blobs/" + hex, new ByteArrayInputStream(content));
-            }
+        if (rest.contains("/blobs/")) {
+            store.writeBlob(content);
         }
     }
 

@@ -2,7 +2,9 @@ package build.jenesis.repository.format;
 
 import build.jenesis.repository.store.ArtifactStore;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
@@ -36,6 +38,25 @@ public interface ProxyFormat {
     @FunctionalInterface
     interface Fetcher {
         Optional<Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException;
+
+        /**
+         * Open a streaming download of a successful upstream {@code GET}, for an import that copies a large artifact
+         * straight to storage rather than buffering it whole (as {@link #fetch} does for the proxy formats that must
+         * inspect or rewrite a body). An empty result is a transport failure; a non-{@code 200} status is an
+         * {@link IOException}. The caller owns and closes the returned stream. The default materializes from
+         * {@link #fetch}; a real HTTP fetcher overrides it to stream the response body.
+         */
+        default Optional<InputStream> open(URI url, Map<String, String> requestHeaders) throws IOException {
+            Optional<Fetched> fetched = fetch(url, requestHeaders);
+            if (fetched.isEmpty()) {
+                return Optional.empty();
+            }
+            Fetched response = fetched.get();
+            if (response.status() != 200) {
+                throw new IOException("Download failed (" + response.status() + ") for " + url);
+            }
+            return Optional.of(new ByteArrayInputStream(response.body()));
+        }
     }
 
     /** An upstream response: the HTTP status, the body, and the response headers (for content type and auth challenges). */

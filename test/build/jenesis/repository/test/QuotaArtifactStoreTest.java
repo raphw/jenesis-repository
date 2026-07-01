@@ -17,7 +17,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The quota decorator meters only content blobs against a byte ceiling, tracks usage through writes and deletes,
  * dedupes a re-written blob, refuses a new blob once the scope is at the limit while letting a write begun under it
- * complete, treats a non-positive limit as unlimited, and reseeds from the live blobs with recompute.
+ * complete, meters the content-addressed streaming write the same way, treats a non-positive limit as unlimited, and
+ * reseeds from the live blobs with recompute.
  */
 class QuotaArtifactStoreTest {
 
@@ -51,6 +52,25 @@ class QuotaArtifactStoreTest {
         store.write("blobs/aaa", bytes(300));
         store.write("blobs/aaa", bytes(300));
         assertThat(store.used()).isEqualTo(300);
+    }
+
+    @Test
+    void a_streamed_blob_is_metered_and_dedupes_like_a_keyed_write() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
+        String first = store.writeBlob(bytes(300));
+        String again = store.writeBlob(bytes(300));
+        assertThat(again).as("identical content dedupes to one blob").isEqualTo(first);
+        assertThat(store.exists("blobs/" + first)).isTrue();
+        assertThat(store.used()).as("the streaming write counts once, like a keyed write").isEqualTo(300);
+    }
+
+    @Test
+    void a_streamed_blob_is_refused_once_the_scope_is_at_the_limit() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 500);
+        store.write("blobs/aaa", bytes(500));
+        assertThatThrownBy(() -> store.writeBlob(bytes(1)))
+                .isInstanceOf(QuotaExceededException.class);
+        assertThat(store.used()).isEqualTo(500);
     }
 
     @Test

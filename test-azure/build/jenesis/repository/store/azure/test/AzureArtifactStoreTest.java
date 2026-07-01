@@ -91,6 +91,20 @@ public class AzureArtifactStoreTest {
     }
 
     @Test
+    public void write_blob_is_content_addressed_streaming_and_dedupes() throws Exception {
+        byte[] body = {0, 1, 2, 3, (byte) 0xFF};
+        String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
+        String returned = store.writeBlob(new ByteArrayInputStream(body));
+        assertThat(returned).as("the returned hash is the content's SHA-256").isEqualTo(hash);
+        assertThat(store.exists("blobs/" + hash)).isTrue();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        store.read("blobs/" + hash, out);
+        assertThat(out.toByteArray()).isEqualTo(body);
+        assertThat(store.writeBlob(new ByteArrayInputStream(body)))
+                .as("identical content dedupes to the same blob").isEqualTo(hash);
+    }
+
+    @Test
     public void list_returns_the_immediate_children_under_a_prefix() throws IOException {
         store.write("publish/maven/g/a/1.0/a-1.0.jar", new ByteArrayInputStream(new byte[]{1}));
         store.write("publish/maven/g/a/1.0/a-1.0.pom", new ByteArrayInputStream(new byte[]{2}));

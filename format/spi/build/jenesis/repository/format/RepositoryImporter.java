@@ -3,6 +3,7 @@ package build.jenesis.repository.format;
 import build.jenesis.repository.store.ArtifactStore;
 
 import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * Imports the artifacts of one ecosystem from a foreign repository manager (Nexus, Artifactory) into the
@@ -21,6 +22,9 @@ public interface RepositoryImporter {
      *  {@code maven2}, {@code docker}, {@code npm}, {@code pypi}, {@code nuget}, {@code rubygems}, {@code raw}. */
     boolean handles(String format);
 
-    /** Import one asset - its path within the source repository and its bytes - into the content-addressed store. */
-    void importArtifact(String path, byte[] content, ArtifactStore store) throws IOException;
+    /** Import one asset - its path within the source repository and its content stream - into the content-addressed
+     *  store. The stream copies straight to storage; an importer that must inspect the content (to parse a manifest
+     *  or a coordinate) may read it into a buffer, but a plain blob streams through unbuffered. The caller closes
+     *  the stream. */
+    void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException;
 }
