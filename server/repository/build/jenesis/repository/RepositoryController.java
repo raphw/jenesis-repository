@@ -5,9 +5,10 @@ import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.source.ImportRequest;
 import build.jenesis.repository.source.ImportSource;
 import build.jenesis.repository.source.ImportSourceProvider;
-import build.jenesis.repository.source.Json;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.QuotaExceededException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -42,6 +43,8 @@ import java.util.Optional;
  */
 @RestController
 public class RepositoryController {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final List<RepositoryFormat> formats;
     private final List<ImportSourceProvider> importSources;
@@ -109,20 +112,20 @@ public class RepositoryController {
     public void submitImport(@RequestBody(required = false) String body, HttpServletResponse response)
             throws IOException {
         ImportJobs jobs = new ImportJobs();
-        Map<String, Object> spec = Json.object(Json.parse(body == null || body.isBlank() ? "{}" : body));
-        String url = Json.string(spec.get("url"));
-        String repository = Json.string(spec.get("repository"));
+        JsonNode spec = JSON.readTree(body == null || body.isBlank() ? "{}" : body);
+        String url = spec.path("url").asString(null);
+        String repository = spec.path("repository").asString(null);
         if (url == null || repository == null) {
             respond(response, 400, "url and repository are required");
             return;
         }
-        String resume = Json.string(spec.get("resume"));
+        String resume = spec.path("resume").asString(null);
         ImportJobs.Snapshot prior = resume == null ? null : jobs.snapshot(store, resume).orElse(null);
         String cursor = prior == null ? null : prior.cursor();
-        String sourceName = Json.string(spec.get("source"));
+        String sourceName = spec.path("source").asString(null);
         ImportRequest request = new ImportRequest(URI.create(url), repository)
-                .withFormat(Json.string(spec.get("format")))
-                .withCredentials(Json.string(spec.get("username")), Json.string(spec.get("password")))
+                .withFormat(spec.path("format").asString(null))
+                .withCredentials(spec.path("username").asString(null), spec.path("password").asString(null))
                 .withCursor(cursor);
         ImportSource source = importSources.stream()
                 .filter(provider -> provider.handles(sourceName))
@@ -136,7 +139,7 @@ public class RepositoryController {
         String jobId = prior == null ? ImportJobs.newId() : resume;
         jobs.submit(store, source, jobId, prior == null ? 0 : prior.imported(), prior == null ? 0 : prior.skipped());
         response.setHeader("Content-Type", "application/json");
-        respond(response, 202, Json.write(Map.of("job", jobId, "state", "running")));
+        respond(response, 202, JSON.writeValueAsString(Map.of("job", jobId, "state", "running")));
     }
 
     /** Return a job's persisted state as raw JSON ({@code 404} if there is no such job). */

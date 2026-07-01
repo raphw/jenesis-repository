@@ -3,7 +3,8 @@ package build.jenesis.repository.source.artifactory;
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.source.ImportSource;
-import build.jenesis.repository.source.Json;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * An {@link ImportSource} over a JFrog Artifactory instance, the read half of an Artifactory migration. It lists a
@@ -15,6 +16,8 @@ import build.jenesis.repository.source.Json;
  * without an Artifactory.
  */
 public final class ArtifactorySource implements ImportSource {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final URI base;
     private final String repository;
@@ -51,13 +54,12 @@ public final class ArtifactorySource implements ImportSource {
         if (page.status() != 200) {
             throw new IOException("Artifactory listing failed (" + page.status() + ") for " + listing);
         }
-        Map<String, Object> body = Json.object(Json.parse(new String(page.body(), StandardCharsets.UTF_8)));
-        for (Object entry : Json.array(body.get("files"))) {
-            Map<String, Object> file = Json.object(entry);
-            if (Boolean.TRUE.equals(file.get("folder"))) {
+        JsonNode body = JSON.readTree(new String(page.body(), StandardCharsets.UTF_8));
+        for (JsonNode file : body.path("files")) {
+            if (file.path("folder").asBoolean(false)) {
                 continue;
             }
-            String uri = Json.string(file.get("uri"));
+            String uri = file.path("uri").asString(null);
             if (uri == null) {
                 continue;
             }

@@ -96,6 +96,7 @@ open module build.jenesis.repository {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.source;
     requires java.net.http;
+    requires tools.jackson.databind;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;
     requires org.slf4j;

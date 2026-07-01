@@ -2,8 +2,9 @@ package build.jenesis.repository;
 
 import module java.base;
 import build.jenesis.repository.source.ImportSource;
-import build.jenesis.repository.source.Json;
 import build.jenesis.repository.store.ArtifactStore;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Runs a migration as a background job so the trigger can return at once and the caller polls for progress. A
@@ -15,6 +16,8 @@ import build.jenesis.repository.store.ArtifactStore;
  * store is the only state, so progress survives a restart and a status read needs no in-memory registry.
  */
 public final class ImportJobs {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     public static String newId() {
         return UUID.randomUUID().toString();
@@ -78,14 +81,14 @@ public final class ImportJobs {
         if (bytes.isEmpty()) {
             return Optional.empty();
         }
-        Map<String, Object> state = Json.object(Json.parse(new String(bytes.get(), StandardCharsets.UTF_8)));
+        JsonNode state = JSON.readTree(new String(bytes.get(), StandardCharsets.UTF_8));
         List<String> formats = new ArrayList<>();
-        for (Object format : Json.array(state.get("skippedFormats"))) {
-            formats.add(Json.string(format));
+        for (JsonNode format : state.path("skippedFormats")) {
+            formats.add(format.asString(null));
         }
-        return Optional.of(new Snapshot(Json.string(state.get("state")), Json.integer(state.get("imported")),
-                Json.integer(state.get("skipped")), formats, Json.string(state.get("cursor")),
-                Json.string(state.get("error"))));
+        return Optional.of(new Snapshot(state.path("state").asString(null), state.path("imported").asInt(0),
+                state.path("skipped").asInt(0), formats, state.path("cursor").asString(null),
+                state.path("error").asString(null)));
     }
 
     private void write(ArtifactStore store, String jobId, String state, int imported, int skipped,
@@ -97,7 +100,7 @@ public final class ImportJobs {
         job.put("skippedFormats", new ArrayList<>(skippedFormats));
         job.put("cursor", cursor);
         job.put("error", error);
-        store.write("imports/" + jobId, new ByteArrayInputStream(Json.write(job).getBytes(StandardCharsets.UTF_8)));
+        store.write("imports/" + jobId, new ByteArrayInputStream(JSON.writeValueAsString(job).getBytes(StandardCharsets.UTF_8)));
     }
 
     /** A parsed view of a job's persisted state. */

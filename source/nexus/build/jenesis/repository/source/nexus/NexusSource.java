@@ -3,7 +3,8 @@ package build.jenesis.repository.source.nexus;
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.source.ImportSource;
-import build.jenesis.repository.source.Json;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * An {@link ImportSource} over a Sonatype Nexus 3 instance, the read half of a Nexus migration. It pages the
@@ -16,6 +17,8 @@ import build.jenesis.repository.source.Json;
  * {@link ProxyFormat.Fetcher} the proxy uses, so the walk is tested without a Nexus.
  */
 public final class NexusSource implements ImportSource {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final URI base;
     private final String repository;
@@ -59,21 +62,19 @@ public final class NexusSource implements ImportSource {
             if (page.status() != 200) {
                 throw new IOException("Nexus listing failed (" + page.status() + ") for " + url);
             }
-            Map<String, Object> body = Json.object(Json.parse(new String(page.body(), StandardCharsets.UTF_8)));
-            for (Object component : Json.array(body.get("items"))) {
-                Map<String, Object> item = Json.object(component);
-                String format = Json.string(item.get("format"));
-                for (Object entry : Json.array(item.get("assets"))) {
-                    Map<String, Object> asset = Json.object(entry);
-                    String path = Json.string(asset.get("path"));
-                    String downloadUrl = Json.string(asset.get("downloadUrl"));
+            JsonNode body = JSON.readTree(new String(page.body(), StandardCharsets.UTF_8));
+            for (JsonNode item : body.path("items")) {
+                String format = item.path("format").asString(null);
+                for (JsonNode asset : item.path("assets")) {
+                    String path = asset.path("path").asString(null);
+                    String downloadUrl = asset.path("downloadUrl").asString(null);
                     if (path == null || downloadUrl == null) {
                         continue;
                     }
                     consumer.accept(format, path, () -> download(URI.create(downloadUrl)));
                 }
             }
-            token = Json.string(body.get("continuationToken"));
+            token = body.path("continuationToken").asString(null);
             checkpoint.reached(token);
         } while (token != null);
     }
