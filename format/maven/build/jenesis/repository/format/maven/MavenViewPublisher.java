@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.maven;
 
 import module java.base;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.java.JavaLayout;
 import build.jenesis.repository.format.java.PomGenerator;
 import build.jenesis.repository.format.java.bridge.MavenView;

@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.maven;
 
 import module java.base;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
@@ -10,8 +10,8 @@ import build.jenesis.repository.format.java.bridge.ModuleView;
 import build.jenesis.repository.store.ArtifactStore;
 
 /**
- * The Maven layout ({@code /maven/...}): a {@code PUT} stores the blob content-addressed through the core
- * {@link Publication}, and a {@code GET} serves it or generates {@code maven-metadata.xml} on read through
+ * The Maven layout ({@code /maven/...}): a {@code PUT} stores the blob content-addressed through the shared
+ * {@link Publication} store, and a {@code GET} serves it or generates {@code maven-metadata.xml} on read through
  * {@link MavenMetadata} (a metadata upload is dropped, since the metadata is derived). When the uploaded artifact is a
  * modular jar, it is cross-published into the Jenesis module layout: this format reads the module name and hands it to
  * the {@link ModuleView} the Jenesis format provides (discovered with {@link ServiceLoader}), so a client resolving by

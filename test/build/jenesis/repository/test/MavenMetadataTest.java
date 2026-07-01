@@ -1,7 +1,7 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.format.maven.MavenMetadata;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import org.junit.jupiter.api.Test;

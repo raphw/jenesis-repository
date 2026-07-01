@@ -1,7 +1,6 @@
-package build.jenesis.repository;
+package build.jenesis.repository.store;
 
 import module java.base;
-import build.jenesis.repository.store.ArtifactStore;
 
 /**
  * Decouples the artifact bytes from their publication, format-neutrally. Each uploaded blob is stored once,
@@ -10,7 +9,7 @@ import build.jenesis.repository.store.ArtifactStore;
  * <hash>}); several paths can point at the same blob (the two Java layouts, a deduped coordinate, a latest mirror),
  * which is how a republish is just a pointer update. This primitive knows nothing of any layout: a format decides what
  * to publish where, and cross-publishing one layout's view into another's is a concern of the format modules, not of
- * the core.
+ * this storage primitive.
  */
 public final class Publication {
 

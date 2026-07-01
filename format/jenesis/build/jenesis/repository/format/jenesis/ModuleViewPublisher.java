@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.jenesis;
 
 import module java.base;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.java.bridge.ModuleView;
 import build.jenesis.repository.store.ArtifactStore;
 

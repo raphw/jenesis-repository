@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.jenesis;
 
 import module java.base;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.format.java.JavaLayout;
@@ -10,7 +10,7 @@ import build.jenesis.repository.store.ArtifactStore;
 
 /**
  * The Jenesis module layout ({@code /module/...} and {@code /artifact/...}): a {@code PUT} stores the blob
- * content-addressed through the core {@link Publication}, and a {@code GET} serves it. When a module jar is published,
+ * content-addressed through the shared {@link Publication} store, and a {@code GET} serves it. When a module jar is published,
  * it is cross-published into the Maven layout: this format hands the module to the {@link MavenView} the Maven format
  * provides (discovered with {@link ServiceLoader}), which gives it a Maven view - the jar under its derived coordinate
  * and a computed POM - so a Maven client reaches the same blob. The bridge is exposed only between the two Java

@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.raw;
 
 import module java.base;
-import build.jenesis.repository.Publication;
+import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactStore;
 
