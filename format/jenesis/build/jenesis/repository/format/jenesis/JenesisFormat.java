@@ -4,22 +4,16 @@ import module java.base;
 import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.RepositoryFormat;
-import build.jenesis.repository.format.java.JavaLayout;
-import build.jenesis.repository.format.java.bridge.MavenView;
 import build.jenesis.repository.store.ArtifactStore;
 
 /**
  * The Jenesis module layout ({@code /module/...} and {@code /artifact/...}): a {@code PUT} stores the blob
- * content-addressed through the shared {@link Publication} store, and a {@code GET} serves it. When a module jar is published,
- * it is cross-published into the Maven layout: this format hands the module to the {@link MavenView} the Maven format
- * provides (discovered with {@link ServiceLoader}), which gives it a Maven view - the jar under its derived coordinate
- * and a computed POM - so a Maven client reaches the same blob. The bridge is exposed only between the two Java
- * layouts and never on the public SPI; the core knows nothing of it.
+ * content-addressed through the shared {@link Publication} store, and a {@code GET} serves it. A modular jar published
+ * under the Maven layout is cross-published into this layout (its module view) by the Maven format, so it resolves by
+ * module name; this format does not mirror the other way - a module published here stays in the module layout, and a
+ * publisher that wants a Maven coordinate deploys under {@code /maven/} directly. The core knows nothing of it.
  */
 public final class JenesisFormat implements RepositoryFormat {
-
-    private static final List<MavenView> MAVEN_VIEWS = ServiceLoader.load(MavenView.class)
-            .stream().map(ServiceLoader.Provider::get).toList();
 
     @Override
     public String name() {
@@ -35,15 +29,7 @@ public final class JenesisFormat implements RepositoryFormat {
     public void handle(FormatExchange exchange, ArtifactStore store) throws IOException {
         String path = exchange.path();
         if (exchange.method().equals("PUT")) {
-            byte[] body = exchange.requestBytes();
-            Publication publication = new Publication(store);
-            publication.publish(path, body);
-            String[] reference = JavaLayout.moduleReference(path);
-            if (path.endsWith(".jar") && reference != null) {
-                for (MavenView view : MAVEN_VIEWS) {
-                    view.publish(reference[0], reference[1], body, store);
-                }
-            }
+            new Publication(store).publish(path, exchange.requestBytes());
             exchange.respond(201);
             return;
         }

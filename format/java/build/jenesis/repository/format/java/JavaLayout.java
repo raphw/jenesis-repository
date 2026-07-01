@@ -3,28 +3,13 @@ package build.jenesis.repository.format.java;
 import module java.base;
 
 /**
- * The primitives the Maven and Jenesis layouts share: reading the module name a jar declares, and mapping between a
- * module name and a Maven coordinate. The two layout formats build on these so the module-descriptor parsing and the
- * coordinate convention live in one place rather than being duplicated (or, as before, sitting in the core).
+ * The primitives the Maven layout needs to cross-publish into the Jenesis module layout: reading the module name a jar
+ * declares, and parsing a Maven request path into its coordinate. These live in the shared Java-layout module so the
+ * module-descriptor reading and the coordinate convention sit in one place rather than in the core.
  */
 public final class JavaLayout {
 
     private JavaLayout() {
-    }
-
-    /** The module descriptor a modular jar carries, or empty for a plain or automatic-module jar (one that declares no
-     *  dependencies of its own). Read from {@code module-info.class}. */
-    public static Optional<ModuleDescriptor> descriptor(byte[] jar) {
-        try (JarInputStream in = new JarInputStream(new ByteArrayInputStream(jar))) {
-            for (JarEntry entry; (entry = in.getNextJarEntry()) != null; ) {
-                if (entry.getName().equals("module-info.class")) {
-                    return Optional.of(ModuleDescriptor.read(in));
-                }
-            }
-        } catch (IOException | RuntimeException _) {
-            return Optional.empty();
-        }
-        return Optional.empty();
     }
 
     /** The module name a jar declares - its {@code module-info} name, or its {@code Automatic-Module-Name} - or null
@@ -55,23 +40,5 @@ public final class JavaLayout {
                 String.join(".", Arrays.copyOf(segments, segments.length - 3)),
                 segments[segments.length - 3],
                 segments[segments.length - 2]};
-    }
-
-    /** The {@code [moduleName, version]} of a {@code /module/...} or {@code /artifact/...} request path, or null. */
-    public static String[] moduleReference(String requestPath) {
-        String tail = requestPath.startsWith("/module/")
-                ? requestPath.substring("/module/".length())
-                : requestPath.substring("/artifact/".length());
-        String[] segments = tail.split("/");
-        return segments.length < 3 ? null : new String[]{segments[0], segments[1]};
-    }
-
-    /** The Maven {@code [groupId, artifactId]} derived from a module name: its last dot splits group from artifact,
-     *  a dotless name is both. */
-    public static String[] coordinate(String moduleName) {
-        int dot = moduleName.lastIndexOf('.');
-        return dot < 0
-                ? new String[]{moduleName, moduleName}
-                : new String[]{moduleName.substring(0, dot), moduleName.substring(dot + 1)};
     }
 }

@@ -31,10 +31,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Boots the real {@link RepositoryApplication} on an ephemeral port over a temporary filesystem store, publishes
  * artifacts over HTTP (the deploy side), then resolves them through the genuine Jenesis build-side clients -
  * {@link JenesisModuleRepository} for the module layout and {@link MavenDefaultRepository} for the Maven layout,
- * the same code a build's dependency resolution runs. So the bridge is proven both ways against the assembled
- * server, off a single content-addressed blob: a Maven library carrying an {@code Automatic-Module-Name} is
- * resolvable by module name (and via the latest mirror), and a module is resolvable by its derived Maven
- * coordinate.
+ * the same code a build's dependency resolution runs. So the one required cross-publish is proven against the
+ * assembled server, off a single content-addressed blob: a Maven library carrying an {@code Automatic-Module-Name}
+ * is resolvable by module name (and via the latest mirror). A module published to the module layout stays there and
+ * is not mirrored to the Maven layout.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class RepositoryDualLayoutE2ETest {
@@ -83,15 +83,14 @@ public class RepositoryDualLayoutE2ETest {
     }
 
     @Test
-    public void a_module_is_consumable_from_the_maven_layout() throws IOException {
+    public void a_module_published_to_the_module_layout_is_served_there_and_not_mirrored_to_maven() throws IOException {
         byte[] jar = automaticModuleJar("test.gadget");
         publish("module/test.gadget/2.0/test.gadget.jar", jar);
 
         assertThat(module().fetch(executor, "test.gadget/2.0"))
                 .hasValueSatisfying(item -> assertThat(bytes(item)).isEqualTo(jar));
 
-        assertThat(maven().fetch(executor, "test", "gadget", "2.0", "jar", null, null))
-                .hasValueSatisfying(item -> assertThat(bytes(item)).isEqualTo(jar));
+        assertThat(maven().fetch(executor, "test", "gadget", "2.0", "jar", null, null)).isEmpty();
     }
 
     @Test
