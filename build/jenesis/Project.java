@@ -972,7 +972,7 @@ public record Project(
                     classpath / module path. If exactly one module declares a
                     main, it is picked implicitly; otherwise disambiguate with
                     `-Djenesis.execute.module=<path>`, the module's source folder
-                    (a nested one as either `server/ui` or `server+ui`), and
+                    (a nested one as either `source/ui` or `source+ui`), and
                     `-Djenesis.execute.mainClass=<fqcn>`. Wrap the launched
                     program in Docker independently of the build with
                     `-Djenesis.execute.docker=true` and (optional)

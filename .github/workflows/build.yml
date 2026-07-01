@@ -53,19 +53,19 @@ jobs:
           CHANGED="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           printf '%s\n' "Changed files:" "$CHANGED"
           match() { printf '%s\n' "$CHANGED" | grep -qE "$1"; }
-          if match '^(build/|\.github/|format/spi/|provider/filesystem/|server/repository/|test/module-info\.java)'; then
+          if match '^(build/|\.github/|source/format/spi/|source/store/spi/|source/store/filesystem/|source/server/|test/server/module-info\.java)'; then
             echo "core change -> running the full suite"
             echo "NEED_HELM=true" >> "$GITHUB_ENV"
             exit 0
           fi
           inc_oci=false
-          if match '^format/oci/' || match '/(OciDockerTest|HelmOciTest|OciFormatTest|OciProxyTest)\.java'; then inc_oci=true; fi
+          if match '^source/format/oci/' || match '/(OciDockerTest|HelmOciTest|OciFormatTest|OciProxyTest)\.java'; then inc_oci=true; fi
           inc_proxy=false
-          if match '^format/maven/' || match '/MavenProxyTest\.java'; then inc_proxy=true; fi
+          if match '^source/format/maven/' || match '/MavenProxyTest\.java'; then inc_proxy=true; fi
           inc_s3=false
-          if match '^provider/s3/' || match '^test-s3/'; then inc_s3=true; fi
+          if match '^source/store/s3/' || match '^test/store/s3/'; then inc_s3=true; fi
           inc_azure=false
-          if match '^provider/azure/' || match '^test-azure/'; then inc_azure=true; fi
+          if match '^source/store/azure/' || match '^test/store/azure/'; then inc_azure=true; fi
           exclude=()
           $inc_oci   || exclude+=(docker helm)
           $inc_proxy || exclude+=(proxy)
