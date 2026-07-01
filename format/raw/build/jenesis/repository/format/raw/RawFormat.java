@@ -6,6 +6,9 @@ import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamWriter;
 
 /**
  * The generic (raw) format: a plain HTTP file store under {@code /raw/...}, for the artifacts that fit no package
@@ -83,12 +86,27 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
             exchange.respond(404);
             return;
         }
-        StringBuilder html = new StringBuilder("<!DOCTYPE html>\n<html><body>\n");
-        for (String child : children) {
-            html.append("<a href=\"").append(child).append("\">").append(child).append("</a><br/>\n");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            XMLStreamWriter writer = XMLOutputFactory.newInstance().createXMLStreamWriter(out, "UTF-8");
+            writer.writeDTD("<!DOCTYPE html>");
+            writer.writeStartElement("html");
+            writer.writeStartElement("body");
+            for (String child : children) {
+                writer.writeStartElement("a");
+                writer.writeAttribute("href", child);
+                writer.writeCharacters(child);
+                writer.writeEndElement();
+                writer.writeEmptyElement("br");
+            }
+            writer.writeEndElement();
+            writer.writeEndElement();
+            writer.writeEndDocument();
+            writer.close();
+        } catch (XMLStreamException e) {
+            throw new IOException(e);
         }
-        html.append("</body></html>\n");
         exchange.setResponseHeader("Content-Type", "text/html");
-        exchange.respond(200, html.toString().getBytes(StandardCharsets.UTF_8));
+        exchange.respond(200, out.toByteArray());
     }
 }

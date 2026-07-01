@@ -2,6 +2,9 @@ package build.jenesis.repository.format.maven;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamWriter;
 
 /**
  * Generates the artifact-level {@code maven-metadata.xml} on read, from the version folders published under a
@@ -51,7 +54,7 @@ public final class MavenMetadata {
         if (versions.isEmpty()) {
             return Optional.empty();
         }
-        byte[] xml = metadata(groupId, artifactId, versions).getBytes(StandardCharsets.UTF_8);
+        byte[] xml = metadata(groupId, artifactId, versions);
         if (requestPath.endsWith(".sha1")) {
             return Optional.of(hex("SHA-1", xml).getBytes(StandardCharsets.UTF_8));
         }
@@ -74,35 +77,44 @@ public final class MavenMetadata {
         return versions;
     }
 
-    private static String metadata(String groupId, String artifactId, List<String> versions) {
+    private static byte[] metadata(String groupId, String artifactId, List<String> versions) {
         String release = null;
         for (String version : versions) {
             if (!version.endsWith("-SNAPSHOT")) {
                 release = version;
             }
         }
-        StringBuilder xml = new StringBuilder();
-        xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        xml.append("<metadata>\n");
-        xml.append("  <groupId>").append(escape(groupId)).append("</groupId>\n");
-        xml.append("  <artifactId>").append(escape(artifactId)).append("</artifactId>\n");
-        xml.append("  <versioning>\n");
-        xml.append("    <latest>").append(escape(versions.getLast())).append("</latest>\n");
-        if (release != null) {
-            xml.append("    <release>").append(escape(release)).append("</release>\n");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            XMLStreamWriter writer = XMLOutputFactory.newInstance().createXMLStreamWriter(out, "UTF-8");
+            writer.writeStartDocument("UTF-8", "1.0");
+            writer.writeStartElement("metadata");
+            element(writer, "groupId", groupId);
+            element(writer, "artifactId", artifactId);
+            writer.writeStartElement("versioning");
+            element(writer, "latest", versions.getLast());
+            if (release != null) {
+                element(writer, "release", release);
+            }
+            writer.writeStartElement("versions");
+            for (String version : versions) {
+                element(writer, "version", version);
+            }
+            writer.writeEndElement();
+            writer.writeEndElement();
+            writer.writeEndElement();
+            writer.writeEndDocument();
+            writer.close();
+        } catch (XMLStreamException e) {
+            throw new IllegalStateException(e);
         }
-        xml.append("    <versions>\n");
-        for (String version : versions) {
-            xml.append("      <version>").append(escape(version)).append("</version>\n");
-        }
-        xml.append("    </versions>\n");
-        xml.append("  </versioning>\n");
-        xml.append("</metadata>\n");
-        return xml.toString();
+        return out.toByteArray();
     }
 
-    private static String escape(String value) {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    private static void element(XMLStreamWriter writer, String name, String text) throws XMLStreamException {
+        writer.writeStartElement(name);
+        writer.writeCharacters(text);
+        writer.writeEndElement();
     }
 
     private static String hex(String algorithm, byte[] content) {

@@ -13,6 +13,7 @@ module build.jenesis.repository.format.maven {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.format.java;
+    requires java.xml;
     exports build.jenesis.repository.format.maven to build.jenesis.repository.test;
     uses build.jenesis.repository.format.java.bridge.ModuleView;
     provides build.jenesis.repository.format.RepositoryFormat
