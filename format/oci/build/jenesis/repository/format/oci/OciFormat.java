@@ -70,17 +70,17 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             exchange.respond(404);
             return;
         }
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        store.read(key, buffer);
-        byte[] content = buffer.toByteArray();
+        long size = store.size(key);
         exchange.setResponseHeader("Docker-Content-Digest", digest);
         exchange.setResponseHeader("Content-Type", "application/octet-stream");
         if (exchange.method().equals("HEAD")) {
-            exchange.setResponseHeader("Content-Length", Integer.toString(content.length));
+            exchange.setResponseHeader("Content-Length", Long.toString(size));
             exchange.respond(200);
             return;
         }
-        exchange.respond(200, content);
+        try (OutputStream out = exchange.respond(200, size)) {
+            store.read(key, out);
+        }
     }
 
     private void upload(String name, String session, ArtifactStore store, FormatExchange exchange) throws IOException {
@@ -88,7 +88,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         if (method.equals("POST")) {
             String digest = exchange.queryParameter("digest");
             if (digest != null) {
-                store(digest, exchange.requestBytes(), store, name, exchange);
+                store(digest, exchange.requestStream(), store, name, exchange);
                 return;
             }
             String id = UUID.randomUUID().toString();
@@ -99,37 +99,81 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         String id = session.startsWith("/") ? session.substring(1) : session;
-        byte[] sofar = store.readVersioned("oci/uploads/" + id)
-                .map(ArtifactStore.Versioned::content).orElse(new byte[0]);
-        byte[] body = exchange.requestBytes();
-        byte[] combined = concat(sofar, body);
         if (method.equals("PATCH")) {
-            store.write("oci/uploads/" + id, new ByteArrayInputStream(combined));
+            append(store, id, exchange.requestStream());
             exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/uploads/" + id);
             exchange.setResponseHeader("Docker-Upload-UUID", id);
-            exchange.setResponseHeader("Range", "0-" + (combined.length - 1));
+            exchange.setResponseHeader("Range", "0-" + (uploaded(store, id) - 1));
             exchange.respond(202);
             return;
         }
         if (method.equals("PUT")) {
             String digest = exchange.queryParameter("digest");
-            store.delete("oci/uploads/" + id);
-            store(digest, combined, store, name, exchange);
+            append(store, id, exchange.requestStream());
+            try (InputStream combined = chunks(store, id)) {
+                store(digest, combined, store, name, exchange);
+            } finally {
+                cleanup(store, id);
+            }
             return;
         }
         exchange.respond(404);
     }
 
-    private void store(String digest, byte[] content, ArtifactStore store, String name, FormatExchange exchange)
+    /** Stream one received chunk straight to its own object under the upload session, indexed by its arrival order,
+     *  so a chunked docker push never accumulates the growing layer in memory. */
+    private static void append(ArtifactStore store, String id, InputStream chunk) throws IOException {
+        store.write("oci/uploads/" + id + "/" + store.list("oci/uploads/" + id).size(), chunk);
+    }
+
+    /** The bytes received for this upload session so far - the sum of its chunk sizes - for the {@code Range} header. */
+    private static long uploaded(ArtifactStore store, String id) throws IOException {
+        long total = 0;
+        for (String index : store.list("oci/uploads/" + id)) {
+            total += store.size("oci/uploads/" + id + "/" + index);
+        }
+        return total;
+    }
+
+    /** The session's chunks concatenated in arrival order as one stream, each opened only once the previous is
+     *  drained, so finalizing a chunked upload streams the whole layer through {@link ArtifactStore#writeBlob}
+     *  without ever holding it in memory. */
+    private static InputStream chunks(ArtifactStore store, String id) {
+        List<String> indices = new ArrayList<>(store.list("oci/uploads/" + id));
+        indices.sort(Comparator.comparingInt(Integer::parseInt));
+        Iterator<String> iterator = indices.iterator();
+        return new SequenceInputStream(new Enumeration<>() {
+            @Override
+            public boolean hasMoreElements() {
+                return iterator.hasNext();
+            }
+
+            @Override
+            public InputStream nextElement() {
+                try {
+                    return store.open("oci/uploads/" + id + "/" + iterator.next());
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        });
+    }
+
+    /** Drop every chunk object of a finalized (or abandoned) upload session. */
+    private static void cleanup(ArtifactStore store, String id) throws IOException {
+        for (String index : store.list("oci/uploads/" + id)) {
+            store.delete("oci/uploads/" + id + "/" + index);
+        }
+    }
+
+    private void store(String digest, InputStream content, ArtifactStore store, String name, FormatExchange exchange)
             throws IOException {
-        String hex = sha256(content);
+        // writeBlob digests the stream as it stores it under blobs/<hex> (deduping against an identical blob), so the
+        // pushed layer goes from the network to storage without being buffered whole to be hashed first.
+        String hex = store.writeBlob(content);
         if (digest != null && !hex.equals(hex(digest))) {
             exchange.respond(400);
             return;
-        }
-        String key = "blobs/" + hex;
-        if (!store.exists(key)) {
-            store.write(key, new ByteArrayInputStream(content));
         }
         exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/sha256:" + hex);
         exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
@@ -139,9 +183,9 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     private void manifest(String name, String reference, ArtifactStore store, FormatExchange exchange)
             throws IOException {
         if (exchange.method().equals("PUT")) {
-            byte[] content = exchange.requestBytes();
-            String hex = sha256(content);
-            store.write("blobs/" + hex, new ByteArrayInputStream(content));
+            // writeBlob stores the manifest under blobs/<hex> and returns its digest, so even the manifest goes to
+            // storage as a stream rather than being read into memory to be hashed.
+            String hex = store.writeBlob(exchange.requestStream());
             String type = exchange.requestHeader("Content-Type");
             store.write("oci/types/" + hex, new ByteArrayInputStream(
                     (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
@@ -166,24 +210,25 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             }
             hex = hex(new String(pointer.get().content(), StandardCharsets.UTF_8).trim());
         }
-        if (!store.exists("blobs/" + hex)) {
+        String key = "blobs/" + hex;
+        if (!store.exists(key)) {
             exchange.respond(404);
             return;
         }
         String type = store.readVersioned("oci/types/" + hex)
                 .map(versioned -> new String(versioned.content(), StandardCharsets.UTF_8).trim())
                 .orElse(OCI_MANIFEST);
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        store.read("blobs/" + hex, buffer);
-        byte[] content = buffer.toByteArray();
+        long size = store.size(key);
         exchange.setResponseHeader("Content-Type", type);
         exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
         if (exchange.method().equals("HEAD")) {
-            exchange.setResponseHeader("Content-Length", Integer.toString(content.length));
+            exchange.setResponseHeader("Content-Length", Long.toString(size));
             exchange.respond(200);
             return;
         }
-        exchange.respond(200, content);
+        try (OutputStream out = exchange.respond(200, size)) {
+            store.read(key, out);
+        }
     }
 
     private void tags(String name, ArtifactStore store, FormatExchange exchange) throws IOException {
@@ -229,6 +274,33 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         String root = upstream.toString();
         URI url = URI.create((root.endsWith("/") ? root : root + "/") + "v2/" + name
                 + (manifest ? "/manifests/" : "/blobs/") + reference);
+        if (manifest) {
+            return proxyManifest(name, reference, accept, exchange, store, url, fetcher);
+        }
+        // A blob carries no metadata to inspect, so it streams straight from upstream to storage: writeBlob digests it
+        // as it stores it, and the digest is checked against the requested one afterwards.
+        Optional<ProxyFormat.Download> fetched = download(url, accept, fetcher);
+        if (fetched.isEmpty()) {
+            return false;
+        }
+        try (ProxyFormat.Download download = fetched.get()) {
+            if (download.status() != 200) {
+                return false;
+            }
+            String hex = store.writeBlob(download.body());
+            if (reference.startsWith("sha256:") && !hex.equals(hex(reference))) {
+                return false;
+            }
+        }
+        handle(exchange, store);
+        return true;
+    }
+
+    /** A manifest is small and its media type comes from the response headers, so it is fetched buffered (not
+     *  streamed): stored by digest, its type recorded in the sidecar, and, when referenced by a tag, the tag pointer
+     *  updated. */
+    private boolean proxyManifest(String name, String reference, String accept, FormatExchange exchange,
+                                  ArtifactStore store, URI url, ProxyFormat.Fetcher fetcher) throws IOException {
         Optional<ProxyFormat.Fetched> fetched = fetch(url, accept, fetcher);
         if (fetched.isEmpty() || fetched.get().status() != 200) {
             return false;
@@ -239,21 +311,20 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return false;
         }
         store.write("blobs/" + hex, new ByteArrayInputStream(body));
-        if (manifest) {
-            String type = fetched.get().header("Content-Type");
-            store.write("oci/types/" + hex, new ByteArrayInputStream(
-                    (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
-            if (!reference.startsWith("sha256:")) {
-                String key = "oci/" + name + "/tags/" + reference;
-                Object token = store.readVersioned(key).map(ArtifactStore.Versioned::token).orElse(null);
-                store.writeVersioned(key, ("sha256:" + hex).getBytes(StandardCharsets.UTF_8), token);
-            }
+        String type = fetched.get().header("Content-Type");
+        store.write("oci/types/" + hex, new ByteArrayInputStream(
+                (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
+        if (!reference.startsWith("sha256:")) {
+            String key = "oci/" + name + "/tags/" + reference;
+            Object token = store.readVersioned(key).map(ArtifactStore.Versioned::token).orElse(null);
+            store.writeVersioned(key, ("sha256:" + hex).getBytes(StandardCharsets.UTF_8), token);
         }
         handle(exchange, store);
         return true;
     }
 
-    /** Fetch with the Distribution bearer flow: on a 401 challenge, exchange the realm for a token and retry once. */
+    /** Fetch buffered through the Distribution bearer flow (for the small manifests a proxy must inspect): on a 401
+     *  challenge, exchange the realm for a token and retry once. */
     private Optional<ProxyFormat.Fetched> fetch(URI url, String accept, ProxyFormat.Fetcher fetcher) throws IOException {
         Map<String, String> headers = new LinkedHashMap<>();
         if (accept != null) {
@@ -273,6 +344,34 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         }
         headers.put("Authorization", "Bearer " + token);
         return fetcher.fetch(url, headers);
+    }
+
+    /** Stream a download through the Distribution bearer flow (for a large blob): try once, and on a 401 Bearer
+     *  challenge exchange the realm for a token and retry streaming with it. Empty if the fetch fails or the challenge
+     *  cannot be satisfied, so the caller lets the local 404 stand rather than serving a partial blob. */
+    private Optional<ProxyFormat.Download> download(URI url, String accept, ProxyFormat.Fetcher fetcher)
+            throws IOException {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (accept != null) {
+            headers.put("Accept", accept);
+        }
+        Optional<ProxyFormat.Download> first = fetcher.download(url, headers);
+        if (first.isEmpty() || first.get().status() != 401) {
+            return first;
+        }
+        String token;
+        try (ProxyFormat.Download unauthorized = first.get()) {
+            String challenge = unauthorized.header("WWW-Authenticate");
+            if (challenge == null || !challenge.regionMatches(true, 0, "Bearer ", 0, "Bearer ".length())) {
+                return Optional.empty();
+            }
+            token = token(challenge.substring("Bearer ".length()), fetcher);
+        }
+        if (token == null) {
+            return Optional.empty();
+        }
+        headers.put("Authorization", "Bearer " + token);
+        return fetcher.download(url, headers);
     }
 
     private String token(String challenge, ProxyFormat.Fetcher fetcher) throws IOException {
@@ -310,15 +409,6 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     private static String hex(String digest) {
         int colon = digest.indexOf(':');
         return colon < 0 ? digest : digest.substring(colon + 1);
-    }
-
-    private static byte[] concat(byte[] first, byte[] second) {
-        if (first.length == 0) {
-            return second;
-        }
-        byte[] combined = Arrays.copyOf(first, first.length + second.length);
-        System.arraycopy(second, 0, combined, first.length, second.length);
-        return combined;
     }
 
     private static String sha256(byte[] content) {

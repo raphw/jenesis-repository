@@ -71,6 +71,15 @@ public final class AzureArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public InputStream open(String key) throws IOException {
+        try {
+            return container.getBlobClient(keyPrefix + key).openInputStream();
+        } catch (BlobStorageException e) {
+            throw new IOException("Could not read " + key, e);
+        }
+    }
+
+    @Override
     public void write(String key, InputStream in) throws IOException {
         BlockBlobClient blob = container.getBlobClient(keyPrefix + key).getBlockBlobClient();
         try (BlobOutputStream out = blob.getBlobOutputStream(true)) {

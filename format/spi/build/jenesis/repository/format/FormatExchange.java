@@ -36,12 +36,6 @@ public interface FormatExchange {
 
     OutputStream respond(int status, long contentLength) throws IOException;
 
-    default byte[] requestBytes() throws IOException {
-        try (InputStream in = requestStream()) {
-            return in.readAllBytes();
-        }
-    }
-
     default void respond(int status, byte[] content) throws IOException {
         try (OutputStream out = respond(status, content.length == 0 ? -1 : content.length)) {
             if (content.length > 0) {

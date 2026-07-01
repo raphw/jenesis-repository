@@ -3,6 +3,7 @@ package build.jenesis.repository.format;
 import build.jenesis.repository.store.ArtifactStore;
 
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -40,22 +41,38 @@ public interface ProxyFormat {
         Optional<Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException;
 
         /**
-         * Open a streaming download of a successful upstream {@code GET}, for an import that copies a large artifact
-         * straight to storage rather than buffering it whole (as {@link #fetch} does for the proxy formats that must
-         * inspect or rewrite a body). An empty result is a transport failure; a non-{@code 200} status is an
-         * {@link IOException}. The caller owns and closes the returned stream. The default materializes from
-         * {@link #fetch}; a real HTTP fetcher overrides it to stream the response body.
+         * Open a streaming download of an upstream {@code GET}, so a large artifact copies straight from the network
+         * to storage rather than being buffered whole (as {@link #fetch} does for the small bodies a proxy must
+         * inspect or rewrite). An empty result is a transport failure; otherwise the {@link Download} carries the
+         * status and the body stream, so the caller acts on a non-{@code 200} itself - an import fails, a proxy lets
+         * the local {@code 404} stand - rather than the fetcher throwing. The caller owns and closes the
+         * {@link Download}. The default materializes from {@link #fetch}; a real HTTP fetcher overrides it to stream
+         * the response body.
          */
-        default Optional<InputStream> open(URI url, Map<String, String> requestHeaders) throws IOException {
-            Optional<Fetched> fetched = fetch(url, requestHeaders);
-            if (fetched.isEmpty()) {
-                return Optional.empty();
+        default Optional<Download> download(URI url, Map<String, String> requestHeaders) throws IOException {
+            return fetch(url, requestHeaders).map(response ->
+                    new Download(response.status(), new ByteArrayInputStream(response.body()), response.headers()));
+        }
+    }
+
+    /** A streaming upstream response: the HTTP status, the body stream (which the caller owns and closes, so a
+     *  non-{@code 200} is closed without draining it), and the response headers - the latter for the content type and
+     *  the auth challenge a streamed proxy fetch still has to read before it decides what to do with the body. */
+    record Download(int status, InputStream body, Map<String, String> headers) implements Closeable {
+
+        /** The first value of a response header, case-insensitively, or {@code null}. */
+        public String header(String name) {
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                if (entry.getKey().equalsIgnoreCase(name)) {
+                    return entry.getValue();
+                }
             }
-            Fetched response = fetched.get();
-            if (response.status() != 200) {
-                throw new IOException("Download failed (" + response.status() + ") for " + url);
-            }
-            return Optional.of(new ByteArrayInputStream(response.body()));
+            return null;
+        }
+
+        @Override
+        public void close() throws IOException {
+            body.close();
         }
     }
 

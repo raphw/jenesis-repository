@@ -42,6 +42,11 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public InputStream open(String key) throws IOException {
+        return Files.newInputStream(resolve(key));
+    }
+
+    @Override
     public void write(String key, InputStream in) throws IOException {
         Path path = resolve(key);
         Files.createDirectories(path.getParent());

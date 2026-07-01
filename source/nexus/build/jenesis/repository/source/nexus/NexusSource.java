@@ -81,7 +81,13 @@ public final class NexusSource implements ImportSource {
 
     private InputStream open(URI url) throws IOException {
         Map<String, String> headers = authorization == null ? Map.of() : Map.of("Authorization", authorization);
-        return fetcher.open(url, headers).orElseThrow(() -> new IOException("No response from " + url));
+        ProxyFormat.Download download = fetcher.download(url, headers)
+                .orElseThrow(() -> new IOException("No response from " + url));
+        if (download.status() != 200) {
+            download.close();
+            throw new IOException("Download failed (" + download.status() + ") for " + url);
+        }
+        return download.body();
     }
 
     private ProxyFormat.Fetched get(URI url) throws IOException {

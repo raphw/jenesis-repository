@@ -34,20 +34,17 @@ public final class PullThroughCache {
             format.handle(exchange, store);
             return;
         }
-        Buffered buffered = new Buffered(exchange);
-        format.handle(buffered, store);
-        if (buffered.status() != 404) {
-            buffered.flush();
-            return;
-        }
-        if (!proxy.proxy(exchange, store, upstream, fetcher)) {
+        Deferred deferred = new Deferred(exchange);
+        format.handle(deferred, store);
+        if (deferred.missed() && !proxy.proxy(exchange, store, upstream, fetcher)) {
             exchange.respond(404);
         }
     }
 
     /** The default upstream fetch over HTTP: request headers are forwarded; the status and response headers are
-     *  returned. {@link ProxyFormat.Fetcher#open} is overridden to stream a download's body straight through rather
-     *  than buffer it, so a large-artifact import copies from the network to storage without materializing it. */
+     *  returned. {@link ProxyFormat.Fetcher#download} is overridden to stream a download's body straight through
+     *  rather than buffer it, so a large artifact (a proxied blob or an import) copies from the network to storage
+     *  without materializing it; the caller acts on the status and closes the stream. */
     public static ProxyFormat.Fetcher http() {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
@@ -74,17 +71,19 @@ public final class PullThroughCache {
             }
 
             @Override
-            public Optional<InputStream> open(URI url, Map<String, String> requestHeaders) throws IOException {
+            public Optional<ProxyFormat.Download> download(URI url, Map<String, String> requestHeaders) throws IOException {
                 HttpRequest.Builder request = HttpRequest.newBuilder(url).GET();
                 requestHeaders.forEach(request::header);
                 try {
                     HttpResponse<InputStream> response = client.send(
                             request.build(), HttpResponse.BodyHandlers.ofInputStream());
-                    if (response.statusCode() != 200) {
-                        response.body().close();
-                        throw new IOException("Download failed (" + response.statusCode() + ") for " + url);
-                    }
-                    return Optional.of(response.body());
+                    Map<String, String> headers = new LinkedHashMap<>();
+                    response.headers().map().forEach((name, values) -> {
+                        if (!values.isEmpty()) {
+                            headers.put(name, values.getFirst());
+                        }
+                    });
+                    return Optional.of(new ProxyFormat.Download(response.statusCode(), response.body(), headers));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new IOException("Interrupted while proxying " + url, e);
@@ -94,18 +93,20 @@ public final class PullThroughCache {
     }
 
     /**
-     * A {@link FormatExchange} that records the format's response in memory instead of writing it, so the loop can
-     * inspect the status (to detect a miss) and either replay it with {@link #flush()} or hand control to the proxy
-     * adapter, which writes the real response itself. Reads delegate to the real exchange unchanged.
+     * A {@link FormatExchange} that defers committing to the real exchange until it sees the format's status, so a
+     * local hit streams its body straight to the client with nothing buffered, while a local {@code 404} is swallowed
+     * (its tiny body discarded) and reported through {@link #missed()} so the loop can hand control to the proxy
+     * adapter, which writes the real response itself. This works because a format always sets its status (and any
+     * response headers) before it writes the body. Response headers are held until the commit; reads delegate to the
+     * real exchange unchanged.
      */
-    private static final class Buffered implements FormatExchange {
+    private static final class Deferred implements FormatExchange {
 
         private final FormatExchange delegate;
         private final Map<String, String> headers = new LinkedHashMap<>();
-        private int status = -1;
-        private ByteArrayOutputStream body;
+        private boolean missed;
 
-        private Buffered(FormatExchange delegate) {
+        private Deferred(FormatExchange delegate) {
             this.delegate = delegate;
         }
 
@@ -145,19 +146,17 @@ public final class PullThroughCache {
         }
 
         @Override
-        public OutputStream respond(int status, long contentLength) {
-            this.status = status;
-            this.body = new ByteArrayOutputStream();
-            return body;
-        }
-
-        private int status() {
-            return status;
-        }
-
-        private void flush() throws IOException {
+        public OutputStream respond(int status, long contentLength) throws IOException {
+            if (status == 404) {
+                missed = true;
+                return OutputStream.nullOutputStream();
+            }
             headers.forEach(delegate::setResponseHeader);
-            delegate.respond(status, body == null ? new byte[0] : body.toByteArray());
+            return delegate.respond(status, contentLength);
+        }
+
+        private boolean missed() {
+            return missed;
         }
     }
 }

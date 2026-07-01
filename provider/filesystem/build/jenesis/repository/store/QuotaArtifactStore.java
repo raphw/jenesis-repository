@@ -168,6 +168,11 @@ public final class QuotaArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public InputStream open(String key) throws IOException {
+        return delegate.open(key);
+    }
+
+    @Override
     public List<String> list(String prefix) {
         return delegate.list(prefix);
     }
