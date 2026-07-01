@@ -136,7 +136,7 @@ public class RepositoryController {
         String jobId = prior == null ? ImportJobs.newId() : resume;
         jobs.submit(store, source, jobId, prior == null ? 0 : prior.imported(), prior == null ? 0 : prior.skipped());
         response.setHeader("Content-Type", "application/json");
-        respond(response, 202, "{\"job\":\"" + jobId + "\",\"state\":\"running\"}");
+        respond(response, 202, Json.write(Map.of("job", jobId, "state", "running")));
     }
 
     /** Return a job's persisted state as raw JSON ({@code 404} if there is no such job). */

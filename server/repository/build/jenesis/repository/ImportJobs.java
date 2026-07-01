@@ -90,21 +90,14 @@ public final class ImportJobs {
 
     private void write(ArtifactStore store, String jobId, String state, int imported, int skipped,
                        Set<String> skippedFormats, String cursor, String error) throws IOException {
-        StringBuilder json = new StringBuilder("{\"state\":\"").append(state)
-                .append("\",\"imported\":").append(imported)
-                .append(",\"skipped\":").append(skipped)
-                .append(",\"skippedFormats\":[");
-        int index = 0;
-        for (String format : skippedFormats) {
-            json.append(index++ == 0 ? "" : ",").append('"').append(escape(format)).append('"');
-        }
-        json.append("],\"cursor\":").append(cursor == null ? "null" : "\"" + escape(cursor) + "\"")
-                .append(",\"error\":").append(error == null ? "null" : "\"" + escape(error) + "\"").append('}');
-        store.write("imports/" + jobId, new ByteArrayInputStream(json.toString().getBytes(StandardCharsets.UTF_8)));
-    }
-
-    private static String escape(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
+        Map<String, Object> job = new LinkedHashMap<>();
+        job.put("state", state);
+        job.put("imported", imported);
+        job.put("skipped", skipped);
+        job.put("skippedFormats", new ArrayList<>(skippedFormats));
+        job.put("cursor", cursor);
+        job.put("error", error);
+        store.write("imports/" + jobId, new ByteArrayInputStream(Json.write(job).getBytes(StandardCharsets.UTF_8)));
     }
 
     /** A parsed view of a job's persisted state. */
