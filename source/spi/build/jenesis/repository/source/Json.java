@@ -1,4 +1,4 @@
-package build.jenesis.repository;
+package build.jenesis.repository.source;
 
 import module java.base;
 
@@ -9,7 +9,7 @@ import module java.base;
  * {@link List}, {@link String}, {@link Double}, {@link Boolean} and {@code null}, and the typed accessors
  * ({@link #object}, {@link #array}, {@link #string}) navigate it without unchecked casts at the call site.
  */
-final class Json {
+public final class Json {
 
     private final String text;
     private int index;
@@ -18,7 +18,7 @@ final class Json {
         this.text = text;
     }
 
-    static Object parse(String text) {
+    public static Object parse(String text) {
         Json json = new Json(text);
         json.skipWhitespace();
         Object value = json.readValue();
@@ -27,20 +27,20 @@ final class Json {
     }
 
     @SuppressWarnings("unchecked")
-    static Map<String, Object> object(Object value) {
+    public static Map<String, Object> object(Object value) {
         return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
     }
 
     @SuppressWarnings("unchecked")
-    static List<Object> array(Object value) {
+    public static List<Object> array(Object value) {
         return value instanceof List<?> list ? (List<Object>) list : List.of();
     }
 
-    static String string(Object value) {
+    public static String string(Object value) {
         return value instanceof String text ? text : null;
     }
 
-    static int integer(Object value) {
+    public static int integer(Object value) {
         return value instanceof Double number ? number.intValue() : 0;
     }
 

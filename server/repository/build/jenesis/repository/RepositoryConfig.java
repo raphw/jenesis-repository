@@ -2,6 +2,7 @@ package build.jenesis.repository;
 
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
+import build.jenesis.repository.source.ImportSourceProvider;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.QuotaArtifactStore;
@@ -55,6 +56,13 @@ public class RepositoryConfig {
         List<RepositoryFormat> formats = new ArrayList<>();
         ServiceLoader.load(RepositoryFormat.class).forEach(formats::add);
         return formats;
+    }
+
+    @Bean
+    public List<ImportSourceProvider> importSourceProviders() {
+        List<ImportSourceProvider> providers = new ArrayList<>();
+        ServiceLoader.load(ImportSourceProvider.class).forEach(providers::add);
+        return providers;
     }
 
     @Bean

@@ -1,6 +1,8 @@
 package build.jenesis.repository;
 
 import module java.base;
+import build.jenesis.repository.source.ImportSource;
+import build.jenesis.repository.source.Json;
 import build.jenesis.repository.store.ArtifactStore;
 
 /**
@@ -8,8 +10,8 @@ import build.jenesis.repository.store.ArtifactStore;
  * submitted import runs on a virtual thread and records its state - {@code running}, {@code completed} or
  * {@code failed}, with the running counts and the resume cursor - as a small JSON object in the store under
  * {@code imports/<id>}, which is what a status read returns. Persisting the cursor after each batch makes the
- * migration resumable: a re-submit naming a prior job continues its walk from the recorded cursor and counts
- * (see {@link NexusSource#from}), and the content-addressed store dedupes anything a resumed run repeats. The
+ * migration resumable: a re-submit naming a prior job continues its walk from the recorded cursor and counts, and
+ * the content-addressed store dedupes anything a resumed run repeats. The
  * store is the only state, so progress survives a restart and a status read needs no in-memory registry.
  */
 public final class ImportJobs {

@@ -54,6 +54,8 @@ a deployment simply runs whichever plug-ins are on its module path:
    single provider.
  - **Importers** (`RepositoryImporter`) - migrate one ecosystem off an incumbent
    manager (see *Importing from another repository*, below).
+ - **Import sources** (`ImportSourceProvider`) - connect to an incumbent manager and
+   walk its assets; Nexus and Artifactory ship as modules, another incumbent is one more.
  - **Console panels** (`Panel`) - contribute a page to the web console.
  - **Pull-through proxying** (`ProxyFormat`) - an opt-in capability a format adds to
    mirror an upstream; the OCI format uses it to mirror Docker Hub.
@@ -159,6 +161,7 @@ with ...` it from a module on the path:
 | A repository format / file handler | `RepositoryFormat`      | `build.jenesis.repository.format.RepositoryFormat`   |
 | A storage backend                  | `ArtifactStoreProvider` | `build.jenesis.repository.store.ArtifactStoreProvider` |
 | A migration importer               | `RepositoryImporter`    | `build.jenesis.repository.format.RepositoryImporter` |
+| An import source (incumbent connector) | `ImportSourceProvider` | `build.jenesis.repository.source.ImportSourceProvider` |
 | A console panel                    | `Panel`                 | `build.jenesis.repository.ui.Panel`                  |
 
 A format may additionally implement `ProxyFormat` to gain pull-through mirroring; the
@@ -202,7 +205,10 @@ plug in through the console's extension points without forking the core.
 | `build.jenesis.repository.format.maven`    | `format/maven`        | The Maven layout (`/maven/...`): stores the blob, generates `maven-metadata.xml` on read, proxies Maven Central. When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
 | `build.jenesis.repository.format.jenesis`  | `format/jenesis`      | The Jenesis module layout (`/module/...`, `/artifact/...`): stores and serves modules over the same content-addressed blob. It `provides` the `ModuleView` the Maven layout uses to mirror a published modular jar in by module name; a module published here stays in the module layout (it is not mirrored back to Maven). |
 | `build.jenesis.repository.format.oci`      | `format/oci`          | The OCI / Docker registry format (`/v2/` Distribution API), so `docker push` / `docker pull` work over the same store. Self-contained (SPI + store only): an OCI `sha256:` digest *is* the content-addressed `blobs/<hex>` key, so layers, configs and manifests dedupe with everything else. |
-| `build.jenesis.repository`          | `server/repository`   | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The optional pull-through proxy lives here; the content-addressed store (`Publication`) sits in the store module, and the Maven and Jenesis layouts and their cross-publishing are plugin modules that no longer depend on this server. Basic age/size retention. |
+| `build.jenesis.repository.source`   | `source/spi`          | The import-source SPI - the read half of a migration. An `ImportSource` walks a foreign repository's assets; an `ImportSourceProvider` builds one for a named incumbent from an `ImportRequest`. A connector is a module that `provides` a provider, discovered with `ServiceLoader`, so the server supports another incumbent without knowing it. Carries a small hand-rolled `Json` so the import path needs no JSON library. |
+| `build.jenesis.repository.source.nexus`    | `source/nexus`        | The Sonatype Nexus 3 connector: `provides` an `ImportSourceProvider` that pages the components REST API by continuation token (format reported per asset, so mixed repositories migrate in one pass). Import SPI + format SPI only. |
+| `build.jenesis.repository.source.artifactory` | `source/artifactory` | The JFrog Artifactory connector: `provides` an `ImportSourceProvider` that reads the storage listing (a repository has one package type, supplied up front). Import SPI + format SPI only. |
+| `build.jenesis.repository`          | `server/repository`   | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The optional pull-through proxy lives here; the content-addressed store (`Publication`) sits in the store module, the Maven and Jenesis layouts and their cross-publishing are plugin modules, and the import connectors are discovered the same way - so the server names no layout and no incumbent. Basic age/size retention. |
 | `build.jenesis.repository.ui`       | `server/ui`           | A simple, extendable web console: browse and search artifacts, view repositories and their config. An open console shell with a panel-extension SPI, so additional panels plug in without a fork. |
 
 Build & run
@@ -231,19 +237,21 @@ A Jenesis build points at it with the existing knobs - no new client:
 Importing from another repository
 ---------------------------------
 
-To migrate off an incumbent manager, a `RepositoryImporter` (the SPI lives in
-`build.jenesis.repository.format`, discovered by `ServiceLoader` like a format) imports an
-ecosystem's artifacts into the content-addressed store. A source connector walks the incumbent's
-admin API - `NexusSource` pages the Nexus components REST API by continuation token,
-`ArtifactorySource` reads the Artifactory storage listing - and `RepositoryImport` routes each asset
-to the importer that handles its format, writing it through the format's own publish path so the
-imported repository regenerates its own `maven-metadata.xml` and indexes rather than copying the
-source's. The core imports **Maven** (with the module-layout bridge), **OCI / Docker** and
+To migrate off an incumbent manager, two SPIs meet in the content-addressed store. The read half is
+an `ImportSource`, built by an `ImportSourceProvider` that a connector module ships and the server
+discovers with `ServiceLoader`: the built-in ones page the Nexus components REST API by continuation
+token and read the Artifactory storage listing, and another incumbent is one more module - the server
+names none of them. The write half is a `RepositoryImporter` per format (in
+`build.jenesis.repository.format`, discovered the same way). `RepositoryImport` walks a source and
+routes each asset to the importer that handles its format, writing it through the format's own publish
+path so the imported repository regenerates its own `maven-metadata.xml` and indexes rather than
+copying the source's. The core imports **Maven** (with the module-layout bridge), **OCI / Docker** and
 **raw / generic**; an asset whose format has no importer on the path is reported skipped and, because
-content is read lazily, never downloaded - additional format importers plug in through the same SPI.
+content is read lazily, never downloaded.
 
-    RepositoryImport.Result result = new RepositoryImport()
-            .run(new NexusSource(URI.create("https://nexus.example.com"), "maven-releases"), store);
+    RepositoryImport.Result result = new RepositoryImport().run(
+            new NexusSource(URI.create("https://nexus.example.com"), "maven-releases", PullThroughCache.http()),
+            store);
 
 A migration is also launched on a running server and runs in the background: `POST /admin/import`
 (a `repository:write` operation) starts a job and returns its id; `GET /admin/import/<id>` reports its

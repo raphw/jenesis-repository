@@ -1,8 +1,9 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.ArtifactorySource;
+import build.jenesis.repository.PullThroughCache;
 import build.jenesis.repository.RepositoryApplication;
 import build.jenesis.repository.RepositoryImport;
+import build.jenesis.repository.source.artifactory.ArtifactorySource;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.sun.net.httpserver.HttpExchange;
@@ -79,7 +80,7 @@ public class ArtifactoryImportTest {
         artifactory.start();
 
         result = new RepositoryImport().run(
-                new ArtifactorySource(URI.create(upstream), "libs-release", "maven"), store);
+                new ArtifactorySource(URI.create(upstream), "libs-release", "maven", PullThroughCache.http()), store);
 
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();

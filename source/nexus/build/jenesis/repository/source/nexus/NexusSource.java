@@ -1,7 +1,9 @@
-package build.jenesis.repository;
+package build.jenesis.repository.source.nexus;
 
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
+import build.jenesis.repository.source.ImportSource;
+import build.jenesis.repository.source.Json;
 
 /**
  * An {@link ImportSource} over a Sonatype Nexus 3 instance, the read half of a Nexus migration. It pages the
@@ -21,8 +23,8 @@ public final class NexusSource implements ImportSource {
     private final String authorization;
     private final String cursor;
 
-    public NexusSource(URI base, String repository) {
-        this(base, repository, PullThroughCache.http(), null, null);
+    public NexusSource(URI base, String repository, ProxyFormat.Fetcher fetcher) {
+        this(base, repository, fetcher, null, null);
     }
 
     private NexusSource(URI base, String repository, ProxyFormat.Fetcher fetcher, String authorization, String cursor) {
@@ -31,11 +33,6 @@ public final class NexusSource implements ImportSource {
         this.fetcher = fetcher;
         this.authorization = authorization;
         this.cursor = cursor;
-    }
-
-    /** Walk through a supplied fetcher instead of the default HTTP client - the seam a test answers from a fake Nexus. */
-    public NexusSource withFetcher(ProxyFormat.Fetcher fetcher) {
-        return new NexusSource(base, repository, fetcher, authorization, cursor);
     }
 
     /** Authenticate the listing and downloads with HTTP basic credentials (a Nexus user and password or token). */

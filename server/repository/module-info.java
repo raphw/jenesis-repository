@@ -94,6 +94,7 @@
 open module build.jenesis.repository {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.format;
+    requires build.jenesis.repository.source;
     requires java.net.http;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;
@@ -116,4 +117,5 @@ open module build.jenesis.repository {
     exports build.jenesis.repository;
     uses build.jenesis.repository.format.RepositoryFormat;
     uses build.jenesis.repository.format.RepositoryImporter;
+    uses build.jenesis.repository.source.ImportSourceProvider;
 }

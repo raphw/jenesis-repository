@@ -2,6 +2,7 @@ package build.jenesis.repository;
 
 import module java.base;
 import build.jenesis.repository.format.RepositoryImporter;
+import build.jenesis.repository.source.ImportSource;
 import build.jenesis.repository.store.ArtifactStore;
 
 /**

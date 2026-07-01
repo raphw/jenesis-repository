@@ -1,7 +1,9 @@
-package build.jenesis.repository;
+package build.jenesis.repository.source.artifactory;
 
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
+import build.jenesis.repository.source.ImportSource;
+import build.jenesis.repository.source.Json;
 
 /**
  * An {@link ImportSource} over a JFrog Artifactory instance, the read half of an Artifactory migration. It lists a
@@ -20,8 +22,8 @@ public final class ArtifactorySource implements ImportSource {
     private final ProxyFormat.Fetcher fetcher;
     private final String authorization;
 
-    public ArtifactorySource(URI base, String repository, String format) {
-        this(base, repository, format, PullThroughCache.http(), null);
+    public ArtifactorySource(URI base, String repository, String format, ProxyFormat.Fetcher fetcher) {
+        this(base, repository, format, fetcher, null);
     }
 
     private ArtifactorySource(URI base, String repository, String format,
@@ -31,11 +33,6 @@ public final class ArtifactorySource implements ImportSource {
         this.format = format;
         this.fetcher = fetcher;
         this.authorization = authorization;
-    }
-
-    /** Walk through a supplied fetcher instead of the default HTTP client - the seam a test answers from a fake Artifactory. */
-    public ArtifactorySource withFetcher(ProxyFormat.Fetcher fetcher) {
-        return new ArtifactorySource(base, repository, format, fetcher, authorization);
     }
 
     /** Authenticate the listing and downloads with HTTP basic credentials (an Artifactory user and password or token). */

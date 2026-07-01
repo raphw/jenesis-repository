@@ -36,6 +36,9 @@ open module build.jenesis.repository.test {
     requires build.jenesis.repository.format.jenesis;
     requires build.jenesis.repository.format.oci;
     requires build.jenesis.repository.format.raw;
+    requires build.jenesis.repository.source;
+    requires build.jenesis.repository.source.nexus;
+    requires build.jenesis.repository.source.artifactory;
     requires build.jenesis;
     requires java.net.http;
     requires jdk.httpserver;

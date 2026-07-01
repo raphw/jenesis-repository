@@ -2,6 +2,10 @@ package build.jenesis.repository;
 
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
+import build.jenesis.repository.source.ImportRequest;
+import build.jenesis.repository.source.ImportSource;
+import build.jenesis.repository.source.ImportSourceProvider;
+import build.jenesis.repository.source.Json;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.QuotaExceededException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,23 +35,27 @@ import java.util.Optional;
  * through a {@link ServletFormatExchange} carrying the full request path; an unclaimed path is a {@code 404}. When an
  * upstream is configured for the matched format and the format is a {@link ProxyFormat}, a local miss is served
  * through the {@link PullThroughCache} from that upstream and cached, so a later read is a local hit. {@code
- * /admin/import} triggers an asynchronous migration off an incumbent manager (Nexus or Artifactory) through
- * {@link ImportJobs}, and {@code GET /admin/import/<id>} returns its state. Authorization is not done here:
+ * /admin/import} triggers an asynchronous migration through the first {@link ImportSourceProvider} that handles the
+ * requested source - discovered with {@code ServiceLoader} like the formats, so the server knows no incumbent by name -
+ * run as a background {@link ImportJobs}, and {@code GET /admin/import/<id>} returns its state. Authorization is not done here:
  * {@link SecurityConfig} gates the wire through the {@link Authorization} credential model.
  */
 @RestController
 public class RepositoryController {
 
     private final List<RepositoryFormat> formats;
+    private final List<ImportSourceProvider> importSources;
     private final ArtifactStore store;
     private final Map<String, URI> upstreams;
     private final ProxyFormat.Fetcher fetcher;
 
     public RepositoryController(List<RepositoryFormat> formats,
+                                List<ImportSourceProvider> importSources,
                                 ArtifactStore store,
                                 @Qualifier("upstreams") Map<String, URI> upstreams,
                                 ProxyFormat.Fetcher fetcher) {
         this.formats = formats;
+        this.importSources = importSources;
         this.store = store;
         this.upstreams = upstreams;
         this.fetcher = fetcher;
@@ -111,9 +119,18 @@ public class RepositoryController {
         String resume = Json.string(spec.get("resume"));
         ImportJobs.Snapshot prior = resume == null ? null : jobs.snapshot(store, resume).orElse(null);
         String cursor = prior == null ? null : prior.cursor();
-        ImportSource source = importSource(Json.string(spec.get("source")), url, repository, spec, cursor);
+        String sourceName = Json.string(spec.get("source"));
+        ImportRequest request = new ImportRequest(URI.create(url), repository)
+                .withFormat(Json.string(spec.get("format")))
+                .withCredentials(Json.string(spec.get("username")), Json.string(spec.get("password")))
+                .withCursor(cursor);
+        ImportSource source = importSources.stream()
+                .filter(provider -> provider.handles(sourceName))
+                .findFirst()
+                .map(provider -> provider.create(request, fetcher))
+                .orElse(null);
         if (source == null) {
-            respond(response, 400, "an Artifactory source needs a format, or the source is unknown");
+            respond(response, 400, "unknown import source, or its configuration is incomplete");
             return;
         }
         String jobId = prior == null ? ImportJobs.newId() : resume;
@@ -135,29 +152,6 @@ public class RepositoryController {
         try (OutputStream out = response.getOutputStream()) {
             out.write(state.get());
         }
-    }
-
-    private ImportSource importSource(String source, String url, String repository, Map<String, Object> spec,
-                                      String cursor) {
-        String username = Json.string(spec.get("username"));
-        String password = Json.string(spec.get("password"));
-        if ("artifactory".equals(source)) {
-            String format = Json.string(spec.get("format"));
-            if (format == null) {
-                return null;
-            }
-            ArtifactorySource artifactory = new ArtifactorySource(URI.create(url), repository, format)
-                    .withFetcher(PullThroughCache.http());
-            return username == null || password == null ? artifactory : artifactory.withCredentials(username, password);
-        }
-        if (source == null || "nexus".equals(source)) {
-            NexusSource nexus = new NexusSource(URI.create(url), repository).withFetcher(PullThroughCache.http());
-            if (username != null && password != null) {
-                nexus = nexus.withCredentials(username, password);
-            }
-            return cursor == null ? nexus : nexus.from(cursor);
-        }
-        return null;
     }
 
     /** A write refused by the storage quota maps to {@code 507 Insufficient Storage} - the limit was hit before any
