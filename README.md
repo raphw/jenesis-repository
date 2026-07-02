@@ -288,6 +288,13 @@ copying the source's. The core imports **Maven** (with the module-layout bridge)
 **raw / generic**; an asset whose format has no importer on the path is reported skipped and, because
 content is read lazily, never downloaded.
 
+The Artifactory source reads its listing with the File List API (`GET /api/storage/<repo>?list&deep=1`),
+which JFrog gates behind Artifactory Pro - a self-hosted OSS instance answers `400` ("available only in
+Artifactory Pro"), so the connector is exercised against a fake upstream rather than a real one. The
+per-item Folder Info API (`GET /api/storage/<repo>/<path>`, its `children` one level deep) *is* available
+on OSS, so the connector could later fall back to a recursive folder-by-folder crawl - the same asset walk
+in N requests instead of one - to migrate off a free Artifactory too, and be tested against a real one.
+
     RepositoryImport.Result result = new RepositoryImport().run(
             new NexusSource(URI.create("https://nexus.example.com"), "maven-releases", PullThroughCache.http()),
             store);
