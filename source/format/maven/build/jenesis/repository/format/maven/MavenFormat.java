@@ -26,6 +26,11 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     private static final List<ModuleView> MODULE_VIEWS = ServiceLoader.load(ModuleView.class)
             .stream().map(ServiceLoader.Provider::get).toList();
 
+    /** The package-ecosystem name the neutral descriptor carries - the OSV name "Maven" that advisory feeds and
+     *  quality inspectors key on - distinct from {@link #name()} "maven", the format id that routes the {@code /maven/}
+     *  paths. Any consumer of a Maven artifact reports the same ecosystem, whichever edition it runs in. */
+    public static final String ECOSYSTEM = "Maven";
+
     @Override
     public String name() {
         return "maven";
@@ -49,9 +54,28 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         }
         String group = coordinate.substring(0, colon).replace('.', '/');
         String artifact = coordinate.substring(colon + 1);
-        // The Maven directory a version occupies; the cross-published module view is served by the Jenesis format,
-        // which owns the /module/ layout, so it is not this format's to enumerate here.
-        return List.of("/maven/" + group + "/" + artifact + "/" + version);
+        String mavenDir = "/maven/" + group + "/" + artifact + "/" + version;
+        List<String> paths = new ArrayList<>();
+        paths.add(mavenDir);
+        // Also the module view this format cross-published for a modular jar: read the module name back from the
+        // stored jar (the same read publish did), so a cleanup that unpublishes this version removes its /module/
+        // mirror too and the shared blob becomes unreferenced. Best-effort: no jar, no module, no mirror.
+        try {
+            Publication publication = new Publication(store);
+            Optional<String> key = publication.located(mavenDir + "/" + artifact + "-" + version + ".jar");
+            if (key.isPresent()) {
+                String module;
+                try (InputStream in = store.open(key.get())) {
+                    module = JavaLayout.moduleName(in);
+                }
+                if (module != null) {
+                    paths.add("/module/" + module + "/" + version);
+                }
+            }
+        } catch (IOException _) {
+            // best-effort; the /maven/ pointers still evict and the blob is reclaimed if now unreferenced
+        }
+        return paths;
     }
 
     /** The neutral descriptor of a {@code /maven/...} path, or empty for generated metadata (nothing to describe): a
@@ -63,9 +87,9 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         }
         String[] coordinate = JavaLayout.mavenCoordinate(path);
         if (coordinate == null) {
-            return Optional.of(ArtifactDescriptor.at("maven", path));
+            return Optional.of(ArtifactDescriptor.at(ECOSYSTEM, path));
         }
-        return Optional.of(new ArtifactDescriptor("maven", coordinate[0] + ":" + coordinate[1], coordinate[2],
+        return Optional.of(new ArtifactDescriptor(ECOSYSTEM, coordinate[0] + ":" + coordinate[1], coordinate[2],
                 path, null, coordinate[2].endsWith("-SNAPSHOT"), null, -1L));
     }
 
@@ -100,9 +124,9 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
      *  cross-publish its module view through the Jenesis layout, reading the module name back from the just-stored blob
      *  rather than buffering the jar in memory. A quarantined or rejected jar never gains a module-view pointer, so it
      *  does not resolve by module name either. Returns the publish outcome so the caller maps it to an HTTP status. */
-    static Publication.Published publish(ArtifactStore store, String path, InputStream body) throws IOException {
+    public static Publication.Published publish(ArtifactStore store, String path, InputStream body) throws IOException {
         Publication publication = new Publication(store);
-        ArtifactDescriptor descriptor = descriptor(path).orElseGet(() -> ArtifactDescriptor.at("maven", path));
+        ArtifactDescriptor descriptor = descriptor(path).orElseGet(() -> ArtifactDescriptor.at(ECOSYSTEM, path));
         Publication.Published published = publication.publish(descriptor, body);
         String[] coordinate = JavaLayout.mavenCoordinate(path);
         if (published.disposition() != PublishInterceptor.Disposition.ACCEPT
