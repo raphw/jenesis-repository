@@ -31,6 +31,16 @@ public interface ProxyFormat {
     boolean proxy(FormatExchange exchange, ArtifactStore store, URI upstream, Fetcher fetcher) throws IOException;
 
     /**
+     * The canonical public upstream this format mirrors when a deployment enables proxying without naming one - the
+     * Maven format's Maven Central, an npm format's registry.npmjs.org. A distribution takes its default upstream from
+     * the format itself, so it needs no table of format names to know where each format proxies. Empty when the format
+     * has no single well-known upstream; a deployment can always set one explicitly per format or per repository.
+     */
+    default Optional<URI> defaultUpstream() {
+        return Optional.empty();
+    }
+
+    /**
      * The upstream HTTP fetch, isolated behind an interface so a test answers from a fixed upstream without the
      * network. {@code requestHeaders} are sent upstream (e.g. {@code Accept} for OCI manifest negotiation, an
      * {@code Authorization} bearer token). An empty result is a transport failure; an HTTP error is a

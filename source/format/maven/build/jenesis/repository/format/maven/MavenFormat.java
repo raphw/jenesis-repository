@@ -42,6 +42,11 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     }
 
     @Override
+    public String ecosystem() {
+        return ECOSYSTEM;
+    }
+
+    @Override
     public Optional<ArtifactDescriptor> describe(String path) {
         return descriptor(path);
     }
@@ -154,6 +159,11 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
             case QUARANTINE -> 202;
             case REJECT -> 422;
         };
+    }
+
+    @Override
+    public Optional<URI> defaultUpstream() {
+        return Optional.of(URI.create("https://repo1.maven.org/maven2/"));
     }
 
     /**

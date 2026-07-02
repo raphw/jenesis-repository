@@ -18,6 +18,12 @@ import java.util.Optional;
  */
 public interface ArtifactLayout {
 
+    /** The package-ecosystem name this format's artifacts report - the value {@link #describe}'s descriptors carry
+     *  (a Maven format's OSV name {@code "Maven"}, an npm format's {@code "npm"}) - so a coordinate-only consumer, a
+     *  cleanup eviction resolving a stored coordinate back to its format, finds the format by its declared ecosystem
+     *  rather than guessing from the format id. */
+    String ecosystem();
+
     /** The descriptor for a request path this format owns (hash and size unset, since nothing is stored yet), or empty
      *  when the path carries no coordinate to describe (generated metadata, a directory). Derived from the path only. */
     Optional<ArtifactDescriptor> describe(String path);
