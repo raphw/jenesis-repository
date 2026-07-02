@@ -122,9 +122,43 @@ class ArtifactorySourceTest {
         assertThat(paths).as("the crawl recurses folders and emits every file")
                 .containsExactly("org/example/lib-1.0.jar", "org/example/lib-1.0.pom");
         assertThat(formats).as("the repository format is reported for each asset").containsExactly("maven", "maven");
-        assertThat(cursors).as("the crawl is a single pass with one terminal checkpoint").containsExactly((String) null);
+        assertThat(cursors).as("a checkpoint after the top-level subtree, then the terminal null")
+                .containsExactly("org", null);
         assertThat(downloaded.get("org/example/lib-1.0.jar")).isEqualTo(jar);
         assertThat(downloaded.get("org/example/lib-1.0.pom")).isEqualTo(pom);
+    }
+
+    @Test
+    void the_folder_crawl_resumes_after_the_last_reported_top_level_entry() throws IOException {
+        byte[] a = "a-jar".getBytes(StandardCharsets.UTF_8);
+        byte[] b = "b-jar".getBytes(StandardCharsets.UTF_8);
+        String proGated = "{\"errors\":[{\"status\":400,\"message\":"
+                + "\"This REST API is available only in Artifactory Pro.\"}]}";
+        String storage = "https://art.example/api/storage/libs-release";
+        FakeFetcher fetcher = new FakeFetcher(Map.of(
+                listUrl, new ProxyFormat.Fetched(400, proGated.getBytes(StandardCharsets.UTF_8), Map.of()),
+                storage, ok("{\"children\":[{\"uri\":\"/com\",\"folder\":true},{\"uri\":\"/org\",\"folder\":true}]}"),
+                storage + "/com", ok("{\"children\":[{\"uri\":\"/b.jar\",\"folder\":false}]}"),
+                storage + "/org", ok("{\"children\":[{\"uri\":\"/a.jar\",\"folder\":false}]}"),
+                "https://art.example/libs-release/com/b.jar", new ProxyFormat.Fetched(200, b, Map.of()),
+                "https://art.example/libs-release/org/a.jar", new ProxyFormat.Fetched(200, a, Map.of())));
+
+        List<String> paths = new ArrayList<>();
+        List<String> cursors = new ArrayList<>();
+        Map<String, byte[]> downloaded = new LinkedHashMap<>();
+        new ArtifactorySource(base, repository, format, fetcher).from("com")
+                .forEach((assetFormat, path, content) -> {
+                    paths.add(path);
+                    try (InputStream in = content.open()) {
+                        downloaded.put(path, in.readAllBytes());
+                    }
+                }, cursors::add);
+
+        assertThat(paths).as("the com/ subtree was completed in a prior run, so only org/ is re-walked")
+                .containsExactly("org/a.jar");
+        assertThat(cursors).as("one checkpoint for the org subtree, then the terminal null")
+                .containsExactly("org", null);
+        assertThat(downloaded.get("org/a.jar")).isEqualTo(a);
     }
 
     @Test
