@@ -12,8 +12,25 @@ import build.jenesis.repository.format.ProxyFormat;
  */
 public interface ImportSourceProvider {
 
-    /** Whether this provider builds sources for the given source name (for example {@code "nexus"}, {@code "artifactory"}). */
-    boolean handles(String source);
+    /** The stable source name this provider answers to (for example {@code "nexus"}, {@code "artifactory"}), so a
+     *  console or client can enumerate the installed sources instead of hardcoding them. */
+    String name();
+
+    /** A human-readable label for pickers; the {@link #name() name} unless the provider overrides it. */
+    default String label() {
+        return name();
+    }
+
+    /** Whether a migration from this source must name an ecosystem format up front - a single-package-type
+     *  incumbent (Artifactory, say) needs one, while a source that reports a format per asset does not. */
+    default boolean requiresFormat() {
+        return false;
+    }
+
+    /** Whether this provider builds sources for the given source name. */
+    default boolean handles(String source) {
+        return name().equals(source);
+    }
 
     /** Build the source from the request, streaming through {@code fetcher}, or null when the request is missing
      *  something this source needs (an Artifactory source without an ecosystem format, say) - which the caller reports
