@@ -10,6 +10,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -81,6 +82,56 @@ class ArtifactorySourceTest {
     void a_failed_listing_is_an_io_exception() {
         FakeFetcher fetcher = new FakeFetcher(Map.of(
                 listUrl, new ProxyFormat.Fetched(404, new byte[0], Map.of())));
+        ArtifactorySource source = new ArtifactorySource(base, repository, format, fetcher);
+        assertThatThrownBy(() -> source.forEach((assetFormat, path, content) -> { }, cursor -> { }))
+                .isInstanceOf(IOException.class);
+    }
+
+    @Test
+    void it_falls_back_to_a_folder_crawl_when_the_file_list_api_is_pro_gated() throws IOException {
+        // A free (OSS) Artifactory refuses the deep File List API with this exact message; the walk must then recurse
+        // the per-folder Folder Info API for the same files.
+        byte[] jar = "jar-bytes".getBytes(StandardCharsets.UTF_8);
+        byte[] pom = "<project/>".getBytes(StandardCharsets.UTF_8);
+        String proGated = "{\"errors\":[{\"status\":400,\"message\":"
+                + "\"This REST API is available only in Artifactory Pro (see: jfrog.com/artifactory/features).\"}]}";
+        String storage = "https://art.example/api/storage/libs-release";
+        FakeFetcher fetcher = new FakeFetcher(Map.of(
+                listUrl, new ProxyFormat.Fetched(400, proGated.getBytes(StandardCharsets.UTF_8), Map.of()),
+                storage, ok("{\"children\":[{\"uri\":\"/org\",\"folder\":true}]}"),
+                storage + "/org", ok("{\"children\":[{\"uri\":\"/example\",\"folder\":true}]}"),
+                storage + "/org/example", ok("{\"children\":[{\"uri\":\"/lib-1.0.jar\",\"folder\":false},"
+                        + "{\"uri\":\"/lib-1.0.pom\",\"folder\":false}]}"),
+                "https://art.example/libs-release/org/example/lib-1.0.jar",
+                new ProxyFormat.Fetched(200, jar, Map.of()),
+                "https://art.example/libs-release/org/example/lib-1.0.pom",
+                new ProxyFormat.Fetched(200, pom, Map.of())));
+
+        List<String> formats = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
+        List<String> cursors = new ArrayList<>();
+        Map<String, byte[]> downloaded = new LinkedHashMap<>();
+        new ArtifactorySource(base, repository, format, fetcher).forEach((assetFormat, path, content) -> {
+            formats.add(assetFormat);
+            paths.add(path);
+            try (InputStream in = content.open()) {
+                downloaded.put(path, in.readAllBytes());
+            }
+        }, cursors::add);
+
+        assertThat(paths).as("the crawl recurses folders and emits every file")
+                .containsExactly("org/example/lib-1.0.jar", "org/example/lib-1.0.pom");
+        assertThat(formats).as("the repository format is reported for each asset").containsExactly("maven", "maven");
+        assertThat(cursors).as("the crawl is a single pass with one terminal checkpoint").containsExactly((String) null);
+        assertThat(downloaded.get("org/example/lib-1.0.jar")).isEqualTo(jar);
+        assertThat(downloaded.get("org/example/lib-1.0.pom")).isEqualTo(pom);
+    }
+
+    @Test
+    void a_generic_400_is_not_treated_as_pro_gated_and_still_throws() {
+        FakeFetcher fetcher = new FakeFetcher(Map.of(listUrl, new ProxyFormat.Fetched(400,
+                "{\"errors\":[{\"status\":400,\"message\":\"bad request\"}]}".getBytes(StandardCharsets.UTF_8),
+                Map.of())));
         ArtifactorySource source = new ArtifactorySource(base, repository, format, fetcher);
         assertThatThrownBy(() -> source.forEach((assetFormat, path, content) -> { }, cursor -> { }))
                 .isInstanceOf(IOException.class);
