@@ -48,6 +48,13 @@ public interface ProxyFormat {
      */
     @FunctionalInterface
     interface Fetcher {
+
+        /** The shared fetcher standing in when no upstream-fetcher module is installed: every fetch reports a
+         *  transport failure. It is a singleton, so a dispatcher can tell "no upstream connectivity" by identity
+         *  ({@code fetcher == Fetcher.NONE}) and skip proxying or refuse an import outright rather than failing
+         *  request by request. */
+        Fetcher NONE = (url, requestHeaders) -> Optional.empty();
+
         Optional<Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException;
 
         /**

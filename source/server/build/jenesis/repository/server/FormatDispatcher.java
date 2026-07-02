@@ -43,7 +43,7 @@ public final class FormatDispatcher {
         for (RepositoryFormat format : formats) {
             if (format.handles(path)) {
                 URI base = upstreams.get(format.name());
-                if (base != null && format instanceof ProxyFormat proxy) {
+                if (base != null && fetcher != ProxyFormat.Fetcher.NONE && format instanceof ProxyFormat proxy) {
                     new PullThroughCache(fetcher).serve(format, proxy, base, exchange, store);
                 } else {
                     format.handle(exchange, store);

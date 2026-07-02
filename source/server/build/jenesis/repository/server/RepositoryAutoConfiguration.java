@@ -1,5 +1,6 @@
 package build.jenesis.repository.server;
 
+import build.jenesis.repository.format.FetcherProvider;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.importer.ImportSourceProvider;
@@ -84,11 +85,11 @@ public class RepositoryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public ProxyFormat.Fetcher fetcher(RepositoryProperties properties) {
-        ProxyFormat.Fetcher base = new RevalidatingFetcher(PullThroughCache.http());
-        java.time.Duration ttl = properties.getProxyMissTtl();
-        return ttl != null && ttl.compareTo(java.time.Duration.ZERO) > 0
-                ? new NegativeCachingFetcher(base, ttl)
-                : base;
+        // The upstream fetcher is a discovered plugin (the http module); with none installed this resolves to
+        // Fetcher.NONE and the deployment serves local content only - no proxying, no imports.
+        return FetcherProvider.resolve(key -> "proxy-miss-ttl".equals(key) && properties.getProxyMissTtl() != null
+                ? properties.getProxyMissTtl().toString()
+                : null);
     }
 
     @Bean

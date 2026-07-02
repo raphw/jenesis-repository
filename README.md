@@ -58,6 +58,9 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Console panels** (`Panel`) - contribute a page to the web console.
  - **Pull-through proxying** (`ProxyFormat`) - an opt-in capability a format adds to
    mirror an upstream; the OCI format uses it to mirror Docker Hub.
+ - **Upstream connectivity** (`FetcherProvider`) - the HTTP fetcher behind pull-through proxying and
+   repository imports is a discovered module (`source/proxy`, providing `http` with index revalidation and
+   negative caching); without it a deployment serves local content only and refuses imports.
  - **Upload post-processing** (`PublishInterceptor`) - a hook run when an upload commits,
    after the blob is stored content-addressed but *before* its pointer is linked: it reads
    the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` / `QUARANTINE` /

@@ -1,7 +1,7 @@
 package build.jenesis.repository.test;
 
+import build.jenesis.repository.proxy.HttpFetcher;
 import build.jenesis.repository.importer.artifactory.ArtifactorySource;
-import build.jenesis.repository.server.PullThroughCache;
 import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.store.ArtifactStore;
@@ -103,7 +103,7 @@ public class ArtifactoryOssImportTest {
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
                 key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
         result = new RepositoryImport().run(new ArtifactorySource(URI.create(upstream), REPO, "maven",
-                PullThroughCache.http()).withCredentials("admin", "password"), store);
+                new HttpFetcher()).withCredentials("admin", "password"), store);
         running = RepositoryApplication.start(0);
         base = "http://localhost:" + running.port() + "/repository";
     }

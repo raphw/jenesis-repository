@@ -1,7 +1,7 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.format.ProxyFormat;
-import build.jenesis.repository.server.RevalidatingFetcher;
+import build.jenesis.repository.proxy.RevalidatingFetcher;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;

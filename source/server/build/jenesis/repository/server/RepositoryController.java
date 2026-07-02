@@ -104,6 +104,10 @@ public class RepositoryController {
     @PostMapping("/repository/admin/import")
     public void submitImport(@RequestBody(required = false) String body, HttpServletResponse response)
             throws IOException {
+        if (fetcher == ProxyFormat.Fetcher.NONE) {
+            respond(response, 501, "no upstream fetcher module is installed on this deployment");
+            return;
+        }
         ImportJobs jobs = new ImportJobs();
         JsonNode spec = JSON.readTree(body == null || body.isBlank() ? "{}" : body);
         String url = spec.path("url").asString(null);

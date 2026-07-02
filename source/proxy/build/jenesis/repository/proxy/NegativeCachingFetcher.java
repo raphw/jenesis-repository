@@ -1,4 +1,4 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.proxy;
 
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;

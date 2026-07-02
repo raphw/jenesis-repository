@@ -89,6 +89,7 @@ open module build.jenesis.repository.test {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
     requires build.jenesis.repository.format;
+    requires build.jenesis.repository.proxy;
     requires build.jenesis.repository.format.maven;
     requires build.jenesis.repository.format.jenesis;
     requires build.jenesis.repository.format.oci;

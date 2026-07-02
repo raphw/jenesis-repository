@@ -43,7 +43,7 @@ public class RepositoryApplication {
 
     /**
      * Boot the server proxying a local miss to the given upstreams (format name to upstream URI) over the default
-     * HTTP {@link PullThroughCache#http() fetcher}, for a programmatic boot that hits a real upstream.
+     * discovered HTTP fetcher, for a programmatic boot that hits a real upstream.
      */
     public static Running start(int port, Map<String, URI> upstreams) {
         return start(port, upstreams, null);
