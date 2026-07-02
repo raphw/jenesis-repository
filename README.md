@@ -58,6 +58,12 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Console panels** (`Panel`) - contribute a page to the web console.
  - **Pull-through proxying** (`ProxyFormat`) - an opt-in capability a format adds to
    mirror an upstream; the OCI format uses it to mirror Docker Hub.
+ - **Upload post-processing** (`PublishInterceptor`) - a hook run when an upload commits,
+   after the blob is stored content-addressed but *before* its pointer is linked: it reads
+   the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` / `QUARANTINE` /
+   `REJECT`, so a quarantine gate, scanner or audit plugs in without any format knowing it.
+   The core ships no interceptor, so every upload is accepted and served exactly as before;
+   a commercial edition plugs its compliance gate in here.
 
 A whole format is three methods over the already tenant-and-repository-scoped store:
 
@@ -161,9 +167,15 @@ with ...` it from a module on the path:
 | A migration importer               | `RepositoryImporter`    | `build.jenesis.repository.format.RepositoryImporter` |
 | An import source (incumbent connector) | `ImportSourceProvider` | `build.jenesis.repository.importer.ImportSourceProvider` |
 | A console panel                    | `Panel`                 | `build.jenesis.repository.ui.Panel`                  |
+| An upload post-processor           | `PublishInterceptor`    | `build.jenesis.repository.store.PublishInterceptor`  |
 
-A format may additionally implement `ProxyFormat` to gain pull-through mirroring; the
-OCI format does exactly that to mirror Docker Hub.
+A format may additionally implement one or both of two optional capabilities, detected
+by `instanceof` so a format that has no use for them is unaffected: `ProxyFormat` to gain
+pull-through mirroring (the OCI format does exactly that to mirror Docker Hub), and
+`ArtifactLayout` to expose the neutral coordinate behind a request path - its
+`{ecosystem, coordinate, version}` and prerelease flag, and the paths a version occupies -
+so post-processing, inventory and cleanup key on the coordinate a format supplies rather
+than parsing its layout.
 
 Sits on cloud infra by design
 -----------------------------
@@ -234,7 +246,7 @@ plug in through the console's extension points without forking the core.
 
 | Module | Folder | What it is |
 |--------|--------|------------|
-| `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through. `java.base` only, so a format plugin builds on it without pulling in the server. |
+| `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through - including its gated `publish(descriptor, stream)`, which stores the blob, runs the `ServiceLoader`-discovered `PublishInterceptor` chain over the neutral `ArtifactDescriptor`, and routes the pointer by the strongest disposition (accept / quarantine / reject). `java.base` only, so a format plugin builds on it without pulling in the server. |
 | `build.jenesis.repository.store.filesystem` | `source/store/filesystem` | The default filesystem backend: blobs under a mounted root (`JENESIS_STORE_ROOT`), the provider `ArtifactStoreProvider.resolve` falls back to when no other backend is named. `provides` its `ArtifactStoreProvider`, discovered with `ServiceLoader`; the store SPI + `java.base` only. |
 | `build.jenesis.repository.store.s3`       | `source/store/s3`         | S3-compatible backend (AWS SDK v2). Selected with `jenesis.repository.store=s3` and `JENESIS_AWS_BUCKET`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
 | `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). Selected with `jenesis.repository.store=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
