@@ -23,8 +23,9 @@ public final class ArtifactorySourceProvider implements ImportSourceProvider {
             return null;
         }
         ArtifactorySource source = new ArtifactorySource(request.url(), request.repository(), request.format(), fetcher);
-        return request.username() == null || request.password() == null
-                ? source
-                : source.withCredentials(request.username(), request.password());
+        if (request.username() != null && request.password() != null) {
+            source = source.withCredentials(request.username(), request.password());
+        }
+        return request.cursor() == null ? source : source.from(request.cursor());
     }
 }
