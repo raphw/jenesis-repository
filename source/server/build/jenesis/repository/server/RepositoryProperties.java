@@ -2,6 +2,7 @@ package build.jenesis.repository.server;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -26,6 +27,8 @@ public class RepositoryProperties {
     private long rateLimit = 0;
 
     private Map<String, String> proxy = new LinkedHashMap<>();
+
+    private Duration proxyMissTtl = Duration.ofSeconds(60);
 
     public String getStore() {
         return store;
@@ -88,5 +91,16 @@ public class RepositoryProperties {
 
     public void setProxy(Map<String, String> proxy) {
         this.proxy = proxy;
+    }
+
+    /** How long an upstream {@code 404} is remembered so a build tool's repeated probes for an artifact that is not
+     *  there (a version range, a missing SNAPSHOT, an optional classifier) are answered from memory rather than
+     *  re-hitting the upstream every time; {@code 0} disables the negative cache. */
+    public Duration getProxyMissTtl() {
+        return proxyMissTtl;
+    }
+
+    public void setProxyMissTtl(Duration proxyMissTtl) {
+        this.proxyMissTtl = proxyMissTtl;
     }
 }
