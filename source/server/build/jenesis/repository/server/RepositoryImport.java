@@ -45,7 +45,7 @@ public final class RepositoryImport {
                         importer.importArtifact(path, in, store);
                     }
                     imported.incrementAndGet();
-                    listener.imported();
+                    listener.imported(path);
                     return;
                 }
             }
@@ -63,7 +63,8 @@ public final class RepositoryImport {
         Listener NONE = new Listener() {
         };
 
-        default void imported() {
+        /** An asset was imported; {@code path} is the source path (the coordinate) the walk just reached. */
+        default void imported(String path) {
         }
 
         default void skipped(String format) {

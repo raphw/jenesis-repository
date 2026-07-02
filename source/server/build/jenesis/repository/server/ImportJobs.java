@@ -26,7 +26,7 @@ public final class ImportJobs {
     /** Start an import in the background, seeded with the given counts (non-zero for a resume), and return at once. */
     public void submit(ArtifactStore store, ImportSource source, String jobId, int baseImported, int baseSkipped)
             throws IOException {
-        write(store, jobId, "running", baseImported, baseSkipped, new LinkedHashSet<>(), null, null);
+        write(store, jobId, "running", baseImported, baseSkipped, new LinkedHashSet<>(), null, null, null);
         Thread.ofVirtual().name("import-" + jobId).start(() -> run(store, source, jobId, baseImported, baseSkipped));
     }
 
@@ -35,11 +35,13 @@ public final class ImportJobs {
         AtomicInteger skipped = new AtomicInteger(baseSkipped);
         Set<String> skippedFormats = new LinkedHashSet<>();
         String[] cursor = {null};
+        AtomicReference<String> asset = new AtomicReference<>();
         try {
             new RepositoryImport().run(source, store, new RepositoryImport.Listener() {
                 @Override
-                public void imported() {
+                public void imported(String path) {
                     imported.incrementAndGet();
+                    asset.set(path);
                 }
 
                 @Override
@@ -51,13 +53,13 @@ public final class ImportJobs {
                 @Override
                 public void checkpoint(String reached) throws IOException {
                     cursor[0] = reached;
-                    write(store, jobId, "running", imported.get(), skipped.get(), skippedFormats, reached, null);
+                    write(store, jobId, "running", imported.get(), skipped.get(), skippedFormats, reached, asset.get(), null);
                 }
             });
-            write(store, jobId, "completed", imported.get(), skipped.get(), skippedFormats, null, null);
+            write(store, jobId, "completed", imported.get(), skipped.get(), skippedFormats, null, asset.get(), null);
         } catch (Exception e) {
             try {
-                write(store, jobId, "failed", imported.get(), skipped.get(), skippedFormats, cursor[0],
+                write(store, jobId, "failed", imported.get(), skipped.get(), skippedFormats, cursor[0], asset.get(),
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             } catch (IOException suppressed) {
                 throw new UncheckedIOException(suppressed);
@@ -88,23 +90,25 @@ public final class ImportJobs {
         }
         return Optional.of(new Snapshot(state.path("state").asString(null), state.path("imported").asInt(0),
                 state.path("skipped").asInt(0), formats, state.path("cursor").asString(null),
-                state.path("error").asString(null)));
+                state.path("asset").asString(null), state.path("error").asString(null)));
     }
 
     private void write(ArtifactStore store, String jobId, String state, int imported, int skipped,
-                       Set<String> skippedFormats, String cursor, String error) throws IOException {
+                       Set<String> skippedFormats, String cursor, String asset, String error) throws IOException {
         Map<String, Object> job = new LinkedHashMap<>();
         job.put("state", state);
         job.put("imported", imported);
         job.put("skipped", skipped);
         job.put("skippedFormats", new ArrayList<>(skippedFormats));
         job.put("cursor", cursor);
+        job.put("asset", asset);
         job.put("error", error);
         store.write("imports/" + jobId, new ByteArrayInputStream(JSON.writeValueAsString(job).getBytes(StandardCharsets.UTF_8)));
     }
 
-    /** A parsed view of a job's persisted state. */
+    /** A parsed view of a job's persisted state; {@code asset} is the source path of the most recently imported
+     *  asset (which one the walk has reached), {@code null} before the first asset. */
     public record Snapshot(String state, int imported, int skipped, List<String> skippedFormats,
-                           String cursor, String error) {
+                           String cursor, String asset, String error) {
     }
 }
