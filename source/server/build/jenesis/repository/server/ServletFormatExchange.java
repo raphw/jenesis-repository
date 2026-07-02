@@ -7,6 +7,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /**
  * Adapts a servlet request and response to the framework-neutral {@link FormatExchange} a {@link
@@ -93,6 +96,56 @@ public final class ServletFormatExchange implements FormatExchange {
             response.setContentLengthLong(contentLength);
         }
         return response.getOutputStream();
+    }
+
+    /**
+     * Make a buffered {@code 200} conditionally revalidatable, format-agnostically: the response carries an
+     * {@code ETag} of its own bytes (a content hash), and a matching {@code If-None-Match} is answered {@code 304 Not
+     * Modified} with no body. A format serves its generated indexes and metadata this way (an npm packument, a
+     * {@code maven-metadata.xml}, a PyPI index, a Debian {@code Packages}), so a client that polls a mutable index it
+     * already has re-downloads it only when it has actually changed - the case conditional requests exist for; a large
+     * artifact is streamed (see the range path above), not buffered, so it is unaffected. The {@code ETag} derives
+     * from the served bytes, so no format states it and the check never yields a false {@code 304}.
+     */
+    @Override
+    public void respond(int status, byte[] content) throws IOException {
+        if (status == 200 && content.length > 0) {
+            String etag = etag(content);
+            response.setHeader("ETag", etag);
+            if (notModified(etag)) {
+                response.setStatus(304);
+                return;
+            }
+        }
+        try (OutputStream out = respond(status, content.length == 0 ? -1 : content.length)) {
+            out.write(content);
+        }
+    }
+
+    /** Whether the request's {@code If-None-Match} covers this ETag (the strong or weak form, or {@code *}). */
+    private boolean notModified(String etag) {
+        String header = request.getHeader("If-None-Match");
+        if (header == null) {
+            return false;
+        }
+        if (header.trim().equals("*")) {
+            return true;
+        }
+        for (String candidate : header.split(",")) {
+            String tag = candidate.trim();
+            if (tag.equals(etag) || tag.equals("W/" + etag)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String etag(byte[] content) {
+        try {
+            return '"' + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content)) + '"';
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static final long[] UNSATISFIABLE = new long[0];
