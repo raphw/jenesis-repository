@@ -37,7 +37,7 @@ public class RepositoryQuotaE2ETest {
         System.setProperty("jenesis.repository.quota", "1000");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + server.port() + "/";
+        base = "http://localhost:" + server.port() + "/repository/";
     }
 
     @AfterAll

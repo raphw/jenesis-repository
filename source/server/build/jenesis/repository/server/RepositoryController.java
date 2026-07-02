@@ -35,10 +35,10 @@ import java.util.Optional;
  * {@link FormatDispatcher}: the first format whose {@code handles(path)} is true serves or accepts the request through a
  * {@link ServletFormatExchange}; an unclaimed path is a {@code 404}. When an upstream is configured for the matched
  * format and the format is a {@link ProxyFormat}, a local miss is served through the {@link PullThroughCache} from that
- * upstream and cached, so a later read is a local hit. {@code /admin/import} triggers an asynchronous migration through
+ * upstream and cached, so a later read is a local hit. {@code /repository/admin/import} triggers an asynchronous migration through
  * the first {@link ImportSourceProvider} that handles the requested source - discovered with {@code ServiceLoader} like
  * the formats, so the server knows no incumbent by name - run as a background {@link ImportJobs}, and {@code
- * GET /admin/import/<id>} returns its state. Authorization is not done here: {@link RepositorySecurityAutoConfiguration}
+ * GET /repository/admin/import/<id>} returns its state. Authorization is not done here: {@link RepositorySecurityAutoConfiguration}
  * gates the wire through the {@link Authorization} credential model.
  */
 @RestController
@@ -65,14 +65,15 @@ public class RepositoryController {
     }
 
     /**
-     * The format catch-all: any request the {@code /admin/import} routes and the Actuator endpoints do not claim is
-     * resolved to its artifact space by {@link RepositoryRouting} and offered to the {@link RepositoryFormat} plugins
-     * over that store by the {@link FormatDispatcher}. More specific routes win in Spring, so this only sees a format's
-     * own paths; an unclaimed one is a {@code 404}. A format with a configured upstream that is a {@link ProxyFormat}
-     * serves a local miss through the {@link PullThroughCache}.
+     * The format catch-all: an artifact request under {@code /repository/**} (its prefix stripped by
+     * {@link RepositoryRouting} before dispatch) or the OCI {@code /v2/**} registry the Docker protocol pins at the host
+     * root, resolved to its artifact space and offered to the {@link RepositoryFormat} plugins over that store by the
+     * {@link FormatDispatcher}. More specific routes ({@code /repository/admin/import}) and the Actuator endpoints win in
+     * Spring, so this only sees a format's own paths; an unclaimed one is a {@code 404}. A format with a configured
+     * upstream that is a {@link ProxyFormat} serves a local miss through the {@link PullThroughCache}.
      */
-    @RequestMapping(value = "/**", method = {RequestMethod.GET, RequestMethod.HEAD, RequestMethod.PUT,
-            RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
+    @RequestMapping(value = {"/repository/**", "/v2", "/v2/**"}, method = {RequestMethod.GET, RequestMethod.HEAD,
+            RequestMethod.PUT, RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
         RepositoryRouting.Route route = routing.route(request);
         ServletFormatExchange exchange = new ServletFormatExchange(request, response, route.path());
@@ -86,8 +87,8 @@ public class RepositoryController {
      * without a job id, say) is a {@code 405}, matching the headless dispatch. The more specific route wins over the
      * format catch-all, so a stray method is rejected here rather than falling through to a {@code 404}.
      */
-    @RequestMapping(value = "/admin/import", method = {RequestMethod.GET, RequestMethod.HEAD, RequestMethod.PUT,
-            RequestMethod.PATCH, RequestMethod.DELETE})
+    @RequestMapping(value = "/repository/admin/import", method = {RequestMethod.GET, RequestMethod.HEAD,
+            RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE})
     public void importMethodNotAllowed(HttpServletResponse response) {
         response.setStatus(405);
     }
@@ -100,7 +101,7 @@ public class RepositoryController {
      * Nexus one. A {@code resume} naming a prior job continues its walk from the recorded continuation token and
      * counts.
      */
-    @PostMapping("/admin/import")
+    @PostMapping("/repository/admin/import")
     public void submitImport(@RequestBody(required = false) String body, HttpServletResponse response)
             throws IOException {
         ImportJobs jobs = new ImportJobs();
@@ -135,7 +136,7 @@ public class RepositoryController {
     }
 
     /** Return a job's persisted state as raw JSON ({@code 404} if there is no such job). */
-    @GetMapping("/admin/import/{id}")
+    @GetMapping("/repository/admin/import/{id}")
     public void importStatus(@PathVariable("id") String id, HttpServletResponse response) throws IOException {
         Optional<byte[]> state = new ImportJobs().status(store, id);
         if (state.isEmpty()) {

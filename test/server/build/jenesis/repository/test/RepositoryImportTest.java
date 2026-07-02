@@ -161,19 +161,19 @@ public class RepositoryImportTest {
         assertThat(maven.imported()).isEqualTo(3);
         assertThat(maven.skipped()).isZero();
         assertThat(maven.skippedFormats()).isEmpty();
-        assertThat(get("/maven/com/acme/app/1.0/app-1.0.jar")).isEqualTo(jar);
-        assertThat(new String(get("/maven/com/acme/app/1.0/app-1.0.pom"), StandardCharsets.UTF_8))
+        assertThat(get("/repository/maven/com/acme/app/1.0/app-1.0.jar")).isEqualTo(jar);
+        assertThat(new String(get("/repository/maven/com/acme/app/1.0/app-1.0.pom"), StandardCharsets.UTF_8))
                 .contains("modelVersion");
     }
 
     @Test
     public void the_module_view_survives_the_import() throws Exception {
-        assertThat(get("/module/com.acme.app/1.0/com.acme.app.jar")).isEqualTo(jar);
+        assertThat(get("/repository/module/com.acme.app/1.0/com.acme.app.jar")).isEqualTo(jar);
     }
 
     @Test
     public void maven_metadata_is_regenerated_not_copied() throws Exception {
-        byte[] served = get("/maven/com/acme/app/maven-metadata.xml");
+        byte[] served = get("/repository/maven/com/acme/app/maven-metadata.xml");
         assertThat(new String(served, StandardCharsets.UTF_8))
                 .contains("<version>1.0</version>")
                 .doesNotContain("discarded-source-copy");
@@ -199,7 +199,7 @@ public class RepositoryImportTest {
     public void a_raw_repository_is_imported_and_served() throws Exception {
         assertThat(raw.imported()).isEqualTo(1);
         assertThat(raw.skipped()).isZero();
-        assertThat(get("/raw/tools/installer.bin")).isEqualTo(rawFile);
+        assertThat(get("/repository/raw/tools/installer.bin")).isEqualTo(rawFile);
     }
 
     @Test

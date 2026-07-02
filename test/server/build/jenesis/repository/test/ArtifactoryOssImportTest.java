@@ -105,7 +105,7 @@ public class ArtifactoryOssImportTest {
         result = new RepositoryImport().run(new ArtifactorySource(URI.create(upstream), REPO, "maven",
                 PullThroughCache.http()).withCredentials("admin", "password"), store);
         running = RepositoryApplication.start(0);
-        base = "http://localhost:" + running.port();
+        base = "http://localhost:" + running.port() + "/repository";
     }
 
     @AfterAll

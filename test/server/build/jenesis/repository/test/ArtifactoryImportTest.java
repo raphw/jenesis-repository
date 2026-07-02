@@ -84,7 +84,7 @@ public class ArtifactoryImportTest {
 
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + running.port();
+        base = "http://localhost:" + running.port() + "/repository";
     }
 
     @AfterAll

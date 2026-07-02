@@ -53,7 +53,7 @@ public class RepositoryAuthE2ETest {
         authorization.grant(ro, "*", Authorization.REPOSITORY_READ);
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + server.port() + "/";
+        base = "http://localhost:" + server.port() + "/repository/";
     }
 
     @AfterAll

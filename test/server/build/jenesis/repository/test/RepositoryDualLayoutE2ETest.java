@@ -56,7 +56,7 @@ public class RepositoryDualLayoutE2ETest {
         System.setProperty("JENESIS_STORE_ROOT", store.toString());
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + server.port() + "/";
+        base = "http://localhost:" + server.port() + "/repository/";
     }
 
     @AfterAll

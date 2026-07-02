@@ -99,7 +99,7 @@ public class NexusImportTest {
         result = new RepositoryImport().run(new NexusSource(URI.create(nexus), "maven-releases", PullThroughCache.http())
                 .withCredentials("admin", password), store);
         running = RepositoryApplication.start(0);
-        base = "http://localhost:" + running.port();
+        base = "http://localhost:" + running.port() + "/repository";
     }
 
     @AfterAll
