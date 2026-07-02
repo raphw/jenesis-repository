@@ -170,37 +170,51 @@ public class NexusImportTest {
 
     private static String expect(Exec result, String what) throws IOException {
         if (result.code() != 0) {
-            throw new IOException(what + " failed (" + result.code() + "): " + result.output());
+            throw new IOException(what + " failed (" + result.code() + "): " + result.diagnostic());
         }
-        return result.output();
+        return result.stdout().strip();
     }
 
-    private record Exec(int code, String output) {
+    // Standard out and error are captured separately: an image pull's progress - and a platform-mismatch
+    // warning on a runner whose architecture differs from the amd64-only image - go to stderr, and merging
+    // them into stdout would corrupt the container id and port mapping read back from these commands.
+    private record Exec(int code, String stdout, String stderr) {
+        String diagnostic() {
+            return stderr.isBlank() ? stdout : stderr;
+        }
     }
 
     private Exec exec(int timeoutSeconds, Path cwd, String... command) throws IOException, InterruptedException {
-        ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+        ProcessBuilder builder = new ProcessBuilder(command);
         if (cwd != null) {
             builder.directory(cwd.toFile());
         }
         Process process = builder.start();
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
-        Thread drain = Thread.ofVirtual().start(() -> {
-            try (InputStream in = process.getInputStream()) {
-                in.transferTo(captured);
-            } catch (IOException ignored) {
-                // The stream closes when the process exits; a read error here is not actionable.
-            }
-        });
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        Thread drainOut = drain(process.getInputStream(), out);
+        Thread drainErr = drain(process.getErrorStream(), err);
         boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         if (!exited) {
             process.destroyForcibly();
         }
-        drain.join(Duration.ofSeconds(5));
+        drainOut.join(Duration.ofSeconds(5));
+        drainErr.join(Duration.ofSeconds(5));
         if (!exited) {
             throw new IOException(command[0] + " timed out");
         }
-        return new Exec(process.exitValue(), captured.toString(StandardCharsets.UTF_8).trim());
+        return new Exec(process.exitValue(),
+                out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
+    }
+
+    private static Thread drain(InputStream stream, ByteArrayOutputStream sink) {
+        return Thread.ofVirtual().start(() -> {
+            try (stream) {
+                stream.transferTo(sink);
+            } catch (IOException ignored) {
+                // The stream closes when the process exits; a read error here is not actionable.
+            }
+        });
     }
 
     private static byte[] automaticModuleJar(String moduleName) throws IOException {
