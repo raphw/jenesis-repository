@@ -14,17 +14,17 @@ env:
 # A single build runs the whole project in one `java build/jenesis/Project.java`
 # invocation, so the expensive tool integration tests are gated with JUnit tags
 # rather than split into separate (re-compiling) jobs. Each such test carries a
-# @Tag ("docker", "helm", "proxy", "maven", "nexus", "s3", "azure"); on a pull request the step below diffs
-# the changed paths and, for every area left untouched, adds that tag to a single
+# @Tag ("docker", "helm", "proxy", "maven", "nexus", "artifactory", "s3", "azure"); on a pull request the step below
+# diffs the changed paths and, for every area left untouched, adds that tag to a single
 # --include-tag negation expression (jenesis.test.tag), so the run skips exactly
 # those suites while still executing every other test. A push to main always runs
 # the full suite. The "docker" tag also covers the OCI pull-through proxy against Docker
 # Hub, "proxy" covers the Maven pull-through proxy against Maven Central, "maven" is the
-# Maven deploy/resolve round-trip driven by the real mvn client, and "nexus" migrates from a real
-# Sonatype Nexus (pulled via the docker CLI, seeded with mvn). Tools are installed only when
+# Maven deploy/resolve round-trip driven by the real mvn client, and "nexus"/"artifactory" migrate from a real
+# Sonatype Nexus / JFrog Artifactory OSS (pulled via the docker CLI, seeded with mvn). Tools are installed only when
 # their suite is selected: docker and mvn are preinstalled on the runner; helm is fetched on
-# demand; MinIO/Azurite and Nexus are started by their tests through the docker CLI. The mvn and
-# nexus suites route their plugin resolution through MAVEN_REPOSITORY_URI, so they hit the same mirror.
+# demand; MinIO/Azurite, Nexus and Artifactory are started by their tests through the docker CLI. The mvn, nexus and
+# artifactory suites route their plugin resolution through MAVEN_REPOSITORY_URI, so they hit the same mirror.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -69,6 +69,8 @@ jobs:
           if match '^source/format/maven/' || match '/MavenClientTest\.java'; then inc_maven=true; fi
           inc_nexus=false
           if match '^source/importer/nexus/' || match '/NexusImportTest\.java'; then inc_nexus=true; fi
+          inc_artifactory=false
+          if match '^source/importer/artifactory/' || match '/ArtifactoryOssImportTest\.java'; then inc_artifactory=true; fi
           inc_s3=false
           if match '^source/store/s3/' || match '^test/store/s3/'; then inc_s3=true; fi
           inc_azure=false
@@ -78,6 +80,7 @@ jobs:
           $inc_proxy || exclude+=(proxy)
           $inc_maven || exclude+=(maven)
           $inc_nexus || exclude+=(nexus)
+          $inc_artifactory || exclude+=(artifactory)
           $inc_s3    || exclude+=(s3)
           $inc_azure || exclude+=(azure)
           if [ ${#exclude[@]} -gt 0 ]; then
