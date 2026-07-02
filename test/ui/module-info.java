@@ -1,16 +1,12 @@
 /**
- * The web console: a Spring Boot admin front for the repository, matching the enterprise edition's framework choices
- * (Spring Boot on embedded Tomcat, Thymeleaf views, Spring Security with OAuth2/OIDC login) so the enterprise console
- * extends this shell rather than forking it. It is an open module (Spring needs reflective access) and requires the
- * Spring modules its code compiles against plus the Spring Boot starters that root the runtime closure (embedded
- * Tomcat, Thymeleaf, Jackson, Security, OAuth2 client). Built as an open shell with a panel-registration SPI
- * ({@code uses Panel}) discovered with ServiceLoader and bridged into Spring, so additional panels are registered by
- * adding modules to the graph, with no fork of the console. Login mechanisms plug in the same way through the
- * {@code LoginContributor} bean seam.
+ * End-to-end test of the Spring Boot web console. It boots the real {@link build.jenesis.repository.ui.Application} on
+ * an ephemeral port over a temporary filesystem store (supplied here, so the console module itself stays
+ * store-agnostic) under the {@code dev} security profile, then drives it over HTTP: the Actuator health endpoint is up,
+ * the login page is served anonymously, the console denies an anonymous request, and an authenticated user sees the
+ * browse panel rendering the store's real published contents.
  *
  * @jenesis.release 25
- * @jenesis.main build.jenesis.repository.ui.Application
- *
+ * @jenesis.test build.jenesis.repository.ui
  * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
  * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
  * @jenesis.pin com.fasterxml.jackson.annotation 2.22
@@ -109,31 +105,24 @@
  * @jenesis.pin tools.jackson.core/jackson-core 3.2.0 SHA-256/5e353ce53c6901105dfcbf183e3220c17072e334e552b818a4bb1b99decea596
  * @jenesis.pin tools.jackson.core/jackson-databind 3.2.0 SHA-256/3ef94a3dddeafc247c50230fad0315981b2ce4ae6e91cfb4368a86f328904e4f
  * @jenesis.pin tools.jackson.databind 3.2.0
+ * @jenesis.pin org.apiguardian/apiguardian-api 1.1.2 SHA-256/b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38
+ * @jenesis.pin org.assertj.core 3.27.7
+ * @jenesis.pin org.assertj/assertj-core 3.27.7 SHA-256/c4a445426c3c2861666863b842cc4ec7bbb1c4226fefd370b6d2fe83d6c4ff0f
+ * @jenesis.pin org.junit.jupiter 6.1.0
+ * @jenesis.pin org.junit.jupiter/junit-jupiter 6.1.0 SHA-256/a4e420b5c6e8170323b4c5c97ae35bca0d620be9f9cfe37006820f53931f27a3
+ * @jenesis.pin org.junit.jupiter/junit-jupiter-api 6.1.0 SHA-256/50f97eb800c2e888faa237a06f5a0ef445faed5567f994dac0c2b9d278a9ad20
+ * @jenesis.pin org.junit.jupiter/junit-jupiter-engine 6.1.0 SHA-256/ea707b9647084619a0fc911cefb25037540d58b2800f8ead1fc6a2baf58b1da5
+ * @jenesis.pin org.junit.jupiter/junit-jupiter-params 6.1.0 SHA-256/b987eea3205185a76f3659a39e67503cb7b682d8b7be03be4b9f92b710f0eec0
+ * @jenesis.pin org.junit.platform.console 6.1.0
+ * @jenesis.pin org.junit.platform/junit-platform-commons 6.1.0 SHA-256/1d9046ab17ec7edafb0bc7945d2e59d7180fff4f28c734b823b51001e769f71b
+ * @jenesis.pin org.junit.platform/junit-platform-engine 6.1.0 SHA-256/3fb6be76c26ab0f94fe084e3fd0a39e1d25e22129929a61b29bd80a052b93ea5
+ * @jenesis.pin org.opentest4j/opentest4j 1.3.0 SHA-256/48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b
  */
-open module build.jenesis.repository.ui {
+open module build.jenesis.repository.ui.test {
+    requires build.jenesis.repository.ui;
     requires build.jenesis.repository.store;
-    requires org.apache.tomcat.embed.core;
-    requires micrometer.observation;
-    requires org.slf4j;
-    requires spring.beans;
-    requires spring.context;
-    requires spring.core;
-    requires spring.web;
-    requires spring.boot;
-    requires spring.boot.actuator;
-    requires spring.boot.starter.actuator;
-    requires spring.boot.autoconfigure;
-    requires spring.security.config;
-    requires spring.security.core;
-    requires spring.security.web;
-    requires spring.security.oauth2.client;
-    requires spring.security.oauth2.core;
-    requires spring.boot.starter.web;
-    requires spring.boot.starter.thymeleaf;
-    requires spring.boot.starter.security;
-    requires spring.boot.starter.oauth2.client;
-    exports build.jenesis.repository.ui;
-    uses build.jenesis.repository.ui.Panel;
-    provides build.jenesis.repository.ui.Panel
-            with build.jenesis.repository.ui.BrowsePanel;
+    requires build.jenesis.repository.store.filesystem;
+    requires java.net.http;
+    requires org.junit.jupiter;
+    requires org.assertj.core;
 }

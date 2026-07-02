@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in &mdash; jenesis-repository</title>
+    <link rel="stylesheet" th:href="@{/css/pico.min.css}">
+</head>
+<body>
+<main class="container">
+    <article style="max-width:28rem;margin:4rem auto">
+        <header><h1>jenesis-repository</h1></header>
+        <p th:if="${param.logout}">You have signed out.</p>
+
+        <div th:if="${oauthConfigured}">
+            <p>Sign in to continue.</p>
+            <a th:each="registration : ${registrations}" role="button" class="contrast"
+               th:href="@{'/oauth2/authorization/' + ${registration.id}}"
+               th:text="${registration.name}"
+               style="display:block;margin-bottom:.5rem">Sign in</a>
+        </div>
+
+        <form th:unless="${oauthConfigured}" th:action="@{/login}" method="post">
+            <p>Sign in with a local account.</p>
+            <small th:if="${param.error}" style="color:var(--pico-del-color)">Invalid credentials.</small>
+            <input type="text" name="username" placeholder="Username" autocomplete="username" required>
+            <input type="password" name="password" placeholder="Password" autocomplete="current-password" required>
+            <button type="submit">Sign in</button>
+        </form>
+    </article>
+</main>
+</body>
+</html>

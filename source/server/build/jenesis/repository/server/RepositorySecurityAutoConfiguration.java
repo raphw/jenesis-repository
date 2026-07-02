@@ -1,7 +1,8 @@
 package build.jenesis.repository.server;
 
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -9,20 +10,30 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Server-side security for the free repository: stateless, deny-by-default authorization delegated to the
- * {@link RepositoryAuthorizationManager} (which is a pass-through when the deployment is anonymous), with the
- * Actuator health endpoint left open for liveness/readiness probes. The {@link KeyAuthenticationFilter} runs first
- * to lift the {@code Jenesis-Repository-Key} header into the security context. CSRF, HTTP Basic and form login are
+ * Server-side security for the free repository as auto-configuration: stateless, deny-by-default authorization
+ * delegated to the {@link RepositoryAuthorizationManager} (a pass-through when the deployment is anonymous), with the
+ * Actuator health endpoint left open for liveness/readiness probes. The {@link KeyAuthenticationFilter} runs first to
+ * lift the {@code Jenesis-Repository-Key} header into the security context. CSRF, HTTP Basic and form login are
  * disabled - this is a machine-to-machine artifact API keyed by a header, not a browser session. Both the
  * authentication entry point and the access-denied handler are the {@link RepositoryAuthorizationEntryPoint}, so a
  * denied request answers the status the credential model intends ({@code 401} unauthorized, {@code 403} forbidden)
- * whichever Spring Security failure path it takes.
+ * whichever Spring Security failure path it takes. Both the authorization manager and the filter chain are
+ * {@link ConditionalOnMissingBean conditional}, so an enterprise edition that needs a different chain (multi-tenant
+ * routing rules, an OIDC token-exchange endpoint) contributes its own and this backs off, while still reusing the
+ * shared {@link KeyAuthenticationFilter}, {@link RateLimitFilter} and {@link Authorization} credential model.
  */
-@Configuration
+@AutoConfiguration
 @EnableWebSecurity
-public class SecurityConfig {
+public class RepositorySecurityAutoConfiguration {
 
     @Bean
+    @ConditionalOnMissingBean
+    public RepositoryAuthorizationManager repositoryAuthorizationManager(Authorization authorization) {
+        return new RepositoryAuthorizationManager(authorization);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    RepositoryAuthorizationManager authorizationManager,
                                                    RateLimiter rateLimiter,

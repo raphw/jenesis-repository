@@ -11,7 +11,6 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,62 +30,55 @@ import java.util.Optional;
 
 /**
  * The HTTP surface of the free single-tenant repository, mirroring {@link RepositoryApplication}'s framework-neutral
- * dispatch but over Spring MVC. A catch-all offers every request the {@link RepositoryFormat} plugins (Maven/module,
- * OCI, raw) over the single store: the first format whose {@code handles(path)} is true serves or accepts the request
- * through a {@link ServletFormatExchange} carrying the full request path; an unclaimed path is a {@code 404}. When an
- * upstream is configured for the matched format and the format is a {@link ProxyFormat}, a local miss is served
- * through the {@link PullThroughCache} from that upstream and cached, so a later read is a local hit. {@code
- * /admin/import} triggers an asynchronous migration through the first {@link ImportSourceProvider} that handles the
- * requested source - discovered with {@code ServiceLoader} like the formats, so the server knows no incumbent by name -
- * run as a background {@link ImportJobs}, and {@code GET /admin/import/<id>} returns its state. Authorization is not done here:
- * {@link SecurityConfig} gates the wire through the {@link Authorization} credential model.
+ * dispatch but over Spring MVC. A catch-all resolves the request to its artifact space through {@link RepositoryRouting}
+ * (single-tenant by default) and offers it the {@link RepositoryFormat} plugins over that store through the shared
+ * {@link FormatDispatcher}: the first format whose {@code handles(path)} is true serves or accepts the request through a
+ * {@link ServletFormatExchange}; an unclaimed path is a {@code 404}. When an upstream is configured for the matched
+ * format and the format is a {@link ProxyFormat}, a local miss is served through the {@link PullThroughCache} from that
+ * upstream and cached, so a later read is a local hit. {@code /admin/import} triggers an asynchronous migration through
+ * the first {@link ImportSourceProvider} that handles the requested source - discovered with {@code ServiceLoader} like
+ * the formats, so the server knows no incumbent by name - run as a background {@link ImportJobs}, and {@code
+ * GET /admin/import/<id>} returns its state. Authorization is not done here: {@link RepositorySecurityAutoConfiguration}
+ * gates the wire through the {@link Authorization} credential model.
  */
 @RestController
 public class RepositoryController {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
-    private final List<RepositoryFormat> formats;
+    private final RepositoryRouting routing;
+    private final FormatDispatcher dispatcher;
     private final List<ImportSourceProvider> importSources;
     private final ArtifactStore store;
-    private final Map<String, URI> upstreams;
     private final ProxyFormat.Fetcher fetcher;
 
-    public RepositoryController(List<RepositoryFormat> formats,
+    public RepositoryController(RepositoryRouting routing,
+                                FormatDispatcher dispatcher,
                                 List<ImportSourceProvider> importSources,
                                 ArtifactStore store,
-                                @Qualifier("upstreams") Map<String, URI> upstreams,
                                 ProxyFormat.Fetcher fetcher) {
-        this.formats = formats;
+        this.routing = routing;
+        this.dispatcher = dispatcher;
         this.importSources = importSources;
         this.store = store;
-        this.upstreams = upstreams;
         this.fetcher = fetcher;
     }
 
     /**
      * The format catch-all: any request the {@code /admin/import} routes and the Actuator endpoints do not claim is
-     * offered to the {@link RepositoryFormat} plugins over the store. More specific routes win in Spring, so this
-     * only sees a format's own paths; an unclaimed one is a {@code 404}. A format with a configured upstream that is
-     * a {@link ProxyFormat} serves a local miss through the {@link PullThroughCache}.
+     * resolved to its artifact space by {@link RepositoryRouting} and offered to the {@link RepositoryFormat} plugins
+     * over that store by the {@link FormatDispatcher}. More specific routes win in Spring, so this only sees a format's
+     * own paths; an unclaimed one is a {@code 404}. A format with a configured upstream that is a {@link ProxyFormat}
+     * serves a local miss through the {@link PullThroughCache}.
      */
     @RequestMapping(value = "/**", method = {RequestMethod.GET, RequestMethod.HEAD, RequestMethod.PUT,
             RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        String path = request.getRequestURI();
-        for (RepositoryFormat format : formats) {
-            if (format.handles(path)) {
-                ServletFormatExchange exchange = new ServletFormatExchange(request, response, path);
-                URI base = upstreams.get(format.name());
-                if (base != null && format instanceof ProxyFormat proxy) {
-                    new PullThroughCache(fetcher).serve(format, proxy, base, exchange, store);
-                } else {
-                    format.handle(exchange, store);
-                }
-                return;
-            }
+        RepositoryRouting.Route route = routing.route(request);
+        ServletFormatExchange exchange = new ServletFormatExchange(request, response, route.path());
+        if (!dispatcher.dispatch(exchange, route.store())) {
+            response.setStatus(404);
         }
-        response.setStatus(404);
     }
 
     /**

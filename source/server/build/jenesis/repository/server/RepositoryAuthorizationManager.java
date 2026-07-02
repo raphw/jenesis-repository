@@ -6,7 +6,6 @@ import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.authorization.AuthorizationResult;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.function.Supplier;
@@ -18,9 +17,9 @@ import java.util.function.Supplier;
  * {@code repository:write} for any other method. The computed {@link Authorization.Decision} is recorded on the
  * request so {@link RepositoryAuthorizationEntryPoint} can answer {@code 401} for an unauthorized request (no key,
  * a malformed or expired key) and {@code 403} for a forbidden one (a key that lacks the right), regardless of which
- * Spring Security failure path the denial takes.
+ * Spring Security failure path the denial takes. It is contributed as a bean by
+ * {@link RepositorySecurityAutoConfiguration}.
  */
-@Component
 public class RepositoryAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
 
     private final Authorization authorization;
