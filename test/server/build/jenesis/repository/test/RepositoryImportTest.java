@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.PullThroughCache;
+import build.jenesis.repository.proxy.HttpFetcher;
 import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.importer.nexus.NexusSource;
@@ -139,10 +139,10 @@ public class RepositoryImportTest {
         nexus.start();
 
         RepositoryImport importer = new RepositoryImport();
-        maven = importer.run(new NexusSource(URI.create(upstream), "maven-releases", PullThroughCache.http()), store);
-        docker = importer.run(new NexusSource(URI.create(upstream), "docker-hosted", PullThroughCache.http()), store);
-        raw = importer.run(new NexusSource(URI.create(upstream), "raw-hosted", PullThroughCache.http()), store);
-        npm = importer.run(new NexusSource(URI.create(upstream), "npm-hosted", PullThroughCache.http()), store);
+        maven = importer.run(new NexusSource(URI.create(upstream), "maven-releases", new HttpFetcher()), store);
+        docker = importer.run(new NexusSource(URI.create(upstream), "docker-hosted", new HttpFetcher()), store);
+        raw = importer.run(new NexusSource(URI.create(upstream), "raw-hosted", new HttpFetcher()), store);
+        npm = importer.run(new NexusSource(URI.create(upstream), "npm-hosted", new HttpFetcher()), store);
 
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();

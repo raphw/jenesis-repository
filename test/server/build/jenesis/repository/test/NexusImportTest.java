@@ -1,7 +1,7 @@
 package build.jenesis.repository.test;
 
+import build.jenesis.repository.proxy.HttpFetcher;
 import build.jenesis.repository.importer.nexus.NexusSource;
-import build.jenesis.repository.server.PullThroughCache;
 import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.store.ArtifactStore;
@@ -96,7 +96,7 @@ public class NexusImportTest {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
                 key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
-        result = new RepositoryImport().run(new NexusSource(URI.create(nexus), "maven-releases", PullThroughCache.http())
+        result = new RepositoryImport().run(new NexusSource(URI.create(nexus), "maven-releases", new HttpFetcher())
                 .withCredentials("admin", password), store);
         running = RepositoryApplication.start(0);
         base = "http://localhost:" + running.port() + "/repository";

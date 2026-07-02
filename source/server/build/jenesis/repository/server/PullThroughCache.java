@@ -1,9 +1,6 @@
 package build.jenesis.repository.server;
 
 import module java.base;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
@@ -39,57 +36,6 @@ public final class PullThroughCache {
         if (deferred.missed() && !proxy.proxy(exchange, store, upstream, fetcher)) {
             exchange.respond(404);
         }
-    }
-
-    /** The default upstream fetch over HTTP: request headers are forwarded; the status and response headers are
-     *  returned. {@link ProxyFormat.Fetcher#download} is overridden to stream a download's body straight through
-     *  rather than buffer it, so a large artifact (a proxied blob or an import) copies from the network to storage
-     *  without materializing it; the caller acts on the status and closes the stream. */
-    public static ProxyFormat.Fetcher http() {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
-        return new ProxyFormat.Fetcher() {
-            @Override
-            public Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException {
-                HttpRequest.Builder request = HttpRequest.newBuilder(url).GET();
-                requestHeaders.forEach(request::header);
-                try {
-                    HttpResponse<byte[]> response = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
-                    Map<String, String> headers = new LinkedHashMap<>();
-                    response.headers().map().forEach((name, values) -> {
-                        if (!values.isEmpty()) {
-                            headers.put(name, values.getFirst());
-                        }
-                    });
-                    return Optional.of(new ProxyFormat.Fetched(response.statusCode(), response.body(), headers));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while proxying " + url, e);
-                }
-            }
-
-            @Override
-            public Optional<ProxyFormat.Download> download(URI url, Map<String, String> requestHeaders) throws IOException {
-                HttpRequest.Builder request = HttpRequest.newBuilder(url).GET();
-                requestHeaders.forEach(request::header);
-                try {
-                    HttpResponse<InputStream> response = client.send(
-                            request.build(), HttpResponse.BodyHandlers.ofInputStream());
-                    Map<String, String> headers = new LinkedHashMap<>();
-                    response.headers().map().forEach((name, values) -> {
-                        if (!values.isEmpty()) {
-                            headers.put(name, values.getFirst());
-                        }
-                    });
-                    return Optional.of(new ProxyFormat.Download(response.statusCode(), response.body(), headers));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while proxying " + url, e);
-                }
-            }
-        };
     }
 
     /**
