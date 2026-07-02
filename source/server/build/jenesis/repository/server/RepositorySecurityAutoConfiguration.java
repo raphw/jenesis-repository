@@ -27,7 +27,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class RepositorySecurityAutoConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(name = "repositoryAuthorizationManager")
     public RepositoryAuthorizationManager repositoryAuthorizationManager(Authorization authorization) {
         return new RepositoryAuthorizationManager(authorization);
     }
