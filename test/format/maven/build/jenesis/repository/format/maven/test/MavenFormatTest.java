@@ -61,6 +61,29 @@ class MavenFormatTest {
     }
 
     @Test
+    void describe_maps_a_maven_path_to_its_neutral_coordinate() {
+        assertThat(format.describe("/maven/org/example/lib/1.0/lib-1.0.jar")).hasValueSatisfying(descriptor -> {
+            assertThat(descriptor.ecosystem()).isEqualTo("maven");
+            assertThat(descriptor.coordinate()).isEqualTo("org.example:lib");
+            assertThat(descriptor.version()).isEqualTo("1.0");
+            assertThat(descriptor.prerelease()).isFalse();
+            assertThat(descriptor.path()).isEqualTo("/maven/org/example/lib/1.0/lib-1.0.jar");
+        });
+
+        assertThat(format.describe("/maven/org/example/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar"))
+                .hasValueSatisfying(descriptor -> assertThat(descriptor.prerelease())
+                        .as("a SNAPSHOT is a prerelease").isTrue());
+
+        assertThat(format.describe("/maven/org/example/lib/maven-metadata.xml"))
+                .as("generated metadata carries no coordinate to describe").isEmpty();
+    }
+
+    @Test
+    void paths_returns_the_maven_directory_a_version_occupies() {
+        assertThat(format.paths("org.example:lib", "1.0")).containsExactly("/maven/org/example/lib/1.0");
+    }
+
+    @Test
     void a_metadata_upload_is_dropped_and_generated_on_read() throws IOException {
         FakeExchange jar = new FakeExchange(
                 "PUT", "/maven/org/example/lib/1.0/lib-1.0.jar", "jar".getBytes(StandardCharsets.UTF_8));

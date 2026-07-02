@@ -10,4 +10,5 @@
 module build.jenesis.repository.store {
     exports build.jenesis.repository.store;
     uses build.jenesis.repository.store.ArtifactStoreProvider;
+    uses build.jenesis.repository.store.PublishInterceptor;
 }

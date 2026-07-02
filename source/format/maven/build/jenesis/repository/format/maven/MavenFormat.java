@@ -1,7 +1,10 @@
 package build.jenesis.repository.format.maven;
 
 import module java.base;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.PublishInterceptor;
+import build.jenesis.repository.format.ArtifactLayout;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
@@ -18,7 +21,7 @@ import build.jenesis.repository.store.ArtifactStore;
  * module name reaches the same blob - the bridge between the two layouts, exposed only between them and never on the
  * public SPI. Discovered like any other format; the core knows nothing of it.
  */
-public final class MavenFormat implements RepositoryFormat, ProxyFormat {
+public final class MavenFormat implements RepositoryFormat, ProxyFormat, ArtifactLayout {
 
     private static final List<ModuleView> MODULE_VIEWS = ServiceLoader.load(ModuleView.class)
             .stream().map(ServiceLoader.Provider::get).toList();
@@ -34,13 +37,45 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat {
     }
 
     @Override
+    public Optional<ArtifactDescriptor> describe(String path) {
+        return descriptor(path);
+    }
+
+    @Override
+    public List<String> paths(String coordinate, String version) {
+        int colon = coordinate.indexOf(':');
+        if (colon < 0) {
+            return List.of();
+        }
+        String group = coordinate.substring(0, colon).replace('.', '/');
+        String artifact = coordinate.substring(colon + 1);
+        return List.of("/maven/" + group + "/" + artifact + "/" + version);
+    }
+
+    /** The neutral descriptor of a {@code /maven/...} path, or empty for generated metadata (nothing to describe): a
+     *  full coordinate maps to {@code group:artifact} + version, and this is the one place the {@code -SNAPSHOT}
+     *  prerelease rule lives; a path that is not a full coordinate (a checksum root) carries the ecosystem only. */
+    private static Optional<ArtifactDescriptor> descriptor(String path) {
+        if (MavenMetadata.isMetadataRequest(path)) {
+            return Optional.empty();
+        }
+        String[] coordinate = JavaLayout.mavenCoordinate(path);
+        if (coordinate == null) {
+            return Optional.of(ArtifactDescriptor.at("maven", path));
+        }
+        return Optional.of(new ArtifactDescriptor("maven", coordinate[0] + ":" + coordinate[1], coordinate[2],
+                path, null, coordinate[2].endsWith("-SNAPSHOT"), null, -1L));
+    }
+
+    @Override
     public void handle(FormatExchange exchange, ArtifactStore store) throws IOException {
         String path = exchange.path();
         if (exchange.method().equals("PUT")) {
-            if (!MavenMetadata.isMetadataRequest(path)) {
-                publish(store, path, exchange.requestStream());
+            if (MavenMetadata.isMetadataRequest(path)) {
+                exchange.respond(201);
+                return;
             }
-            exchange.respond(201);
+            exchange.respond(status(publish(store, path, exchange.requestStream()).disposition()));
             return;
         }
         Optional<byte[]> generated = new MavenMetadata(store).serve(path);
@@ -58,27 +93,41 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat {
         }
     }
 
-    /** Store the artifact (streamed straight to storage), and if it is a modular jar, cross-publish its module view
-     *  through the Jenesis layout - reading the module name back from the just-stored blob rather than buffering the
-     *  jar in memory to inspect it. */
-    static void publish(ArtifactStore store, String path, InputStream body) throws IOException {
+    /** Store the artifact through the gated {@link Publication#publish} (streamed straight to storage, then the upload
+     *  post-processing chain decides accept/quarantine/reject), and - only when it is accepted and is a modular jar -
+     *  cross-publish its module view through the Jenesis layout, reading the module name back from the just-stored blob
+     *  rather than buffering the jar in memory. A quarantined or rejected jar never gains a module-view pointer, so it
+     *  does not resolve by module name either. Returns the publish outcome so the caller maps it to an HTTP status. */
+    static Publication.Published publish(ArtifactStore store, String path, InputStream body) throws IOException {
         Publication publication = new Publication(store);
-        String hash = publication.storeBlob(body);
-        publication.link(path, hash);
+        ArtifactDescriptor descriptor = descriptor(path).orElseGet(() -> ArtifactDescriptor.at("maven", path));
+        Publication.Published published = publication.publish(descriptor, body);
         String[] coordinate = JavaLayout.mavenCoordinate(path);
-        if (!path.endsWith(".jar") || coordinate == null) {
-            return;
+        if (published.disposition() != PublishInterceptor.Disposition.ACCEPT
+                || !path.endsWith(".jar") || coordinate == null) {
+            return published;
         }
         String module;
-        try (InputStream in = store.open("blobs/" + hash)) {
+        try (InputStream in = store.open("blobs/" + published.hash())) {
             module = JavaLayout.moduleName(in);
         }
         if (module == null) {
-            return;
+            return published;
         }
         for (ModuleView view : MODULE_VIEWS) {
-            view.publish(module, coordinate[2], hash, store);
+            view.publish(module, coordinate[2], published.hash(), store);
         }
+        return published;
+    }
+
+    /** Map an upload disposition to the HTTP status a client sees: accepted is a created, quarantined is accepted (held
+     *  for review), rejected is unprocessable. With the default empty interceptor chain this is always 201. */
+    private static int status(PublishInterceptor.Disposition disposition) {
+        return switch (disposition) {
+            case ACCEPT -> 201;
+            case QUARANTINE -> 202;
+            case REJECT -> 422;
+        };
     }
 
     /**
