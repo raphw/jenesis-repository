@@ -180,8 +180,8 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         }
         String rest = path.substring("/maven/".length());
         String root = upstream.toString();
-        Optional<ProxyFormat.Download> fetched = fetcher.download(
-                URI.create(root.endsWith("/") ? root + rest : root + "/" + rest), Map.of());
+        String prefix = root.endsWith("/") ? root : root + "/";
+        Optional<ProxyFormat.Download> fetched = fetcher.download(URI.create(prefix + rest), Map.of());
         if (fetched.isEmpty()) {
             return false;
         }
@@ -189,9 +189,50 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
             if (download.status() != 200) {
                 return false;
             }
-            publish(store, path, download.body());
+            if (isChecksum(rest)) {
+                publish(store, path, download.body());
+            } else {
+                // Verify a proxied artifact against the upstream-published SHA-1, so a body corrupted or tampered
+                // between the upstream and here is never left cached and served. The digest is computed as the blob
+                // streams to storage; the tiny checksum sibling is fetched afterwards, so it never delays the artifact.
+                MessageDigest sha1 = sha1();
+                publish(store, path, new DigestInputStream(download.body(), sha1));
+                String expected = upstreamSha1(fetcher, URI.create(prefix + rest + ".sha1"));
+                if (expected != null && !expected.equalsIgnoreCase(HexFormat.of().formatHex(sha1.digest()))) {
+                    new Publication(store).unpublish(path);
+                    return false;
+                }
+            }
         }
         handle(exchange, store);
         return true;
+    }
+
+    /** A Maven checksum or signature sibling - itself the integrity token, so it is proxied as-is, not re-verified. */
+    private static boolean isChecksum(String rest) {
+        return rest.endsWith(".sha1") || rest.endsWith(".md5") || rest.endsWith(".sha256")
+                || rest.endsWith(".sha512") || rest.endsWith(".asc");
+    }
+
+    private static MessageDigest sha1() {
+        try {
+            return MessageDigest.getInstance("SHA-1");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** The upstream SHA-1 for an artifact, read from its {@code .sha1} sibling (the 40-hex digest, optionally followed
+     *  by a filename); {@code null} when the upstream publishes none, so an artifact without a checksum is proxied
+     *  unverified rather than refused. */
+    private static String upstreamSha1(ProxyFormat.Fetcher fetcher, URI sha1) throws IOException {
+        Optional<ProxyFormat.Fetched> response = fetcher.fetch(sha1, Map.of());
+        if (response.isEmpty() || response.get().status() != 200) {
+            return null;
+        }
+        String body = new String(response.get().body(), StandardCharsets.UTF_8).trim();
+        int space = body.indexOf(' ');
+        String hex = space > 0 ? body.substring(0, space) : body;
+        return hex.length() == 40 && hex.chars().allMatch(c -> Character.digit(c, 16) >= 0) ? hex : null;
     }
 }

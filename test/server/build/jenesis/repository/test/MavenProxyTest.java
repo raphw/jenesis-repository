@@ -76,12 +76,13 @@ public class MavenProxyTest {
         HttpResponse<byte[]> first = get(ARTIFACT);
         assertThat(first.statusCode()).as("proxied from Central").isEqualTo(200);
         assertThat(new String(first.body(), StandardCharsets.UTF_8)).contains("commons-lang3");
-        assertThat(fetches.get()).as("the first read fetches from Central").isEqualTo(1);
+        assertThat(fetches.get()).as("the first read fetches the artifact and its checksum for verification")
+                .isEqualTo(2);
 
         HttpResponse<byte[]> second = get(ARTIFACT);
         assertThat(second.statusCode()).isEqualTo(200);
         assertThat(second.body()).isEqualTo(first.body());
-        assertThat(fetches.get()).as("the cached read does not touch Central").isEqualTo(1);
+        assertThat(fetches.get()).as("the cached read does not touch Central").isEqualTo(2);
 
         assertThat(get("/maven/org/apache/commons/commons-lang3/0.0.0-none/commons-lang3-0.0.0-none.pom")
                 .statusCode()).as("an artifact absent upstream is a 404").isEqualTo(404);
