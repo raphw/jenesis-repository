@@ -19,10 +19,11 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A client {@code Range} request over a served artifact is honoured format-agnostically at the serving layer: a full
- * serve advertises {@code Accept-Ranges}, a satisfiable range is {@code 206} with a {@code Content-Range} and just the
- * requested bytes, a suffix range returns the tail, and an out-of-bounds range is {@code 416} - so a large-artifact
- * download is resumable, whichever format served it (proven here through the raw format over the real application).
+ * Range and conditional requests, honoured format-agnostically at the serving layer over the raw format on the real
+ * application: a {@code Range} over a streamed artifact is {@code 206} with a {@code Content-Range} and just the
+ * requested bytes (a suffix range returns the tail, an out-of-bounds range is {@code 416}), so a large download is
+ * resumable; and a buffered index carries an {@code ETag} of its bytes so a matching {@code If-None-Match} revalidates
+ * to {@code 304}, so a client re-downloads a mutable index it already has only when it has actually changed.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class RangeRequestTest {
@@ -100,6 +101,25 @@ public class RangeRequestTest {
         HttpResponse<byte[]> get = get("rows=1-2");
         assertThat(get.statusCode()).isEqualTo(200);
         assertThat(get.body()).isEqualTo(BODY);
+    }
+
+    @Test
+    public void a_buffered_index_carries_an_etag_and_304s_when_unchanged() throws Exception {
+        HttpResponse<byte[]> first = client.send(HttpRequest.newBuilder(URI.create(base + "/raw/dir/"))
+                .GET().build(), BodyHandlers.ofByteArray());
+        assertThat(first.statusCode()).isEqualTo(200);
+        String etag = first.headers().firstValue("ETag").orElseThrow();
+        assertThat(etag).startsWith("\"").endsWith("\"");
+
+        HttpResponse<byte[]> revalidate = client.send(HttpRequest.newBuilder(URI.create(base + "/raw/dir/"))
+                .header("If-None-Match", etag).GET().build(), BodyHandlers.ofByteArray());
+        assertThat(revalidate.statusCode()).as("an unchanged index is not re-sent").isEqualTo(304);
+        assertThat(revalidate.body()).isEmpty();
+
+        HttpResponse<byte[]> stale = client.send(HttpRequest.newBuilder(URI.create(base + "/raw/dir/"))
+                .header("If-None-Match", "\"0000\"").GET().build(), BodyHandlers.ofByteArray());
+        assertThat(stale.statusCode()).as("a non-matching validator gets the full body").isEqualTo(200);
+        assertThat(stale.body()).isEqualTo(first.body());
     }
 
     private HttpResponse<byte[]> get(String range) throws Exception {
