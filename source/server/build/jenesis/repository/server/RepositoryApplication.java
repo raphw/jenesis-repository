@@ -18,7 +18,7 @@ import java.util.Map;
  * module only assembles it behind Spring MVC ({@link RepositoryController}), wires the beans
  * ({@link RepositoryAutoConfiguration}) and gates the wire with Spring Security
  * ({@link RepositorySecurityAutoConfiguration}). Every bean is published as {@code @ConditionalOnMissingBean}
- * auto-configuration, so an enterprise edition consumes this module and extends it by overriding beans rather than
+ * auto-configuration, so a consumer extends this module by overriding beans rather than
  * forking it; this class is a plain {@code @EnableAutoConfiguration} launcher rather than a component-scanning
  * {@code @SpringBootApplication}, so the module carries no beans that a consumer cannot override. The storage backend
  * is selected by {@code jenesis.repository.store} through {@code ArtifactStoreProvider} (ServiceLoader, filesystem

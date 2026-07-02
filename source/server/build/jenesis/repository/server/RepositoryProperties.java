@@ -9,7 +9,7 @@ import java.util.Map;
 /**
  * The configuration of the Spring repository server, bound from {@code jenesis.repository.*}: the artifact-store
  * backend name ({@code filesystem} by default, chosen through {@code ArtifactStoreProvider}), whether the wire is
- * gated by the {@link Authorization} credential model (anonymous by default, the headless free deployment), an
+ * gated by the {@link Authorization} credential model (anonymous by default, the headless deployment), an
  * optional repository-wide storage {@link #getQuota() quota}, and the pull-through {@link #getProxy() proxy}
  * upstreams keyed by format name ({@code jenesis.repository.proxy.<format>}), so a format that is a
  * {@link build.jenesis.repository.format.ProxyFormat} serves a local miss from the upstream.

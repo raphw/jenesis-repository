@@ -10,10 +10,9 @@ them by module name). Publish a module once and the server **computes its POM an
 very same store.
 
 It is **free and open**, and **extensible by design**: every layout it speaks - the
-Maven layout, the module layout, OCI/Docker - and every storage backend, importer and
-console panel is a `ServiceLoader` plug-in over one content-addressed store, with no
-core to fork (see *Extensible by design*, below). It may be accompanied by a commercial
-offering in the future that builds on these same extension points.
+Maven layout, the module layout, OCI/Docker, the raw layout - and every storage backend,
+importer and console panel is a `ServiceLoader` plug-in over one content-addressed store,
+with no core to fork (see *Extensible by design*, below).
 
 A container registry, too
 -------------------------
@@ -47,8 +46,8 @@ with `ServiceLoader`. There is no central table of formats to edit and no core t
 a deployment simply runs whichever plug-ins are on its module path:
 
  - **Repository formats** (`RepositoryFormat`) - the wire protocol of one client
-   ecosystem. Maven and OCI/Docker ship in the core; another ecosystem (npm, PyPI,
-   NuGet, ...) is one more module.
+   ecosystem. The Maven layout, the Jenesis module layout, OCI/Docker and a raw/generic
+   layout ship as modules; another ecosystem (npm, PyPI, NuGet, ...) is one more.
  - **Storage backends** (`ArtifactStoreProvider`, returning an `ArtifactStore`) -
    filesystem, S3 / GCS / MinIO and Azure Blob ship in the core; a new backend is a
    single provider.
@@ -237,14 +236,15 @@ plug in through the console's extension points without forking the core.
 |--------|--------|------------|
 | `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through. `java.base` only, so a format plugin builds on it without pulling in the server. |
 | `build.jenesis.repository.store.filesystem` | `source/store/filesystem` | The default filesystem backend: blobs under a mounted root (`JENESIS_STORE_ROOT`), the provider `ArtifactStoreProvider.resolve` falls back to when no other backend is named. `provides` its `ArtifactStoreProvider`, discovered with `ServiceLoader`; the store SPI + `java.base` only. |
-| `build.jenesis.repository.store.s3`       | `source/store/s3`         | S3-compatible backend (AWS SDK v2). `JENESIS_STORE=s3`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
-| `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). `JENESIS_STORE=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
+| `build.jenesis.repository.store.s3`       | `source/store/s3`         | S3-compatible backend (AWS SDK v2). Selected with `jenesis.repository.store=s3` and `JENESIS_AWS_BUCKET`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
+| `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). Selected with `jenesis.repository.store=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
 | `build.jenesis.repository.format`   | `source/format/spi`          | The `RepositoryFormat` SPI + the framework-neutral `FormatExchange`. A layout is a module that depends only on this and `provides RepositoryFormat`; the dispatcher discovers them with `ServiceLoader`, so formats plug in without the core knowing them. `java.base` + the store SPI only. |
 | `build.jenesis.repository.format.java`     | `source/format/java`         | The shared Java repository-layout primitives the Maven and Jenesis layouts build on: reading a jar's module name and parsing a Maven request path (`JavaLayout`). It also carries the cross-publish bridge (`ModuleView`) - exported *only* to those two modules, so cross-publishing stays off the public SPI. |
 | `build.jenesis.repository.format.maven`    | `source/format/maven`        | The Maven layout (`/repository/maven/...`): stores the blob, generates `maven-metadata.xml` on read, proxies Maven Central. When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
 | `build.jenesis.repository.format.jenesis`  | `source/format/jenesis`      | The Jenesis module layout (`/repository/module/...`, `/repository/artifact/...`): stores and serves modules over the same content-addressed blob. It `provides` the `ModuleView` the Maven layout uses to mirror a published modular jar in by module name; a module published here stays in the module layout (it is not mirrored back to Maven). |
 | `build.jenesis.repository.format.oci`      | `source/format/oci`          | The OCI / Docker registry format (`/v2/` Distribution API), so `docker push` / `docker pull` work over the same store. Self-contained (SPI + store only): an OCI `sha256:` digest *is* the content-addressed `blobs/<hex>` key, so layers, configs and manifests dedupe with everything else. |
-| `build.jenesis.repository.importer`   | `source/importer/spi`          | The import-source SPI - the read half of a migration. An `ImportSource` walks a foreign repository's assets; an `ImportSourceProvider` builds one for a named incumbent from an `ImportRequest`. A connector is a module that `provides` a provider, discovered with `ServiceLoader`, so the server supports another incumbent without knowing it. Carries a small hand-rolled `Json` so the import path needs no JSON library. |
+| `build.jenesis.repository.format.raw`      | `source/format/raw`          | The generic (raw) layout (`/repository/raw/...`): a plain content-addressed file store over the same `Publication` primitives - `PUT` stores a file, `GET` serves it back. It also `provides` a `RepositoryImporter`, so raw/generic assets migrate in alongside Maven and OCI. |
+| `build.jenesis.repository.importer`   | `source/importer/spi`          | The import-source SPI - the read half of a migration. An `ImportSource` walks a foreign repository's assets; an `ImportSourceProvider` builds one for a named incumbent from an `ImportRequest`. A connector is a module that `provides` a provider, discovered with `ServiceLoader`, so the server supports another incumbent without knowing it. A connector reads and writes its own JSON with Jackson. |
 | `build.jenesis.repository.importer.nexus`    | `source/importer/nexus`        | The Sonatype Nexus 3 connector: `provides` an `ImportSourceProvider` that pages the components REST API by continuation token (format reported per asset, so mixed repositories migrate in one pass). Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.artifactory` | `source/importer/artifactory` | The JFrog Artifactory connector: `provides` an `ImportSourceProvider` that reads the storage listing (a repository has one package type, supplied up front). Import SPI + format SPI only. |
 | `build.jenesis.repository.server`   | `source/server`       | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The optional pull-through proxy lives here; the content-addressed store (`Publication`) sits in the store module, the Maven and Jenesis layouts and their cross-publishing are plugin modules, and the import connectors are discovered the same way - so the server names no layout and no incumbent. Basic age/size retention. |
@@ -260,6 +260,14 @@ Build & run
     JENESIS_STORE_ROOT=/var/lib/jenesis-repository \
       java -Djenesis.execute.module=source+server build/jenesis/Execute.java
 
+The server `requires` no layout, backend or importer of its own (see *Extensible by design*):
+it discovers whatever layout modules, store backends, importers and the `ui` console are on its
+module path at startup, so a deployment selects the ones it wants alongside `source+server`.
+
+The web console is served at `/console` - browse and search artifacts, view repositories and their
+configuration. Sign-in is OAuth2 / OIDC; the `dev` profile (`SPRING_PROFILES_ACTIVE=dev`) swaps in a
+built-in `admin`/`admin` form login for local runs.
+
 A repository-wide storage cap is optional: `-Djenesis.repository.quota=10GB` (a byte count or a `K`/`M`/`G`/`T`
 suffix) refuses a new artifact once stored content reaches the limit, with `507 Insufficient Storage`. Only
 content blobs count; a deduped re-deploy of bytes already stored needs no new space.
@@ -270,7 +278,7 @@ anonymous bucket), and the Actuator probes are never throttled.
 
 A Jenesis build points at it with the existing knobs - no new client:
 
-    -Djenesis.module.uri=https://repo.example.com/ -Djenesis.module.token=<tenant>.<secret>
+    -Djenesis.module.uri=https://repo.example.com/repository/ -Djenesis.module.token=jenk_<tenant>.<secret>
     -Djenesis.maven.uri=https://repo.example.com/repository/maven/
 
 Importing from another repository

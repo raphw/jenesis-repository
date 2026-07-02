@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.ServiceLoader;
 
 /**
- * Publishes the free repository as Spring Boot auto-configuration so an enterprise edition can consume it with a plain
+ * Publishes the repository as Spring Boot auto-configuration so a downstream distribution can consume it with a plain
  * {@code requires build.jenesis.repository.server} and extend it by overriding beans rather than forking the module.
  * Every bean is {@link ConditionalOnMissingBean conditional}: the storage backend (a name resolved through
  * {@code ArtifactStoreProvider}), the {@link Authorization} (enforcing when {@code jenesis.repository.auth} is set,
@@ -31,8 +31,7 @@ import java.util.ServiceLoader;
  * single-tenant default), and the {@link RepositoryController} itself. Because an auto-configuration is applied after
  * user configuration, a bean an embedder contributes - an audited or replicating {@link ArtifactStore} decorator, a
  * multi-tenant {@code RepositoryRouting}, a custom controller - wins, and this backs off. Every bean is plain domain
- * code; Spring only assembles it. No compliance, staging, cleanup, routing or download tracking - those are
- * enterprise-only.
+ * code; Spring only assembles it.
  */
 @AutoConfiguration
 @EnableConfigurationProperties(RepositoryProperties.class)

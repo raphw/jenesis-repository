@@ -21,8 +21,8 @@ import java.util.List;
  * wired here. Any write ({@code POST}/{@code PUT}/{@code DELETE}) needs the {@code ADMIN} role; reads need any
  * authenticated user. With no contributor present, login is disabled - the app still starts and shows a "not
  * configured" notice on {@code /login}. The chain is {@code @Profile("!dev")}; the {@code dev} profile's
- * {@link DevSecurityConfig} replaces it with local form login, and an enterprise edition replaces it by contributing
- * its own {@link SecurityFilterChain}.
+ * {@link DevSecurityConfig} replaces it with local form login, and a downstream deployment can replace it by
+ * contributing its own {@link SecurityFilterChain}.
  */
 @Configuration
 @EnableWebSecurity

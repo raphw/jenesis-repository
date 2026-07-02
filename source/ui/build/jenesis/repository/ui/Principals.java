@@ -13,9 +13,9 @@ import java.util.stream.Collectors;
 /**
  * The single-tenant authority model: every signed-in user is a {@code USER}; a user whose provider-qualified id
  * ({@code github/<id>}, {@code oidc/<sub>}) is in the configured {@code jenesis.ui.admins} list - or every user when
- * that list is empty - is also an {@code ADMIN} (so the free console is open to whoever signs in unless admins are
- * named). An enterprise console replaces this with its own tenant-and-role membership model by contributing its own
- * bean; the seam is the same. This deliberately does not carry the enterprise multi-tenant machinery.
+ * that list is empty - is also an {@code ADMIN} (so the console is open to whoever signs in unless admins are
+ * named). A deployment that needs a richer tenant-and-role membership model replaces this by contributing its own
+ * bean; the seam is the same. This deliberately stays single-tenant and carries no multi-tenant machinery.
  */
 public class Principals {
 

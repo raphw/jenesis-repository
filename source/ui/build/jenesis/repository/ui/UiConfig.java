@@ -15,8 +15,8 @@ import java.util.ServiceLoader;
  * Bridges the framework-neutral console primitives into Spring: the {@link Panel} plugins (discovered with
  * {@code ServiceLoader}, exactly as the repository server discovers its formats), the {@link ArtifactStore} the panels
  * read (the same backend the server writes, selected by name through {@code ArtifactStoreProvider}), and the
- * {@link Principals} authority model. Each bean is {@link ConditionalOnMissingBean conditional}, so an enterprise
- * console that contributes its own store, panel set or authority model overrides the default and this backs off.
+ * {@link Principals} authority model. Each bean is {@link ConditionalOnMissingBean conditional}, so a deployment
+ * that contributes its own store, panel set or authority model overrides the default and this backs off.
  */
 @Configuration(proxyBeanMethods = false)
 public class UiConfig {
