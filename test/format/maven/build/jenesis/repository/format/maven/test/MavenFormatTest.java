@@ -63,7 +63,7 @@ class MavenFormatTest {
     @Test
     void describe_maps_a_maven_path_to_its_neutral_coordinate() {
         assertThat(format.describe("/maven/org/example/lib/1.0/lib-1.0.jar")).hasValueSatisfying(descriptor -> {
-            assertThat(descriptor.ecosystem()).isEqualTo("maven");
+            assertThat(descriptor.ecosystem()).isEqualTo("Maven");
             assertThat(descriptor.coordinate()).isEqualTo("org.example:lib");
             assertThat(descriptor.version()).isEqualTo("1.0");
             assertThat(descriptor.prerelease()).isFalse();
@@ -81,6 +81,26 @@ class MavenFormatTest {
     @Test
     void paths_returns_the_maven_directory_a_version_occupies() {
         assertThat(format.paths("org.example:lib", "1.0", store)).containsExactly("/maven/org/example/lib/1.0");
+    }
+
+    @Test
+    void paths_also_resolves_the_module_mirror_of_a_published_modular_jar() throws IOException {
+        format.handle(new FakeExchange("PUT", "/maven/org/example/lib/1.0/lib-1.0.jar",
+                automaticModuleJar("org.example.lib")), store);
+
+        assertThat(format.paths("org.example:lib", "1.0", store))
+                .containsExactlyInAnyOrder("/maven/org/example/lib/1.0", "/module/org.example.lib/1.0");
+    }
+
+    private static byte[] automaticModuleJar(String moduleName) throws IOException {
+        java.util.jar.Manifest manifest = new java.util.jar.Manifest();
+        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
+        manifest.getMainAttributes().putValue("Automatic-Module-Name", moduleName);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.jar.JarOutputStream jar = new java.util.jar.JarOutputStream(bytes, manifest)) {
+            jar.flush();
+        }
+        return bytes.toByteArray();
     }
 
     @Test
