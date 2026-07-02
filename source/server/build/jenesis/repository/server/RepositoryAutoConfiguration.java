@@ -83,8 +83,12 @@ public class RepositoryAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ProxyFormat.Fetcher fetcher() {
-        return PullThroughCache.http();
+    public ProxyFormat.Fetcher fetcher(RepositoryProperties properties) {
+        ProxyFormat.Fetcher http = PullThroughCache.http();
+        java.time.Duration ttl = properties.getProxyMissTtl();
+        return ttl != null && ttl.compareTo(java.time.Duration.ZERO) > 0
+                ? new NegativeCachingFetcher(http, ttl)
+                : http;
     }
 
     @Bean
