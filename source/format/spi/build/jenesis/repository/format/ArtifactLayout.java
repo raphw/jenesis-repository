@@ -1,6 +1,7 @@
 package build.jenesis.repository.format;
 
 import build.jenesis.repository.store.ArtifactDescriptor;
+import build.jenesis.repository.store.ArtifactStore;
 
 import java.util.List;
 import java.util.Optional;
@@ -21,8 +22,9 @@ public interface ArtifactLayout {
      *  when the path carries no coordinate to describe (generated metadata, a directory). Derived from the path only. */
     Optional<ArtifactDescriptor> describe(String path);
 
-    /** The request-path directory prefixes a coordinate version occupies across this format's layouts, so a cleanup
-     *  pass can enumerate and unpublish every pointer under them from the coordinate alone - no layout knowledge in the
-     *  caller. Empty when the coordinate maps nowhere. */
-    List<String> paths(String coordinate, String version);
+    /** The request-path directory prefixes a coordinate version occupies across this format's layouts, resolved
+     *  against {@code store} so a format can include a cross-published mirror it recorded (a Maven module view found
+     *  through the format's own index), so a cleanup pass enumerates and unpublishes every pointer under them from the
+     *  coordinate alone - no layout knowledge in the caller. Empty when the coordinate maps nowhere. */
+    List<String> paths(String coordinate, String version, ArtifactStore store);
 }
