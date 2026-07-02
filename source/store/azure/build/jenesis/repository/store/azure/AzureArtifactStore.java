@@ -7,8 +7,10 @@ import com.azure.core.util.Context;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.models.BlobDownloadContentResponse;
 import com.azure.storage.blob.models.BlobItem;
+import com.azure.storage.blob.models.BlobRange;
 import com.azure.storage.blob.models.BlobRequestConditions;
 import com.azure.storage.blob.models.BlobStorageException;
+import com.azure.storage.blob.options.BlobInputStreamOptions;
 import com.azure.storage.blob.options.BlockBlobSimpleUploadOptions;
 import com.azure.storage.blob.specialized.BlobOutputStream;
 import com.azure.storage.blob.specialized.BlockBlobClient;
@@ -64,7 +66,14 @@ public final class AzureArtifactStore implements ArtifactStore {
     @Override
     public void read(String key, OutputStream out) throws IOException {
         try {
-            container.getBlobClient(keyPrefix + key).downloadStream(out);
+            if (out instanceof ArtifactStore.RangedSink ranged) {
+                try (InputStream in = container.getBlobClient(keyPrefix + key).openInputStream(
+                        new BlobInputStreamOptions().setRange(new BlobRange(ranged.offset(), ranged.length())))) {
+                    in.transferTo(ranged.sink());
+                }
+            } else {
+                container.getBlobClient(keyPrefix + key).downloadStream(out);
+            }
         } catch (BlobStorageException e) {
             throw new IOException("Could not read " + key, e);
         }

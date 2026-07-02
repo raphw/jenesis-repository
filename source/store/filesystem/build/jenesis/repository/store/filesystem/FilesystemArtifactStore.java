@@ -39,7 +39,12 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     @Override
     public void read(String key, OutputStream out) throws IOException {
         try (InputStream in = Files.newInputStream(resolve(key))) {
-            in.transferTo(out);
+            if (out instanceof ArtifactStore.RangedSink ranged) {
+                in.skipNBytes(ranged.offset());
+                ArtifactStore.copy(in, ranged.sink(), ranged.length());
+            } else {
+                in.transferTo(out);
+            }
         }
     }
 
