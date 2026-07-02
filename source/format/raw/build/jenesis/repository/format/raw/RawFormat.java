@@ -1,7 +1,9 @@
 package build.jenesis.repository.format.raw;
 
 import module java.base;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.PublishInterceptor;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
@@ -35,10 +37,8 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         Publication publication = new Publication(store);
         String path = exchange.path();
         switch (exchange.method()) {
-            case "PUT" -> {
-                publication.link(path, publication.storeBlob(exchange.requestStream()));
-                exchange.respond(201);
-            }
+            case "PUT" -> exchange.respond(status(
+                    publication.publish(ArtifactDescriptor.at("raw", path), exchange.requestStream()).disposition()));
             case "DELETE" -> {
                 publication.unpublish(path);
                 exchange.respond(204);
@@ -85,6 +85,16 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         }
         handle(exchange, store);
         return true;
+    }
+
+    /** Map an upload disposition to the HTTP status a client sees: accepted is a created, quarantined is accepted (held
+     *  for review), rejected is unprocessable. With the default empty interceptor chain this is always 201. */
+    private static int status(PublishInterceptor.Disposition disposition) {
+        return switch (disposition) {
+            case ACCEPT -> 201;
+            case QUARANTINE -> 202;
+            case REJECT -> 422;
+        };
     }
 
     private void listing(String path, ArtifactStore store, FormatExchange exchange) throws IOException {
