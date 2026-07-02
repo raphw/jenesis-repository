@@ -68,4 +68,35 @@ public interface ArtifactStore {
      * is how {@code maven-metadata.xml} stays consistent under concurrent deploys without a lock or database.
      */
     boolean writeVersioned(String key, byte[] content, Object expected) throws IOException;
+
+    /**
+     * A {@link OutputStream} that wants only a window of a blob: a {@link #read} target a backend recognizes to
+     * seek to {@link #offset()} and write {@link #length()} bytes to {@link #sink()} - a ranged {@code GET} on S3
+     * or Azure, a channel seek on the filesystem - rather than reading the whole blob and discarding the rest.
+     * The serving layer wraps a client {@code Range} request in one; a store that does not recognize it just
+     * writes the whole blob, and the stream forwards only the window, so the result is correct either way, only
+     * not seeked. A decorating store (quota, content-addressing) passes {@code out} through unchanged, so the
+     * capability reaches the leaf backend.
+     */
+    interface RangedSink {
+        long offset();
+
+        long length();
+
+        OutputStream sink();
+    }
+
+    /** Copy exactly {@code length} bytes from {@code in} to {@code out}. */
+    static void copy(InputStream in, OutputStream out, long length) throws IOException {
+        byte[] buffer = new byte[8192];
+        long remaining = length;
+        while (remaining > 0) {
+            int read = in.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+            if (read < 0) {
+                break;
+            }
+            out.write(buffer, 0, read);
+            remaining -= read;
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package build.jenesis.repository.server;
 
 import build.jenesis.repository.format.FormatExchange;
+import build.jenesis.repository.store.ArtifactStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -188,17 +189,39 @@ public final class ServletFormatExchange implements FormatExchange {
     }
 
     /** Forwards only a window of the bytes written to it - skipping {@code start}, then passing {@code length} - so a
-     *  format that writes a whole artifact serves just the requested range without knowing a range was asked for. */
-    private static final class RangeOutputStream extends OutputStream {
+     *  format that writes a whole artifact serves just the requested range without knowing a range was asked for. It
+     *  is also an {@link ArtifactStore.RangedSink}, so a store that recognizes one seeks to the window and writes it
+     *  straight to {@link #sink()} instead, skipping the discarded read entirely; a store that does not just writes
+     *  the whole blob here and it is sliced. */
+    private static final class RangeOutputStream extends OutputStream implements ArtifactStore.RangedSink {
 
         private final OutputStream out;
+        private final long start;
+        private final long length;
         private long skip;
         private long remaining;
 
         private RangeOutputStream(OutputStream out, long start, long length) {
             this.out = out;
+            this.start = start;
+            this.length = length;
             this.skip = start;
             this.remaining = length;
+        }
+
+        @Override
+        public long offset() {
+            return start;
+        }
+
+        @Override
+        public long length() {
+            return length;
+        }
+
+        @Override
+        public OutputStream sink() {
+            return out;
         }
 
         @Override

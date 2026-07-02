@@ -64,8 +64,18 @@ public final class S3ArtifactStore implements ArtifactStore {
 
     @Override
     public void read(String key, OutputStream out) throws IOException {
-        try (ResponseInputStream<GetObjectResponse> in = s3.getObject(b -> b.bucket(bucket).key(keyPrefix + key))) {
-            in.transferTo(out);
+        try {
+            if (out instanceof ArtifactStore.RangedSink ranged) {
+                String range = "bytes=" + ranged.offset() + "-" + (ranged.offset() + ranged.length() - 1);
+                try (ResponseInputStream<GetObjectResponse> in = s3.getObject(
+                        b -> b.bucket(bucket).key(keyPrefix + key).range(range))) {
+                    in.transferTo(ranged.sink());
+                }
+            } else {
+                try (ResponseInputStream<GetObjectResponse> in = s3.getObject(b -> b.bucket(bucket).key(keyPrefix + key))) {
+                    in.transferTo(out);
+                }
+            }
         } catch (S3Exception e) {
             throw new IOException("Could not read " + key, e);
         }
