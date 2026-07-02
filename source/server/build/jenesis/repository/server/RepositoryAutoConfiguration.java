@@ -83,7 +83,7 @@ public class RepositoryAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(name = "fetcher")
+    @ConditionalOnMissingBean
     public ProxyFormat.Fetcher fetcher() {
         return PullThroughCache.http();
     }
@@ -103,7 +103,7 @@ public class RepositoryAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(name = "repositoryController")
     public RepositoryController repositoryController(RepositoryRouting routing,
                                                      FormatDispatcher dispatcher,
                                                      List<ImportSourceProvider> importSources,
