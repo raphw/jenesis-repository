@@ -13,8 +13,18 @@ import build.jenesis.repository.importer.ImportSourceProvider;
 public final class ArtifactorySourceProvider implements ImportSourceProvider {
 
     @Override
-    public boolean handles(String source) {
-        return "artifactory".equals(source);
+    public String name() {
+        return "artifactory";
+    }
+
+    @Override
+    public String label() {
+        return "Artifactory";
+    }
+
+    @Override
+    public boolean requiresFormat() {
+        return true;
     }
 
     @Override

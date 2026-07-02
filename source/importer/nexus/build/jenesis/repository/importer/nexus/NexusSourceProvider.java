@@ -13,8 +13,13 @@ import build.jenesis.repository.importer.ImportSourceProvider;
 public final class NexusSourceProvider implements ImportSourceProvider {
 
     @Override
-    public boolean handles(String source) {
-        return "nexus".equals(source);
+    public String name() {
+        return "nexus";
+    }
+
+    @Override
+    public String label() {
+        return "Nexus";
     }
 
     @Override
