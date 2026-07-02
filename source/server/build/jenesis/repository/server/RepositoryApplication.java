@@ -2,7 +2,8 @@ package build.jenesis.repository.server;
 
 import build.jenesis.repository.format.ProxyFormat;
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -14,11 +15,17 @@ import java.util.Map;
  * The Spring Boot entry point for the dual-layout repository. The framework-neutral logic - the dual layout, the
  * {@link Authorization} credential model, the {@link build.jenesis.repository.format.RepositoryFormat} plugins, the
  * pull-through {@link PullThroughCache} proxy and the {@link ImportJobs} migration - is plain domain code; this
- * module only assembles it behind Spring MVC ({@link RepositoryController}), wires the beans ({@link RepositoryConfig})
- * and gates the wire with Spring Security ({@link SecurityConfig}). The storage backend is selected by
- * {@code jenesis.repository.store} through {@code ArtifactStoreProvider} (ServiceLoader, filesystem fallback).
+ * module only assembles it behind Spring MVC ({@link RepositoryController}), wires the beans
+ * ({@link RepositoryAutoConfiguration}) and gates the wire with Spring Security
+ * ({@link RepositorySecurityAutoConfiguration}). Every bean is published as {@code @ConditionalOnMissingBean}
+ * auto-configuration, so an enterprise edition consumes this module and extends it by overriding beans rather than
+ * forking it; this class is a plain {@code @EnableAutoConfiguration} launcher rather than a component-scanning
+ * {@code @SpringBootApplication}, so the module carries no beans that a consumer cannot override. The storage backend
+ * is selected by {@code jenesis.repository.store} through {@code ArtifactStoreProvider} (ServiceLoader, filesystem
+ * fallback).
  */
-@SpringBootApplication
+@SpringBootConfiguration
+@EnableAutoConfiguration
 public class RepositoryApplication {
 
     public static void main(String[] args) {
@@ -46,7 +53,8 @@ public class RepositoryApplication {
      * Boot the server proxying a local miss to the given upstreams (format name to upstream URI) through the given
      * {@link ProxyFormat.Fetcher} (the default HTTP fetch when {@code null}). The upstreams and fetcher are
      * registered as the {@code upstreams} and {@code fetcher} beans before refresh, overriding the property-driven
-     * defaults in {@link RepositoryConfig}, so a test can supply a fixed upstream and a counting or fake fetcher.
+     * defaults in {@link RepositoryAutoConfiguration}, so a test can supply a fixed upstream and a counting or fake
+     * fetcher.
      */
     public static Running start(int port, Map<String, URI> upstreams, ProxyFormat.Fetcher fetcher) {
         Map<String, URI> copy = Map.copyOf(upstreams);

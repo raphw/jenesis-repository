@@ -1,0 +1,2 @@
+build.jenesis.repository.server.RepositoryAutoConfiguration
+build.jenesis.repository.server.RepositorySecurityAutoConfiguration
