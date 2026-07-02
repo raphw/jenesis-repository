@@ -62,12 +62,125 @@ public final class ServletFormatExchange implements FormatExchange {
         response.setHeader(name, value);
     }
 
+    /**
+     * Honour a client {@code Range} request over any artifact a format serves, format-agnostically: a served
+     * {@code 200} with a known length advertises {@code Accept-Ranges: bytes}, and a satisfiable {@code Range} is
+     * answered {@code 206 Partial Content} with a {@code Content-Range} and only the requested bytes forwarded (the
+     * format still writes the whole body; this slices it), so a large-artifact download is resumable. A syntactically
+     * valid but out-of-bounds range is a {@code 416}; an unsupported or malformed one is ignored and the full body is
+     * served. The format is oblivious - it calls {@code respond(200, length)} either way.
+     */
     @Override
     public OutputStream respond(int status, long contentLength) throws IOException {
+        if (status == 200 && contentLength >= 0) {
+            response.setHeader("Accept-Ranges", "bytes");
+            String header = request.getHeader("Range");
+            long[] range = header == null ? null : satisfiableRange(header, contentLength);
+            if (range == UNSATISFIABLE) {
+                response.setStatus(416);
+                response.setHeader("Content-Range", "bytes */" + contentLength);
+                return OutputStream.nullOutputStream();
+            }
+            if (range != null) {
+                response.setStatus(206);
+                response.setHeader("Content-Range", "bytes " + range[0] + "-" + range[1] + "/" + contentLength);
+                response.setContentLengthLong(range[1] - range[0] + 1);
+                return new RangeOutputStream(response.getOutputStream(), range[0], range[1] - range[0] + 1);
+            }
+        }
         response.setStatus(status);
         if (contentLength > 0) {
             response.setContentLengthLong(contentLength);
         }
         return response.getOutputStream();
+    }
+
+    private static final long[] UNSATISFIABLE = new long[0];
+
+    /** Parse a single-range {@code Range: bytes=...} against the content length: {@code [start, end]} inclusive for a
+     *  satisfiable range, {@link #UNSATISFIABLE} for a valid-but-out-of-bounds one ({@code 416}), or {@code null} to
+     *  ignore (an unsupported unit, a multipart range, or a malformed one - the full body is served). */
+    private static long[] satisfiableRange(String header, long length) {
+        if (!header.startsWith("bytes=")) {
+            return null;
+        }
+        String spec = header.substring("bytes=".length()).trim();
+        int dash = spec.indexOf('-');
+        if (spec.isEmpty() || spec.indexOf(',') >= 0 || dash < 0) {
+            return null;
+        }
+        String from = spec.substring(0, dash).trim();
+        String to = spec.substring(dash + 1).trim();
+        try {
+            long start;
+            long end;
+            if (from.isEmpty()) {
+                long suffix = Long.parseLong(to);
+                if (suffix <= 0) {
+                    return UNSATISFIABLE;
+                }
+                start = Math.max(0, length - suffix);
+                end = length - 1;
+            } else {
+                start = Long.parseLong(from);
+                end = to.isEmpty() ? length - 1 : Math.min(Long.parseLong(to), length - 1);
+            }
+            if (start < 0 || start >= length || start > end) {
+                return UNSATISFIABLE;
+            }
+            return new long[]{start, end};
+        } catch (NumberFormatException _) {
+            return null;
+        }
+    }
+
+    /** Forwards only a window of the bytes written to it - skipping {@code start}, then passing {@code length} - so a
+     *  format that writes a whole artifact serves just the requested range without knowing a range was asked for. */
+    private static final class RangeOutputStream extends OutputStream {
+
+        private final OutputStream out;
+        private long skip;
+        private long remaining;
+
+        private RangeOutputStream(OutputStream out, long start, long length) {
+            this.out = out;
+            this.skip = start;
+            this.remaining = length;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            if (skip > 0) {
+                skip--;
+            } else if (remaining > 0) {
+                out.write(b);
+                remaining--;
+            }
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            if (skip > 0) {
+                long skipped = Math.min(skip, length);
+                skip -= skipped;
+                offset += (int) skipped;
+                length -= (int) skipped;
+            }
+            if (remaining > 0 && length > 0) {
+                int written = (int) Math.min(remaining, length);
+                out.write(bytes, offset, written);
+                remaining -= written;
+            }
+        }
+
+        @Override
+        public void flush() throws IOException {
+            out.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            out.close();
+        }
     }
 }
