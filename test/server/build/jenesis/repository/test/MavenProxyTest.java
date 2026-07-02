@@ -60,7 +60,7 @@ public class MavenProxyTest {
         };
         running = RepositoryApplication.start(0, Map.of("maven", URI.create(CENTRAL)), counting);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + running.port();
+        base = "http://localhost:" + running.port() + "/repository";
     }
 
     @AfterAll

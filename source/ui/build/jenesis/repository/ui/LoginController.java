@@ -31,7 +31,7 @@ public class LoginController {
     @GetMapping("/login")
     public String login(Authentication authentication, Model model) {
         if (authenticated(authentication)) {
-            return "redirect:/";
+            return "redirect:/console";
         }
         List<Map<String, String>> registrations = new ArrayList<>();
         if (clientRegistrations.getIfAvailable() instanceof Iterable<?> available) {

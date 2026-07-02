@@ -97,7 +97,7 @@ public class ConsoleE2ETest {
         String credentials = Base64.getEncoder()
                 .encodeToString("admin:admin".getBytes(StandardCharsets.UTF_8));
         HttpResponse<String> page = client.send(
-                HttpRequest.newBuilder(URI.create(base + "/"))
+                HttpRequest.newBuilder(URI.create(base + "/console"))
                         .header("Authorization", "Basic " + credentials).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(page.statusCode()).isEqualTo(200);

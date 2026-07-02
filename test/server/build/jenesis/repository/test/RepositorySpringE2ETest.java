@@ -60,12 +60,12 @@ public class RepositorySpringE2ETest {
     public void a_maven_artifact_round_trips_over_http() throws Exception {
         byte[] body = {1, 2, 3, 4};
         HttpResponse<byte[]> put = client.send(
-                HttpRequest.newBuilder(URI.create(base + "maven/org/example/spring/1/spring-1.jar"))
+                HttpRequest.newBuilder(URI.create(base + "repository/maven/org/example/spring/1/spring-1.jar"))
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(put.statusCode()).isEqualTo(201);
         HttpResponse<byte[]> get = client.send(
-                HttpRequest.newBuilder(URI.create(base + "maven/org/example/spring/1/spring-1.jar")).GET().build(),
+                HttpRequest.newBuilder(URI.create(base + "repository/maven/org/example/spring/1/spring-1.jar")).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(get.statusCode()).isEqualTo(200);
         assertThat(get.body()).isEqualTo(body);
@@ -95,20 +95,20 @@ public class RepositorySpringE2ETest {
             String enforcingBase = "http://localhost:" + enforcing.port() + "/";
 
             HttpResponse<byte[]> unkeyed = client.send(
-                    HttpRequest.newBuilder(URI.create(enforcingBase + "maven/org/example/auth/1/auth-1.jar"))
+                    HttpRequest.newBuilder(URI.create(enforcingBase + "repository/maven/org/example/auth/1/auth-1.jar"))
                             .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[]{9})).build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             assertThat(unkeyed.statusCode()).isIn(401, 403);
 
             HttpResponse<byte[]> keyedPut = client.send(
-                    HttpRequest.newBuilder(URI.create(enforcingBase + "maven/org/example/auth/1/auth-1.jar"))
+                    HttpRequest.newBuilder(URI.create(enforcingBase + "repository/maven/org/example/auth/1/auth-1.jar"))
                             .header("Jenesis-Repository-Key", ci)
                             .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[]{9})).build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             assertThat(keyedPut.statusCode()).isEqualTo(201);
 
             HttpResponse<byte[]> keyedGet = client.send(
-                    HttpRequest.newBuilder(URI.create(enforcingBase + "maven/org/example/auth/1/auth-1.jar"))
+                    HttpRequest.newBuilder(URI.create(enforcingBase + "repository/maven/org/example/auth/1/auth-1.jar"))
                             .header("Jenesis-Repository-Key", ci).GET().build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             assertThat(keyedGet.statusCode()).isEqualTo(200);

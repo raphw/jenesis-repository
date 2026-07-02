@@ -241,8 +241,8 @@ plug in through the console's extension points without forking the core.
 | `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). `JENESIS_STORE=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
 | `build.jenesis.repository.format`   | `source/format/spi`          | The `RepositoryFormat` SPI + the framework-neutral `FormatExchange`. A layout is a module that depends only on this and `provides RepositoryFormat`; the dispatcher discovers them with `ServiceLoader`, so formats plug in without the core knowing them. `java.base` + the store SPI only. |
 | `build.jenesis.repository.format.java`     | `source/format/java`         | The shared Java repository-layout primitives the Maven and Jenesis layouts build on: reading a jar's module name and parsing a Maven request path (`JavaLayout`). It also carries the cross-publish bridge (`ModuleView`) - exported *only* to those two modules, so cross-publishing stays off the public SPI. |
-| `build.jenesis.repository.format.maven`    | `source/format/maven`        | The Maven layout (`/maven/...`): stores the blob, generates `maven-metadata.xml` on read, proxies Maven Central. When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
-| `build.jenesis.repository.format.jenesis`  | `source/format/jenesis`      | The Jenesis module layout (`/module/...`, `/artifact/...`): stores and serves modules over the same content-addressed blob. It `provides` the `ModuleView` the Maven layout uses to mirror a published modular jar in by module name; a module published here stays in the module layout (it is not mirrored back to Maven). |
+| `build.jenesis.repository.format.maven`    | `source/format/maven`        | The Maven layout (`/repository/maven/...`): stores the blob, generates `maven-metadata.xml` on read, proxies Maven Central. When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
+| `build.jenesis.repository.format.jenesis`  | `source/format/jenesis`      | The Jenesis module layout (`/repository/module/...`, `/repository/artifact/...`): stores and serves modules over the same content-addressed blob. It `provides` the `ModuleView` the Maven layout uses to mirror a published modular jar in by module name; a module published here stays in the module layout (it is not mirrored back to Maven). |
 | `build.jenesis.repository.format.oci`      | `source/format/oci`          | The OCI / Docker registry format (`/v2/` Distribution API), so `docker push` / `docker pull` work over the same store. Self-contained (SPI + store only): an OCI `sha256:` digest *is* the content-addressed `blobs/<hex>` key, so layers, configs and manifests dedupe with everything else. |
 | `build.jenesis.repository.importer`   | `source/importer/spi`          | The import-source SPI - the read half of a migration. An `ImportSource` walks a foreign repository's assets; an `ImportSourceProvider` builds one for a named incumbent from an `ImportRequest`. A connector is a module that `provides` a provider, discovered with `ServiceLoader`, so the server supports another incumbent without knowing it. Carries a small hand-rolled `Json` so the import path needs no JSON library. |
 | `build.jenesis.repository.importer.nexus`    | `source/importer/nexus`        | The Sonatype Nexus 3 connector: `provides` an `ImportSourceProvider` that pages the components REST API by continuation token (format reported per asset, so mixed repositories migrate in one pass). Import SPI + format SPI only. |
@@ -271,7 +271,7 @@ anonymous bucket), and the Actuator probes are never throttled.
 A Jenesis build points at it with the existing knobs - no new client:
 
     -Djenesis.module.uri=https://repo.example.com/ -Djenesis.module.token=<tenant>.<secret>
-    -Djenesis.maven.uri=https://repo.example.com/maven/
+    -Djenesis.maven.uri=https://repo.example.com/repository/maven/
 
 Importing from another repository
 ---------------------------------
@@ -302,13 +302,13 @@ surfaces.
             new NexusSource(URI.create("https://nexus.example.com"), "maven-releases", PullThroughCache.http()),
             store);
 
-A migration is also launched on a running server and runs in the background: `POST /admin/import`
-(a `repository:write` operation) starts a job and returns its id; `GET /admin/import/<id>` reports its
+A migration is also launched on a running server and runs in the background: `POST /repository/admin/import`
+(a `repository:write` operation) starts a job and returns its id; `GET /repository/admin/import/<id>` reports its
 state and running counts. The job persists a resume cursor, so a `resume` naming a prior job continues the
 walk from where it stopped:
 
-    curl -X POST http://repo.example.com/admin/import -d \
+    curl -X POST http://repo.example.com/repository/admin/import -d \
       '{"source":"nexus","url":"https://nexus.example.com","repository":"maven-releases"}'
     # {"job":"a1b2...","state":"running"}
-    curl http://repo.example.com/admin/import/a1b2...
+    curl http://repo.example.com/repository/admin/import/a1b2...
     # {"state":"completed","imported":128,"skipped":0,"skippedFormats":[],"cursor":null}

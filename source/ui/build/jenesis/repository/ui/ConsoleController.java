@@ -26,7 +26,13 @@ public class ConsoleController {
         this.store = store;
     }
 
+    /** The root forwards to the console so a bare host lands on it, keeping {@code /} free of a functional route. */
     @GetMapping("/")
+    public String root() {
+        return "redirect:/console";
+    }
+
+    @GetMapping("/console")
     public String console(Model model) throws IOException {
         List<RenderedPanel> rendered = new ArrayList<>();
         for (Panel panel : panels) {

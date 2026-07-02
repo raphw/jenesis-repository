@@ -56,7 +56,7 @@ public class RawProxyTest {
         };
         running = RepositoryApplication.start(0, Map.of("raw", URI.create("https://upstream.test/")), fetcher);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + running.port();
+        base = "http://localhost:" + running.port() + "/repository";
     }
 
     @AfterAll

@@ -37,7 +37,7 @@ public class RepositoryRateLimitE2ETest {
         System.setProperty("jenesis.repository.rate-limit", "5");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + server.port() + "/";
+        base = "http://localhost:" + server.port() + "/repository/";
     }
 
     @AfterAll

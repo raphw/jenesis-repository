@@ -64,7 +64,7 @@ public class OAuth2ClientConfig {
                 .userInfoEndpoint(userInfo -> userInfo
                         .userService(oauth2Users)
                         .oidcUserService(oidcUsers))
-                .defaultSuccessUrl("/", true));
+                .defaultSuccessUrl("/console", true));
     }
 
     @Bean

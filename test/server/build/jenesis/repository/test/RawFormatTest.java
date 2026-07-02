@@ -38,7 +38,7 @@ public class RawFormatTest {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + running.port();
+        base = "http://localhost:" + running.port() + "/repository";
     }
 
     @AfterAll
