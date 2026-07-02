@@ -43,6 +43,12 @@ class MavenFormatTest {
     }
 
     @Test
+    void reports_its_ecosystem_and_default_upstream() {
+        assertThat(format.ecosystem()).isEqualTo("Maven");
+        assertThat(format.defaultUpstream()).contains(java.net.URI.create("https://repo1.maven.org/maven2/"));
+    }
+
+    @Test
     void a_jar_is_published_and_served_and_a_miss_is_404() throws IOException {
         byte[] jar = "plain jar bytes".getBytes(StandardCharsets.UTF_8);
 
