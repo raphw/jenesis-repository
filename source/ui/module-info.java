@@ -1,6 +1,6 @@
 /**
- * The web console: a Spring Boot admin front for the repository, matching the enterprise edition's framework choices
- * (Spring Boot on embedded Tomcat, Thymeleaf views, Spring Security with OAuth2/OIDC login) so the enterprise console
+ * The web console: a Spring Boot admin front for the repository, built on a mainstream Spring stack
+ * (Spring Boot on embedded Tomcat, Thymeleaf views, Spring Security with OAuth2/OIDC login) so a downstream distribution
  * extends this shell rather than forking it. It is an open module (Spring needs reflective access) and requires the
  * Spring modules its code compiles against plus the Spring Boot starters that root the runtime closure (embedded
  * Tomcat, Thymeleaf, Jackson, Security, OAuth2 client). Built as an open shell with a panel-registration SPI

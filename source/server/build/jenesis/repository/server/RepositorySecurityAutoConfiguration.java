@@ -10,7 +10,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Server-side security for the free repository as auto-configuration: stateless, deny-by-default authorization
+ * Server-side security for the repository as auto-configuration: stateless, deny-by-default authorization
  * delegated to the {@link RepositoryAuthorizationManager} (a pass-through when the deployment is anonymous), with the
  * Actuator health endpoint left open for liveness/readiness probes. The {@link KeyAuthenticationFilter} runs first to
  * lift the {@code Jenesis-Repository-Key} header into the security context. CSRF, HTTP Basic and form login are
@@ -18,7 +18,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * authentication entry point and the access-denied handler are the {@link RepositoryAuthorizationEntryPoint}, so a
  * denied request answers the status the credential model intends ({@code 401} unauthorized, {@code 403} forbidden)
  * whichever Spring Security failure path it takes. Both the authorization manager and the filter chain are
- * {@link ConditionalOnMissingBean conditional}, so an enterprise edition that needs a different chain (multi-tenant
+ * {@link ConditionalOnMissingBean conditional}, so a deployment that needs a different chain (multi-tenant
  * routing rules, an OIDC token-exchange endpoint) contributes its own and this backs off, while still reusing the
  * shared {@link KeyAuthenticationFilter}, {@link RateLimitFilter} and {@link Authorization} credential model.
  */

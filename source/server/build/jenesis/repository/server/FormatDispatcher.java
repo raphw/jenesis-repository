@@ -15,8 +15,8 @@ import java.util.Map;
  * {@link RepositoryFormat} plugins over a scoped {@link ArtifactStore} and serves the first whose {@code handles(path)}
  * is true, either directly through {@link RepositoryFormat#handle} or, when an upstream is configured for that format
  * and the format is a {@link ProxyFormat}, through the {@link PullThroughCache} from that upstream. It holds no Spring
- * (or servlet) type, so both the Spring MVC {@link RepositoryController} and any other dispatcher (the enterprise
- * multi-tenant controller, a JDK-httpserver embedder) reuse the same loop rather than re-implementing it. The store
+ * (or servlet) type, so both the Spring MVC {@link RepositoryController} and any other dispatcher (a multi-tenant
+ * controller, a JDK-httpserver embedder) reuse the same loop rather than re-implementing it. The store
  * and the {@link FormatExchange#path() path} it matches on are already tenant-and-repository scoped by the caller (see
  * {@link RepositoryRouting}); this component only picks the format and drives it.
  */
