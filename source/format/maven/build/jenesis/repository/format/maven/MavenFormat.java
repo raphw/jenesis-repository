@@ -42,13 +42,15 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     }
 
     @Override
-    public List<String> paths(String coordinate, String version) {
+    public List<String> paths(String coordinate, String version, ArtifactStore store) {
         int colon = coordinate.indexOf(':');
         if (colon < 0) {
             return List.of();
         }
         String group = coordinate.substring(0, colon).replace('.', '/');
         String artifact = coordinate.substring(colon + 1);
+        // The Maven directory a version occupies; the cross-published module view is served by the Jenesis format,
+        // which owns the /module/ layout, so it is not this format's to enumerate here.
         return List.of("/maven/" + group + "/" + artifact + "/" + version);
     }
 

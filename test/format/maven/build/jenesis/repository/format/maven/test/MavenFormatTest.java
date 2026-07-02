@@ -80,7 +80,7 @@ class MavenFormatTest {
 
     @Test
     void paths_returns_the_maven_directory_a_version_occupies() {
-        assertThat(format.paths("org.example:lib", "1.0")).containsExactly("/maven/org/example/lib/1.0");
+        assertThat(format.paths("org.example:lib", "1.0", store)).containsExactly("/maven/org/example/lib/1.0");
     }
 
     @Test
