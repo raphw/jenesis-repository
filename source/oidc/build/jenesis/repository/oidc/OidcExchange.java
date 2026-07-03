@@ -1,4 +1,7 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.oidc;
+
+import build.jenesis.repository.server.Authorization;
+import build.jenesis.repository.server.TokenExchange;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -23,11 +26,7 @@ import java.util.regex.Pattern;
  * trust's grant and expiring after the trust's ttl. An issuer is honoured only when a trust already names it, so a
  * forged or foreign token mints nothing.
  */
-public final class OidcExchange {
-
-    /** A freshly exchanged short-lived key, its expiry and the trust that admitted it. */
-    public record Exchanged(String key, Instant expires, String trust) {
-    }
+public final class OidcExchange implements TokenExchange {
 
     private final Authorization authorization;
     private final Map<String, JwtDecoder> decoders = new ConcurrentHashMap<>();
@@ -36,8 +35,7 @@ public final class OidcExchange {
         this.authorization = authorization;
     }
 
-    /** Validate {@code token} against {@code tenant}'s trusts and, on a match, mint and return a short-lived
-     *  credential; {@code null} when no trust matches or the token fails validation. */
+    @Override
     public Exchanged exchange(String tenant, String token) throws IOException {
         if (token == null || token.isBlank()) {
             return null;

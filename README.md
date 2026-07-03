@@ -36,7 +36,7 @@ digest, which is **exactly the content-addressed `blobs/<hex>` key the repositor
 already uses for everything else**. So image layers, configs and manifests dedupe
 against each other and share storage with the rest of the repository (identical bytes
 are stored once), and a container image inherits the same multi-tenancy, authorization,
-retention and console as a Maven artifact, for free.
+storage and console as a Maven artifact, for free.
 
 Extensible by design
 --------------------
@@ -61,6 +61,9 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Upstream connectivity** (`FetcherProvider`) - the HTTP fetcher behind pull-through proxying and
    repository imports is a discovered module (`source/proxy`, providing `http` with index revalidation and
    negative caching); without it a deployment serves local content only and refuses imports.
+ - **Workload token exchange** (`TokenExchangeProvider`) - exchanging a CI job's identity token for a
+   short-lived credential is a discovered module (`source/oidc`, validating against the tenant's trust
+   policy); the OAuth2/JOSE dependency stack lives there, not in the server.
  - **Upload post-processing** (`PublishInterceptor`) - a hook run when an upload commits,
    after the blob is stored content-addressed but *before* its pointer is linked: it reads
    the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` / `QUARANTINE` /
@@ -78,7 +81,7 @@ A whole format is three methods over the already tenant-and-repository-scoped st
 
 So a new ecosystem is a module that depends only on this SPI and the store, declares
 `provides RepositoryFormat with ...`, and is discovered at startup - it inherits the
-content-addressed storage, multi-tenancy, authorization, retention and console without
+content-addressed storage, multi-tenancy, authorization and console without
 touching any of them. The OCI/Docker registry is itself the proof: a single
 self-contained module that needs nothing but the SPI and the store.
 
@@ -158,7 +161,7 @@ format SPI and the store, never on the server:
 Then put the module on the server's module path (in a Jenesis build, register it as a
 module and select it alongside `source+server`). On the next start the dispatcher
 loads it, routes every `/files/...` request to it, and it inherits multi-tenancy,
-authorization, retention and the console untouched.
+authorization and the console untouched.
 
 Every extension point works the same way - implement the interface, then `provides ...
 with ...` it from a module on the path:
@@ -241,7 +244,7 @@ Modules
         spi/                  the ImportSource SPI
         nexus/ artifactory/   the built-in connectors
       server/                 the dual-layout repository server (RepositoryApplication)
-      ui/                     a simple, extendable web console (browse, search, repo config)
+      ui/                     a simple, extendable web console (browse, repo config)
     test/                     tests, mirroring source/ (server/, store/s3, store/azure)
 
 The console is an open shell with a **panel-registration SPI**, so additional panels
@@ -262,8 +265,8 @@ plug in through the console's extension points without forking the core.
 | `build.jenesis.repository.importer`   | `source/importer/spi`          | The import-source SPI - the read half of a migration. An `ImportSource` walks a foreign repository's assets; an `ImportSourceProvider` builds one for a named incumbent from an `ImportRequest`. A connector is a module that `provides` a provider, discovered with `ServiceLoader`, so the server supports another incumbent without knowing it. A connector reads and writes its own JSON with Jackson. |
 | `build.jenesis.repository.importer.nexus`    | `source/importer/nexus`        | The Sonatype Nexus 3 connector: `provides` an `ImportSourceProvider` that pages the components REST API by continuation token (format reported per asset, so mixed repositories migrate in one pass). Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.artifactory` | `source/importer/artifactory` | The JFrog Artifactory connector: `provides` an `ImportSourceProvider` that reads the storage listing (a repository has one package type, supplied up front). Import SPI + format SPI only. |
-| `build.jenesis.repository.server`   | `source/server`       | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The optional pull-through proxy lives here; the content-addressed store (`Publication`) sits in the store module, the Maven and Jenesis layouts and their cross-publishing are plugin modules, and the import connectors are discovered the same way - so the server names no layout and no incumbent. Basic age/size retention. |
-| `build.jenesis.repository.ui`       | `source/ui`           | A simple, extendable web console: browse and search artifacts, view repositories and their config. An open console shell with a panel-extension SPI, so additional panels plug in without a fork. |
+| `build.jenesis.repository.server`   | `source/server`       | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The pull-through serve loop lives here (its HTTP fetcher is the discovered `source/proxy` module); the content-addressed store (`Publication`) sits in the store module, the Maven and Jenesis layouts and their cross-publishing are plugin modules, and the import connectors are discovered the same way - so the server names no layout and no incumbent. |
+| `build.jenesis.repository.ui`       | `source/ui`           | A simple, extendable web console: browse artifacts, view repositories and their config. An open console shell with a panel-extension SPI, so additional panels plug in without a fork. |
 
 Build & run
 -----------
@@ -279,7 +282,7 @@ The server `requires` no layout, backend or importer of its own (see *Extensible
 it discovers whatever layout modules, store backends, importers and the `ui` console are on its
 module path at startup, so a deployment selects the ones it wants alongside `source+server`.
 
-The web console is served at `/console` - browse and search artifacts, view repositories and their
+The web console is served at `/console` - browse artifacts, view repositories and their
 configuration. Sign-in is OAuth2 / OIDC; the `dev` profile (`SPRING_PROFILES_ACTIVE=dev`) swaps in a
 built-in `admin`/`admin` form login for local runs.
 
