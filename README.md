@@ -292,6 +292,14 @@ The web console is served at `/console` - browse artifacts, view repositories an
 configuration. Sign-in is OAuth2 / OIDC; the `dev` profile (`SPRING_PROFILES_ACTIVE=dev`) swaps in a
 built-in `admin`/`admin` form login for local runs.
 
+The console has a small **design system** layered over the vendored Pico.css - a design-token layer
+(`static/css/app.css`: a type scale, spacing, radii and a light/dark status palette) and a documented
+component set as Thymeleaf fragments (`templates/base.html`: page header, list/table, card,
+form-field-with-help, empty state, badge), with an accessibility baseline (semantic landmarks, a skip
+link, a visible focus ring, colour never the sole signal, WCAG-AA contrast in both themes). It is the
+shared base a downstream distribution's console extends rather than re-vendoring; see
+[`DESIGN.md`](DESIGN.md).
+
 A repository-wide storage cap is optional: `-Djenesis.repository.quota=10GB` (a byte count or a `K`/`M`/`G`/`T`
 suffix) refuses a new artifact once stored content reaches the limit, with `507 Insufficient Storage`. Only
 content blobs count; a deduped re-deploy of bytes already stored needs no new space.

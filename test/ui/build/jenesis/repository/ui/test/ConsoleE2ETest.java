@@ -79,6 +79,21 @@ public class ConsoleE2ETest {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(login.statusCode()).isEqualTo(200);
         assertThat(login.body()).contains("jenesis-repository");
+        // The design-system stylesheet is linked into the shell head fragment, so every screen shares one base.
+        assertThat(login.body()).contains("/css/app.css");
+    }
+
+    @Test
+    public void the_design_system_stylesheet_is_served_with_its_tokens_and_components() throws Exception {
+        // app.css is a static asset served anonymously (like pico.min.css), so the whole console shares one base.
+        HttpResponse<String> css = client.send(
+                HttpRequest.newBuilder(URI.create(base + "/css/app.css")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(css.statusCode()).isEqualTo(200);
+        assertThat(css.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).contains("text/css"));
+        // A design token, a component class and the dark-theme override are all present.
+        assertThat(css.body()).contains("--app-space-1").contains(".app-badge").contains("[data-theme=\"dark\"]");
     }
 
     @Test
@@ -103,5 +118,9 @@ public class ConsoleE2ETest {
         assertThat(page.statusCode()).isEqualTo(200);
         assertThat(page.body()).contains("Browse");
         assertThat(page.body()).contains("Published paths");
+        // The console renders on the shared design-system base: the shell head links app.css and the page uses the
+        // page-header component fragment from base.html.
+        assertThat(page.body()).contains("/css/app.css");
+        assertThat(page.body()).contains("app-page-header").contains("Repository console");
     }
 }
