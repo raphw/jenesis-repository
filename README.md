@@ -289,8 +289,12 @@ it discovers whatever layout modules, store backends, importers and the `ui` con
 module path at startup, so a deployment selects the ones it wants alongside `source+server`.
 
 The web console is served at `/console` - browse artifacts, view repositories and their
-configuration. Sign-in is OAuth2 / OIDC; the `dev` profile (`SPRING_PROFILES_ACTIVE=dev`) swaps in a
-built-in `admin`/`admin` form login for local runs.
+configuration. The generic artifact browse is at `/browse`: a breadcrumbed, lazy tree over any
+repository's published namespace, read one prefix level at a time through the store's listing seam
+(folder vs artifact, with sizes) and generic across every format - a folder's children are fetched on
+demand (`/browse/children`), so a browse never scans or buffers a whole tree. Sign-in is OAuth2 / OIDC;
+the `dev` profile (`SPRING_PROFILES_ACTIVE=dev`) swaps in a built-in `admin`/`admin` form login for
+local runs.
 
 The console has a small **design system** layered over the vendored Pico.css - a design-token layer
 (`static/css/app.css`: a type scale, spacing, radii and a light/dark status palette) and a documented

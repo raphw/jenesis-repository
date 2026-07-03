@@ -37,17 +37,18 @@ public class ConsoleE2ETest {
     private Application.Running running;
     private HttpClient client;
     private String base;
+    private String blobHash;
 
     @BeforeAll
     public void boot() throws Exception {
         System.setProperty("JENESIS_STORE_ROOT", store.toString());
         System.setProperty("spring.profiles.active", "dev");
-        // Publish an artifact so the browse panel has real contents to render.
+        // Publish an artifact so the browse has real contents to render.
         ArtifactStore backend = ArtifactStoreProvider.resolve(
                 "filesystem", key -> "JENESIS_STORE_ROOT".equals(key) ? store.toString() : null);
         Publication publication = new Publication(backend);
-        String hash = publication.storeBlob(new ByteArrayInputStream(new byte[]{1, 2, 3}));
-        publication.link("/maven/org/example/demo/1/demo-1.jar", hash);
+        blobHash = publication.storeBlob(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+        publication.link("/maven/org/example/demo/1/demo-1.jar", blobHash);
 
         running = Application.start(0);
         client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
@@ -108,19 +109,67 @@ public class ConsoleE2ETest {
     }
 
     @Test
-    public void an_authenticated_user_sees_the_browse_panel_with_real_data() throws Exception {
-        String credentials = Base64.getEncoder()
-                .encodeToString("admin:admin".getBytes(StandardCharsets.UTF_8));
-        HttpResponse<String> page = client.send(
-                HttpRequest.newBuilder(URI.create(base + "/console"))
-                        .header("Authorization", "Basic " + credentials).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
+    public void an_authenticated_user_sees_the_browse_panel_linking_into_the_browser() throws Exception {
+        HttpResponse<String> page = authGet("/console");
         assertThat(page.statusCode()).isEqualTo(200);
         assertThat(page.body()).contains("Browse");
-        assertThat(page.body()).contains("Published paths");
+        // The panel is now the entry point into the generic browse: it links to /browse and previews the published
+        // namespace (the "maven" root of the published artifact) as a quick link.
+        assertThat(page.body()).contains("/browse").contains("Published namespaces").contains("/browse?path=maven");
         // The console renders on the shared design-system base: the shell head links app.css and the page uses the
         // page-header component fragment from base.html.
         assertThat(page.body()).contains("/css/app.css");
         assertThat(page.body()).contains("app-page-header").contains("Repository console");
+    }
+
+    @Test
+    public void the_browse_page_renders_a_breadcrumbed_tree_of_the_published_namespace() throws Exception {
+        HttpResponse<String> page = authGet("/browse");
+        assertThat(page.statusCode()).isEqualTo(200);
+        // Rendered on the shared base: the breadcrumb component and the generic list/table.
+        assertThat(page.body()).contains("app-breadcrumb").contains("Repository").contains("app-list");
+        // The publish tree's single top-level entry is the "maven" folder, linking one level deeper.
+        assertThat(page.body()).contains("/browse?path=maven").contains("maven/").contains("folder");
+        // It never surfaces the content-addressed blobs bucket - a browse walks publish/, not blobs/.
+        assertThat(page.body()).doesNotContain(blobHash);
+    }
+
+    @Test
+    public void the_browse_page_drills_into_a_prefix_and_shows_the_artifact_leaf_with_its_size() throws Exception {
+        HttpResponse<String> page = authGet("/browse?path=maven/org/example/demo/1");
+        assertThat(page.statusCode()).isEqualTo(200);
+        // The breadcrumb trail carries every navigated segment, and an up-link returns to the parent.
+        assertThat(page.body()).contains("app-breadcrumb").contains("example").contains("/browse?path=maven/org/example");
+        // The leaf is classified as an artifact (not a folder) and shows the stored blob size (3 bytes → "3 B").
+        assertThat(page.body()).contains("demo-1.jar").contains("artifact").contains("3 B");
+    }
+
+    @Test
+    public void a_folders_children_load_lazily_as_a_row_fragment() throws Exception {
+        // The lazy-children endpoint the tree expands a folder with: it returns only the child rows under the prefix,
+        // not the whole shell - proof that a level's children are fetched on demand, never a full-tree scan.
+        HttpResponse<String> fragment = authGet("/browse/children?path=maven");
+        assertThat(fragment.statusCode()).isEqualTo(200);
+        assertThat(fragment.body()).contains("/browse?path=maven/org").contains("org/");
+        // A fragment, not a page: no shell head/header markup.
+        assertThat(fragment.body()).doesNotContain("<html").doesNotContain("app-page-header");
+    }
+
+    @Test
+    public void the_browse_path_is_traversal_guarded_against_escaping_into_the_blobs_bucket() throws Exception {
+        // A crafted "../blobs" must not walk up out of the publish/ subtree to enumerate the raw content-addressed
+        // blobs (which would leak the stored hashes); the ".." segment is dropped, so no blob hash is ever exposed.
+        HttpResponse<String> page = authGet("/browse?path=../blobs");
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body()).doesNotContain(blobHash);
+    }
+
+    private HttpResponse<String> authGet(String path) throws Exception {
+        String credentials = Base64.getEncoder()
+                .encodeToString("admin:admin".getBytes(StandardCharsets.UTF_8));
+        return client.send(
+                HttpRequest.newBuilder(URI.create(base + path))
+                        .header("Authorization", "Basic " + credentials).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 }

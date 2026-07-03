@@ -162,6 +162,26 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
+/* The disclosure control on a browse folder row: a small inline toggle that lazy-loads the folder's children on
+   expand, never the Pico full-width button. Styled currentColor-friendly so it inverts with the theme. */
+.app-tree-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    margin: 0 var(--app-space-1) 0 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--pico-muted-color, #555);
+    border-radius: var(--app-radius-sm);
+    cursor: pointer;
+    line-height: 1;
+}
+.app-tree-toggle:hover {
+    background: var(--pico-muted-border-color, #e0e0e0);
+}
 
 /* ---- Component: card --------------------------------------------------------------------------------------- */
 /* Pico's <article> already renders a card; .app-card standardises the internal rhythm for the artifact-detail and
