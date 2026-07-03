@@ -1,0 +1,76 @@
+<!doctype html>
+<!--
+  base.html — the shared console component set, layered over Pico + app.css.
+
+  These Thymeleaf fragments are the documented component vocabulary every screen composes from: the shell <head>,
+  the page header (title + optional breadcrumb + a primary-action slot), the empty state, the status badge and the
+  form-field-with-help atom. They are pure presentation — no business logic lives in the shell — so both the free
+  repository console and the enterprise console (once it requires this module) render one visual language by
+  th:replace-ing these fragments rather than re-vendoring a second copy that would drift.
+
+  Fragments provided:
+    head(title)                     — the shell <head>: viewport, Pico, app.css, htmx.
+    pageHeader(title)               — a page header with just a title.
+    pageHeaderCrumbs(title, crumbs) — a page header with a breadcrumb (crumbs: List<Map{href,label}>, last is current).
+    empty(message)                  — the one empty-state treatment.
+    badge(label, kind)              — a status pill; kind ∈ {pass,warn,danger,info,muted}.
+    field(label, name, value, help) — a labelled text input with inline help text.
+
+  Kept in sync with DESIGN.md (the component catalogue) and app.css (the tokens/styles).
+-->
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<head th:fragment="head(title)">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="${title} + ' · jenesis-repository'">jenesis-repository</title>
+    <link rel="stylesheet" th:href="@{/css/pico.min.css}">
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+    <script th:src="@{/js/htmx.min.js}" defer></script>
+</head>
+
+<body>
+
+<!-- Page header: just a title. A page needing the primary-action slot renders the .app-page-header markup
+     directly (see DESIGN.md) or uses pageHeaderCrumbs; this fragment stays presentation-only. -->
+<header th:fragment="pageHeader(title)" class="app-page-header">
+    <hgroup class="app-page-header__heading">
+        <h1 class="app-page-header__title" th:text="${title}">Title</h1>
+    </hgroup>
+</header>
+
+<header th:fragment="pageHeaderCrumbs(title, crumbs)" class="app-page-header">
+    <hgroup class="app-page-header__heading">
+        <nav th:if="${crumbs != null and !crumbs.isEmpty()}" aria-label="Breadcrumb">
+            <ol class="app-breadcrumb">
+                <li th:each="crumb, iter : ${crumbs}">
+                    <a th:if="${!iter.last and crumb.href != null}" th:href="${crumb.href}" th:text="${crumb.label}">crumb</a>
+                    <span th:unless="${!iter.last and crumb.href != null}" th:text="${crumb.label}"
+                          th:attr="aria-current=${iter.last} ? 'page' : null">crumb</span>
+                </li>
+            </ol>
+        </nav>
+        <h1 class="app-page-header__title" th:text="${title}">Title</h1>
+    </hgroup>
+</header>
+
+<!-- Empty / loading / error state: one consistent treatment, never a blank screen. -->
+<div th:fragment="empty(message)" class="app-empty" role="status">
+    <div class="app-empty__icon" aria-hidden="true">∅</div>
+    <p th:text="${message}" style="margin:0">Nothing here yet.</p>
+</div>
+
+<!-- Status badge / pill: the label always carries the meaning, so colour is never the only signal. -->
+<span th:fragment="badge(label, kind)" class="app-badge"
+      th:classappend="'app-badge--' + (${kind} ?: 'muted')" th:text="${label}">status</span>
+
+<!-- Form field with inline help: label, control, help text — the atom the config page composes from. -->
+<div th:fragment="field(label, name, value, help)" class="app-field">
+    <label th:for="${name}" th:text="${label}">Label</label>
+    <input type="text" th:id="${name}" th:name="${name}" th:value="${value}"
+           th:attr="aria-describedby=${name} + '-help'">
+    <small class="app-field__help" th:id="${name} + '-help'" th:text="${help}">Help text.</small>
+</div>
+
+</body>
+</html>

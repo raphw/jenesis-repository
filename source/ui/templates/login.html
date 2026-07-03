@@ -1,14 +1,12 @@
 <!doctype html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
-<head>
+<head th:replace="~{base :: head('Sign in')}">
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in &mdash; jenesis-repository</title>
-    <link rel="stylesheet" th:href="@{/css/pico.min.css}">
 </head>
 <body>
-<main class="container">
-    <article style="max-width:28rem;margin:4rem auto">
+<main id="main" class="container">
+    <article class="app-card" style="max-width:28rem;margin:4rem auto">
         <header><h1>jenesis-repository</h1></header>
         <p th:if="${param.logout}">You have signed out.</p>
 

@@ -1,0 +1,254 @@
+/*
+ * app.css — the jenesis console design system, layered over the vendored Pico.css.
+ *
+ * This is the shared visual base for both consoles (the free repository console and the enterprise console that
+ * extends it): a small set of design tokens (a type scale, a spacing scale, radii and a status palette) plus a
+ * documented component set (page header, generic list/table, card, form-field-with-help, empty state, badge).
+ *
+ * It is *additive* over Pico: it never overrides a Pico rule wholesale, it only defines --app-* tokens and .app-*
+ * component classes that build on Pico's own --pico-* variables, so light/dark theming (Pico's data-theme) keeps
+ * working with no screen hard-coding a colour. Keep this file in sync with DESIGN.md, which documents the tokens,
+ * the component set and the accessibility baseline.
+ */
+
+/* ---- Design tokens ------------------------------------------------------------------------------------------ */
+:root {
+    /* Type scale — a modular scale a screen composes from, never an ad-hoc font-size. */
+    --app-font-size-xs: 0.75rem;
+    --app-font-size-sm: 0.875rem;
+    --app-font-size-base: 1rem;
+    --app-font-size-lg: 1.25rem;
+    --app-font-size-xl: 1.5rem;
+    --app-font-size-2xl: 2rem;
+
+    /* Spacing scale — every gap/margin/padding is a step on this scale. */
+    --app-space-1: 0.25rem;
+    --app-space-2: 0.5rem;
+    --app-space-3: 0.75rem;
+    --app-space-4: 1rem;
+    --app-space-5: 1.5rem;
+    --app-space-6: 2rem;
+
+    /* Radii. */
+    --app-radius-sm: 0.25rem;
+    --app-radius-md: 0.5rem;
+    --app-radius-lg: 0.75rem;
+
+    /* Uniform icon box (see the Icon SPI, W4.2): square, currentColor-friendly. */
+    --app-icon-size: 1.25rem;
+
+    /* Status palette — the semantic colours for the badge/pill. Both light and dark values are defined so no
+       screen hard-codes a colour; the dark overrides live under [data-theme=dark] below. Chosen for WCAG-AA
+       contrast against Pico's card background in each theme. */
+    --app-status-pass-bg: #d8f3dc;
+    --app-status-pass-fg: #1b4332;
+    --app-status-warn-bg: #fff3cd;
+    --app-status-warn-fg: #664d03;
+    --app-status-danger-bg: #f8d7da;
+    --app-status-danger-fg: #842029;
+    --app-status-info-bg: #cfe2ff;
+    --app-status-info-fg: #084298;
+    --app-status-muted-bg: var(--pico-muted-border-color, #e0e0e0);
+    --app-status-muted-fg: var(--pico-muted-color, #555);
+}
+
+[data-theme="dark"] {
+    --app-status-pass-bg: #14351f;
+    --app-status-pass-fg: #a8e6bf;
+    --app-status-warn-bg: #3d3210;
+    --app-status-warn-fg: #ffe08a;
+    --app-status-danger-bg: #3d1418;
+    --app-status-danger-fg: #f5a7ae;
+    --app-status-info-bg: #10243f;
+    --app-status-info-fg: #9dc3ff;
+}
+
+/* Honour the OS preference when a deployment has not pinned a theme, so dark tokens apply automatically. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --app-status-pass-bg: #14351f;
+        --app-status-pass-fg: #a8e6bf;
+        --app-status-warn-bg: #3d3210;
+        --app-status-warn-fg: #ffe08a;
+        --app-status-danger-bg: #3d1418;
+        --app-status-danger-fg: #f5a7ae;
+        --app-status-info-bg: #10243f;
+        --app-status-info-fg: #9dc3ff;
+    }
+}
+
+/* ---- Accessibility baseline --------------------------------------------------------------------------------- */
+/* A visible focus ring on every keyboard-reachable control (never removed, only styled): colour is never the sole
+   signal, and focus is always perceivable. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--pico-primary, #0172ad);
+    outline-offset: 2px;
+    border-radius: var(--app-radius-sm);
+}
+
+/* A skip link for keyboard users: hidden until focused, then pinned to the top-left. */
+.app-skip-link {
+    position: absolute;
+    left: var(--app-space-2);
+    top: -3rem;
+    z-index: 1000;
+    padding: var(--app-space-2) var(--app-space-3);
+    background: var(--pico-card-background-color, #fff);
+    border-radius: var(--app-radius-md);
+    transition: top 0.15s ease-in-out;
+}
+.app-skip-link:focus {
+    top: var(--app-space-2);
+}
+
+/* ---- Component: page header -------------------------------------------------------------------------------- */
+/* Title, an optional breadcrumb above it, and a single primary-action slot pinned to the right. */
+.app-page-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--app-space-4);
+    flex-wrap: wrap;
+    margin-bottom: var(--app-space-5);
+}
+.app-page-header__heading {
+    margin: 0;
+}
+.app-page-header__title {
+    margin: 0;
+    font-size: var(--app-font-size-2xl);
+    line-height: 1.15;
+}
+.app-page-header__actions {
+    display: flex;
+    gap: var(--app-space-2);
+    align-items: center;
+}
+.app-breadcrumb {
+    margin: 0 0 var(--app-space-1);
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--app-space-1);
+    font-size: var(--app-font-size-sm);
+    color: var(--pico-muted-color, #555);
+}
+.app-breadcrumb li + li::before {
+    content: "/";
+    margin-right: var(--app-space-1);
+    color: var(--pico-muted-border-color, #ccc);
+}
+
+/* ---- Component: generic list / table ---------------------------------------------------------------------- */
+/* The one component behind browse, search results and version lists. Semantic <table> over Pico; .app-list adds
+   name+icon alignment and a right-aligned numeric column. */
+.app-list {
+    margin: 0;
+}
+.app-list th {
+    font-size: var(--app-font-size-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--pico-muted-color, #555);
+}
+.app-list__name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--app-space-2);
+}
+.app-list__num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* ---- Component: card --------------------------------------------------------------------------------------- */
+/* Pico's <article> already renders a card; .app-card standardises the internal rhythm for the artifact-detail and
+   single-record layouts. */
+.app-card {
+    margin-block: 0 var(--app-space-4);
+}
+.app-card__meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--app-space-2) var(--app-space-4);
+    margin: 0;
+}
+.app-card__meta dt {
+    font-weight: 600;
+    color: var(--pico-muted-color, #555);
+}
+.app-card__meta dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+/* ---- Component: form field with inline help --------------------------------------------------------------- */
+/* Label, control, help text, validation state and a default-vs-effective note — the atom the config page builds
+   from. */
+.app-field {
+    margin-bottom: var(--app-space-4);
+}
+.app-field__help {
+    display: block;
+    margin-top: var(--app-space-1);
+    font-size: var(--app-font-size-sm);
+    color: var(--pico-muted-color, #555);
+}
+.app-field__note {
+    font-size: var(--app-font-size-xs);
+    color: var(--pico-muted-color, #555);
+}
+.app-field--invalid .app-field__help {
+    color: var(--app-status-danger-fg);
+}
+
+/* ---- Component: empty / loading / error state ------------------------------------------------------------- */
+/* One consistent treatment, never a blank screen. */
+.app-empty {
+    text-align: center;
+    padding: var(--app-space-6) var(--app-space-4);
+    color: var(--pico-muted-color, #555);
+    border: 1px dashed var(--pico-muted-border-color, #ccc);
+    border-radius: var(--app-radius-lg);
+}
+.app-empty__icon {
+    font-size: var(--app-font-size-2xl);
+    line-height: 1;
+    margin-bottom: var(--app-space-2);
+    opacity: 0.7;
+}
+
+/* ---- Component: badge / pill ------------------------------------------------------------------------------- */
+/* Status (passed / quarantined / signed) and config metadata (live / restart, changed). Colour is never the sole
+   signal — the label text always carries the meaning. */
+.app-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--app-space-1);
+    padding: 0.1rem var(--app-space-2);
+    border-radius: 999px;
+    font-size: var(--app-font-size-xs);
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    background: var(--app-status-muted-bg);
+    color: var(--app-status-muted-fg);
+}
+.app-badge--pass { background: var(--app-status-pass-bg); color: var(--app-status-pass-fg); }
+.app-badge--warn { background: var(--app-status-warn-bg); color: var(--app-status-warn-fg); }
+.app-badge--danger { background: var(--app-status-danger-bg); color: var(--app-status-danger-fg); }
+.app-badge--info { background: var(--app-status-info-bg); color: var(--app-status-info-fg); }
+.app-badge--muted { background: var(--app-status-muted-bg); color: var(--app-status-muted-fg); }
+
+/* ---- Icon ------------------------------------------------------------------------------------------------- */
+/* SPI-provided icons (W4.2) render at a uniform size and inherit the text colour so they invert with the theme. */
+.app-icon {
+    display: inline-block;
+    width: var(--app-icon-size);
+    height: var(--app-icon-size);
+    vertical-align: -0.15em;
+    fill: currentColor;
+    flex: 0 0 auto;
+}

@@ -1,13 +1,11 @@
 <!doctype html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
-<head>
+<head th:replace="~{base :: head('Console')}">
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>jenesis-repository</title>
-    <link rel="stylesheet" th:href="@{/css/pico.min.css}">
-    <script th:src="@{/js/htmx.min.js}" defer></script>
 </head>
 <body>
+<a class="app-skip-link" href="#main">Skip to content</a>
 <header class="container">
     <nav>
         <ul>
@@ -25,9 +23,10 @@
         </ul>
     </nav>
 </header>
-<main class="container">
-    <p th:if="${panels.isEmpty()}">No panels are registered.</p>
-    <article th:each="panel : ${panels}" th:id="${panel.id}">
+<main id="main" class="container">
+    <header th:replace="~{base :: pageHeader('Repository console')}"></header>
+    <div th:if="${panels.isEmpty()}" th:replace="~{base :: empty('No panels are registered.')}"></div>
+    <article th:each="panel : ${panels}" th:id="${panel.id}" class="app-card">
         <header><h2 th:text="${panel.title}">Panel</h2></header>
         <div th:utext="${panel.body}">panel body</div>
     </article>
