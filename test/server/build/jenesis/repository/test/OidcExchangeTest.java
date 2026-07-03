@@ -1,7 +1,8 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.OidcExchange;
+import build.jenesis.repository.oidc.OidcExchange;
+import build.jenesis.repository.server.TokenExchange;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.sun.net.httpserver.HttpServer;
@@ -83,7 +84,7 @@ class OidcExchangeTest {
 
     @Test
     void a_valid_token_is_exchanged_for_a_short_lived_key_carrying_the_trusts_grant() throws IOException {
-        OidcExchange.Exchanged exchanged = exchange.exchange("acme",
+        TokenExchange.Exchanged exchanged = exchange.exchange("acme",
                 jwt("jenesis", "repo:acme/app:ref:refs/heads/main", Instant.now().plusSeconds(300)));
         assertThat(exchanged).isNotNull();
         assertThat(exchanged.trust()).isEqualTo("github");
