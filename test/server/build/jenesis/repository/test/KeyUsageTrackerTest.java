@@ -1,7 +1,7 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.KeyUsageTracker;
+import build.jenesis.repository.usage.BatchingKeyUsageTracker;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,20 +40,20 @@ class KeyUsageTrackerTest {
 
     @Test
     void it_counts_every_hit_and_keeps_the_last_address_flushing_once_per_day() throws IOException {
-        KeyUsageTracker tracker = new KeyUsageTracker(authorization, true);
+        BatchingKeyUsageTracker tracker = new BatchingKeyUsageTracker(authorization, true);
         Instant morning = Instant.parse("2026-06-30T08:00:00Z");
 
-        tracker.drain(List.of(new KeyUsageTracker.Hit("acme", hash, "10.0.0.1"),
-                new KeyUsageTracker.Hit("acme", hash, "10.0.0.2")), morning);
+        tracker.drain(List.of(new BatchingKeyUsageTracker.Hit("acme", hash, "10.0.0.1"),
+                new BatchingKeyUsageTracker.Hit("acme", hash, "10.0.0.2")), morning);
         Authorization.Credential first = authorization.credential("acme", hash).orElseThrow();
         assertThat(first.useCount()).as("both hits counted").isEqualTo(2);
         assertThat(first.lastUsedAddress()).as("the most recent address").isEqualTo("10.0.0.2");
 
-        tracker.drain(List.of(new KeyUsageTracker.Hit("acme", hash, "10.0.0.3")), morning.plus(Duration.ofHours(1)));
+        tracker.drain(List.of(new BatchingKeyUsageTracker.Hit("acme", hash, "10.0.0.3")), morning.plus(Duration.ofHours(1)));
         assertThat(authorization.credential("acme", hash).orElseThrow().useCount())
                 .as("a same-day hit accumulates but does not write again").isEqualTo(2);
 
-        tracker.drain(List.of(new KeyUsageTracker.Hit("acme", hash, "10.0.0.4")), morning.plus(Duration.ofDays(1)));
+        tracker.drain(List.of(new BatchingKeyUsageTracker.Hit("acme", hash, "10.0.0.4")), morning.plus(Duration.ofDays(1)));
         Authorization.Credential next = authorization.credential("acme", hash).orElseThrow();
         assertThat(next.useCount()).as("the next day flushes the accumulated delta").isEqualTo(4);
         assertThat(next.lastUsedAddress()).isEqualTo("10.0.0.4");
@@ -61,7 +61,7 @@ class KeyUsageTrackerTest {
 
     @Test
     void the_worker_is_not_alive_until_started_and_joins_on_close() {
-        KeyUsageTracker tracker = new KeyUsageTracker(authorization, true);
+        BatchingKeyUsageTracker tracker = new BatchingKeyUsageTracker(authorization, true);
         assertThat(tracker.alive()).as("not started").isFalse();
         tracker.start();
         assertThat(tracker.alive()).as("running after start").isTrue();
@@ -71,7 +71,7 @@ class KeyUsageTrackerTest {
 
     @Test
     void hits_past_the_queue_capacity_are_counted_as_dropped() {
-        KeyUsageTracker tracker = new KeyUsageTracker(authorization, true);
+        BatchingKeyUsageTracker tracker = new BatchingKeyUsageTracker(authorization, true);
         for (int index = 0; index < 100_100; index++) {
             tracker.record("acme", hash, null);
         }
