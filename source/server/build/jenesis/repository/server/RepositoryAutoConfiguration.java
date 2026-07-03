@@ -55,7 +55,9 @@ public class RepositoryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public RateLimiter rateLimiter() {
-        return new RateLimiter();
+        // The metering strategy is a discovered plugin (the token-bucket module); with none installed nothing is
+        // limited.
+        return RateLimiterProvider.resolve(key -> null);
     }
 
     @Bean
