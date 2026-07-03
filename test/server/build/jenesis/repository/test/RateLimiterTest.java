@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.RateLimiter;
+import build.jenesis.repository.ratelimit.TokenBucketRateLimiter;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -16,7 +16,7 @@ class RateLimiterTest {
     @Test
     void a_bucket_allows_a_burst_then_refills_as_the_clock_advances() {
         AtomicLong nanos = new AtomicLong();
-        RateLimiter limiter = new RateLimiter().withClock(nanos::get);
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter().withClock(nanos::get);
 
         for (int permit = 0; permit < 60; permit++) {
             assertThat(limiter.allow("acme", 60)).as("burst permit " + permit).isTrue();
@@ -31,7 +31,7 @@ class RateLimiterTest {
     @Test
     void keys_are_independent_and_a_non_positive_rate_is_unlimited() {
         AtomicLong nanos = new AtomicLong();
-        RateLimiter limiter = new RateLimiter().withClock(nanos::get);
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter().withClock(nanos::get);
 
         for (int permit = 0; permit < 60; permit++) {
             limiter.allow("acme", 60);

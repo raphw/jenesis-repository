@@ -67,6 +67,9 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Credential usage tracking** (`KeyUsageTrackerProvider`) - stamping a credential's last use and count
    is a discovered module (`source/usage`, a batching off-request worker); without it nothing records and
    the worker reports as off.
+ - **Rate limiting** (`RateLimiterProvider`) - the metering strategy behind the 429 filter is a discovered
+   module (`source/ratelimit`, an in-memory token bucket); a coordinated limiter for a replicated deployment
+   would be another module, and without one nothing is limited.
  - **Upload post-processing** (`PublishInterceptor`) - a hook run when an upload commits,
    after the blob is stored content-addressed but *before* its pointer is linked: it reads
    the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` / `QUARANTINE` /

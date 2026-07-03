@@ -1,63 +1,18 @@
 package build.jenesis.repository.server;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.LongSupplier;
-
 /**
- * An in-memory token-bucket rate limiter, keyed by an arbitrary string (a tenant, or a credential hash). Each key
- * gets a bucket that refills at the requested rate and holds up to one window's worth of burst; a request consumes
- * one token, and {@link #allow} is false when the bucket is empty. A rate of zero or less is unlimited. The rate is
- * passed per call rather than fixed at construction, so a configuration change takes effect on the next request
- * without rebuilding anything; the bucket simply refills and caps at the new rate.
- *
- * The limiter is per process - in a replicated deployment each node limits independently, so the effective ceiling
- * is the configured rate times the node count. That is the usual, cheap trade for not putting a coordination
- * service on the hot path; a single front door (or a small node count) keeps it close to the configured number.
+ * A request rate limiter, keyed by an arbitrary string (a tenant, or a credential hash): {@link #allow} consumes
+ * one permit at the given ceiling and answers false when the key is over it. How permits are metered - an
+ * in-memory token bucket, a coordinated store - is the implementation's part, supplied by a
+ * {@link RateLimiterProvider} module discovered with {@link java.util.ServiceLoader}; with none installed
+ * {@link #NONE} stands in and nothing is ever limited. A rate of zero or less always allows.
  */
-public final class RateLimiter {
+@FunctionalInterface
+public interface RateLimiter {
 
-    private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
-    private final LongSupplier clock;
+    /** The shared limiter standing in when no rate-limiting module is installed: every request is allowed. */
+    RateLimiter NONE = (key, permitsPerMinute) -> true;
 
-    public RateLimiter() {
-        this(System::nanoTime);
-    }
-
-    private RateLimiter(LongSupplier clock) {
-        this.clock = clock;
-    }
-
-    /** A limiter reading time from a supplied nanosecond clock instead of {@link System#nanoTime} (a test drives it). */
-    public RateLimiter withClock(LongSupplier clock) {
-        return new RateLimiter(clock);
-    }
-
-    /** Try to consume one permit for {@code key} at {@code permitsPerMinute}; false when the bucket is exhausted. */
-    public boolean allow(String key, double permitsPerMinute) {
-        if (permitsPerMinute <= 0) {
-            return true;
-        }
-        return buckets.computeIfAbsent(key, ignored -> new Bucket()).tryAcquire(permitsPerMinute, clock.getAsLong());
-    }
-
-    private static final class Bucket {
-
-        private double tokens = -1.0;
-        private long lastNanos;
-
-        synchronized boolean tryAcquire(double permitsPerMinute, long now) {
-            double capacity = Math.max(1.0, permitsPerMinute);
-            if (tokens < 0) {
-                tokens = capacity;
-                lastNanos = now;
-            }
-            tokens = Math.min(capacity, tokens + (now - lastNanos) * (permitsPerMinute / 60_000_000_000.0));
-            lastNanos = now;
-            if (tokens >= 1.0) {
-                tokens -= 1.0;
-                return true;
-            }
-            return false;
-        }
-    }
+    /** Try to consume one permit for {@code key} at {@code permitsPerMinute}; false when the key is exhausted. */
+    boolean allow(String key, double permitsPerMinute);
 }
