@@ -50,7 +50,10 @@ current page. A header that needs an action button renders the `.app-page-header
 
 ### Generic list / table — `.app-list` (CSS pattern)
 The one component behind browse, search results and version lists. A semantic `<table class="app-list">`; `.app-list__name`
-aligns a name with its (optional) SPI icon, `.app-list__num` right-aligns a tabular-numeric column (size/count).
+aligns a name with its (optional) SPI icon, `.app-list__num` right-aligns a tabular-numeric column (size/count). On a
+browse folder row, `.app-tree-toggle` is the small inline disclosure control that lazy-loads the folder's children on
+expand (the generic browse at `/browse` — a breadcrumbed lazy tree via `base :: pageHeaderCrumbs` — is built on this
+table).
 
 ```html
 <table class="app-list">
