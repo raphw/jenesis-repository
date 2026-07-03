@@ -64,6 +64,9 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Workload token exchange** (`TokenExchangeProvider`) - exchanging a CI job's identity token for a
    short-lived credential is a discovered module (`source/oidc`, validating against the tenant's trust
    policy); the OAuth2/JOSE dependency stack lives there, not in the server.
+ - **Credential usage tracking** (`KeyUsageTrackerProvider`) - stamping a credential's last use and count
+   is a discovered module (`source/usage`, a batching off-request worker); without it nothing records and
+   the worker reports as off.
  - **Upload post-processing** (`PublishInterceptor`) - a hook run when an upload commits,
    after the blob is stored content-addressed but *before* its pointer is linked: it reads
    the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` / `QUARANTINE` /

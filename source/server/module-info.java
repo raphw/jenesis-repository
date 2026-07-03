@@ -112,4 +112,5 @@ open module build.jenesis.repository.server {
     uses build.jenesis.repository.format.RepositoryImporter;
     uses build.jenesis.repository.importer.ImportSourceProvider;
     uses build.jenesis.repository.server.TokenExchangeProvider;
+    uses build.jenesis.repository.server.KeyUsageTrackerProvider;
 }
