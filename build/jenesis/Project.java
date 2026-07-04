@@ -73,17 +73,18 @@ public record Project(
                                        Project project,
                                        MultiProjectAssembler<? super ProjectModuleDescriptor> assembler) throws IOException;
 
-        private static Path mavenConfigurationFolder(Path location) {
-            return location == null ? null : location.resolve("build.jenesis");
-        }
 
         private static Path modularConfigurationFolder(Path location) {
             return location == null ? null : location.resolve("META-INF").resolve("build.jenesis");
         }
 
         static SequencedSet<Path> configurations(Path local, SequencedSet<Path> folders, SequencedSet<Path> profiles) {
+            return configurations(Collections.singletonList(local), folders, profiles);
+        }
+
+        static SequencedSet<Path> configurations(List<Path> locals, SequencedSet<Path> folders, SequencedSet<Path> profiles) {
             LinkedHashSet<Path> base = new LinkedHashSet<>();
-            Stream.concat(Stream.of(local), folders.stream())
+            Stream.concat(locals.stream(), folders.stream())
                     .filter(folder -> folder != null)
                     .map(folder -> folder.toAbsolutePath().normalize())
                     .forEach(base::add);
@@ -106,7 +107,7 @@ public record Project(
 
         static SequencedSet<Path> licenseFiles(Project project, String file) {
             SequencedSet<Path> located = new LinkedHashSet<>();
-            for (Path folder : configurations(null, project.configuration(), project.profiles())) {
+            for (Path folder : configurations((Path) null, project.configuration(), project.profiles())) {
                 Path candidate = folder.resolve(file);
                 if (Files.isRegularFile(candidate)) {
                     located.add(candidate);
@@ -140,7 +141,7 @@ public record Project(
                                 Layout.licenseFiles(project, Dependencies.SPDX),
                                 (descriptor, mergedRepos, mergedResolvers) -> pomAware.apply(
                                         new ProjectModuleDescriptor(descriptor,
-                                                configurations(mavenConfigurationFolder(descriptor.location()), project.configuration(), project.profiles()),
+                                                configurations(descriptor.configurations(), project.configuration(), project.profiles()),
                                                 project.tests(),
                                                 project.sources(),
                                                 project.documentation(),
@@ -466,7 +467,10 @@ public record Project(
                       %{name}version%{reset}                          Project version
                       %{name}digest%{reset}                           Algorithm for pin and dependency checksums (default: SHA-256)
                       %{name}watch%{reset}                            Rebuild the selected target whenever a source file changes (Ctrl+C to stop)
-                      %{name}docker%{reset}[, %{name}docker.image%{reset}]           Wrap the build in a container
+                      %{name}docker%{reset}[, %{name}docker.image%{reset}]           Wrap the build in a container; the root, JDK, local
+                                                      repositories, and all configured out-of-root locations
+                                                      (target, artifacts, configuration, boms, metadata,
+                                                      file caches) are mounted at their host paths
                       %{name}docker.mount%{reset} <h[:c],...>         Extra read-only container mounts (host or host:container)
                       %{name}docker.mountWritable%{reset} <h[:c],...> Extra writable container mounts
                       %{name}docker.env%{reset} <N[=V],...>           Forward host env vars (name) or set them (name=value)
@@ -482,8 +486,9 @@ public record Project(
                     
                     %{header}Pinning (-Djenesis.dependency.pin=<mode>):%{reset}
                       %{name}strict%{reset} fails the build on any unpinned artifact; %{name}ignore%{reset} floats
-                      versions to the latest and skips checksum verification (refresh the
-                      pins by running the %{name}pin%{reset} step under it); %{name}versions%{reset} keeps the
+                      versions to the latest and skips checksum verification, keeping a
+                      managed version only where the declaration itself has none (refresh
+                      the pins by running the %{name}pin%{reset} step under it); %{name}versions%{reset} keeps the
                       pinned versions but skips checksum verification. Unset keeps existing
                       pins but tolerates missing ones.
 
@@ -581,7 +586,8 @@ public record Project(
                                                        default: the configuration locations) instead; local
                                                        @jenesis.pin lines override BOM entries
 
-                    %{header}Build-configuration files (in a module's build.jenesis config location; presence activates, contents configure):%{reset}
+                    %{header}Build-configuration files (in a module's build.jenesis config location; presence activates, contents configure;
+                    MAVEN modules also read src/main/build.jenesis and src/test/build.jenesis for main- or test-scoped configuration):%{reset}
                       %{name}packaging.properties%{reset}    Extra deliverables: jmod/jlink/bundle/launcher/native (booleans), jpackage=<type>
                       %{name}sbom.properties%{reset}         CycloneDX SBOM format=json|xml|none (SBOM is on by default; -Djenesis.sbom.cyclonedx=false disables)
                       %{name}bom.properties%{reset}          Publish the module's resolved closure as a repository BOM, <module>/<version>/<module>.properties (Jenesis repository only)
@@ -937,13 +943,18 @@ public record Project(
                       sources, documentation      Assemble sources / javadoc jars.
                       metadata                    Path-separated list of extra
                                                   metadata files.
-                      configuration               Directory searched for the
+                      configuration               Directories searched for the
                                                   inferred tools' config files
-                                                  (default root; empty uses only
-                                                  each module's build.jenesis/).
-                                                  Path-separated; an @ entry
-                                                  splices the default, @<name> a
-                                                  property or env value.
+                                                  (default build.jenesis/ under
+                                                  the root; the bare root is not
+                                                  searched, so a conventional
+                                                  file dropped there cannot
+                                                  alter the build; empty uses
+                                                  only each module's own
+                                                  folders). Path-separated; an @
+                                                  entry splices the default,
+                                                  @<name> a property or env
+                                                  value.
                       boms                        Path-separated locations of
                                                   local bom-<name>.properties
                                                   files (default: configuration;
@@ -964,7 +975,9 @@ public record Project(
                       -Djenesis.dependency.pin=strict|versions|ignore
                                                   strict fails on any unpinned
                                                   artifact; ignore floats to the
-                                                  latest and skips checksums
+                                                  latest and skips checksums,
+                                                  keeping a managed version only
+                                                  where the declaration has none
                                                   (refresh pins via the pin step);
                                                   versions keeps pinned versions
                                                   but skips checksum verification.
@@ -1349,14 +1362,16 @@ public record Project(
             }
         }
         String configurationOverride = System.getProperty("jenesis.project.configuration");
+        SequencedSet<Path> defaultConfiguration = new LinkedHashSet<>(List.of(
+                resolvedRoot.resolve("build.jenesis")));
         SequencedSet<Path> resolvedConfiguration;
         if (configurationOverride == null) {
-            resolvedConfiguration = new LinkedHashSet<>(List.of(resolvedRoot));
+            resolvedConfiguration = defaultConfiguration;
         } else {
             resolvedConfiguration = new LinkedHashSet<>();
             locations(configurationOverride,
                     resolvedRoot,
-                    new LinkedHashSet<>(List.of(resolvedRoot)),
+                    defaultConfiguration,
                     new HashSet<>(),
                     resolvedConfiguration);
         }
@@ -2060,6 +2075,37 @@ public record Project(
                     docker = docker.mount(absolute, absolute.toString(), false);
                 }
             }
+            SequencedSet<Path> locations = new LinkedHashSet<>();
+            locations.addAll(this.configuration());
+            locations.addAll(this.boms());
+            for (Path path : this.metadata()) {
+                Path parent = (path.isAbsolute() ? path : root.resolve(path)).normalize().getParent();
+                if (parent != null) {
+                    locations.add(parent);
+                }
+            }
+            for (Path location : locations) {
+                Path absolute = (location.isAbsolute() ? location : root.resolve(location)).normalize();
+                if (!absolute.startsWith(root) && Files.isDirectory(absolute)) {
+                    docker = docker.mount(absolute, absolute.toString(), true);
+                }
+            }
+            String cacheOverride = System.getProperty("jenesis.project.cache");
+            if (cacheOverride != null && !cacheOverride.contains("://")) {
+                Path cache = root.resolve(cacheOverride.isEmpty()
+                        ? Path.of(".jenesis", "cache")
+                        : Path.of(cacheOverride)).normalize();
+                if (!cache.startsWith(root)) {
+                    docker = docker.mount(Files.createDirectories(cache), cache.toString(), false);
+                }
+            }
+            String cacheUri = System.getProperty("jenesis.cache.uri");
+            if (cacheUri != null && cacheUri.startsWith("file:")) {
+                Path cache = Path.of(URI.create(cacheUri)).toAbsolutePath().normalize();
+                if (!cache.startsWith(root)) {
+                    docker = docker.mount(Files.createDirectories(cache), cache.toString(), false);
+                }
+            }
             docker = docker.mounts(System.getProperty("jenesis.project.docker.mount"), root, true);
             docker = docker.mounts(System.getProperty("jenesis.project.docker.mountWritable"), root, false);
             docker = docker.envs(System.getProperty("jenesis.project.docker.env"));
@@ -2077,9 +2123,9 @@ public record Project(
                     : Path.of(mavenRepositoryLocal)).toAbsolutePath().normalize();
             if (Files.isDirectory(mavenLocal)) {
                 docker = docker.mount(mavenLocal, mavenLocal.toString(), true);
-                if (mavenRepositoryLocal != null) {
-                    docker = docker.env("MAVEN_REPOSITORY_LOCAL", mavenLocal.toString());
-                }
+                // Always forwarded: the container's user.home differs from the host's, so without the
+                // variable the default local repository would not be found despite being mounted.
+                docker = docker.env("MAVEN_REPOSITORY_LOCAL", mavenLocal.toString());
             }
             String jenesisRepositoryLocal = System.getProperty("jenesis.module.local", System.getenv("JENESIS_REPOSITORY_LOCAL"));
             Path jenesisLocal = (jenesisRepositoryLocal == null
@@ -2087,9 +2133,7 @@ public record Project(
                     : Path.of(jenesisRepositoryLocal)).toAbsolutePath().normalize();
             if (Files.isDirectory(jenesisLocal)) {
                 docker = docker.mount(jenesisLocal, jenesisLocal.toString(), true);
-                if (jenesisRepositoryLocal != null) {
-                    docker = docker.env("JENESIS_REPOSITORY_LOCAL", jenesisLocal.toString());
-                }
+                docker = docker.env("JENESIS_REPOSITORY_LOCAL", jenesisLocal.toString());
             }
             if (Boolean.parseBoolean(System.getProperty("jenesis.print.docker", "true"))) {
                 System.out.println("Launching build within Docker image: " + docker.image());
