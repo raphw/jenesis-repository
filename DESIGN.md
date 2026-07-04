@@ -3,8 +3,8 @@
 The shared visual base for the jenesis consoles, layered over the vendored **Pico.css**. It is authored here in the
 free repository console (`source/ui`) and is the base the enterprise console extends, so the two products speak one
 visual language rather than drifting apart. This document is the catalogue; the implementation is
-[`source/ui/static/css/app.css`](source/ui/static/css/app.css) (the tokens and component styles) and
-[`source/ui/templates/base.html`](source/ui/templates/base.html) (the component set as Thymeleaf fragments). Keep the
+[`source/ui/META-INF/resources/css/app.css`](source/ui/META-INF/resources/css/app.css) (the tokens and component styles) and
+[`source/ui/META-INF/templates/base.html`](source/ui/META-INF/templates/base.html) (the component set as Thymeleaf fragments). Keep the
 three in sync — a change to a token or component updates all three.
 
 It is deliberately **thin and additive**: no bespoke widgets, no framework beyond Pico + htmx (both already vendored),
@@ -96,10 +96,13 @@ The intended model is that the enterprise console reuses this base rather than r
 the cross-console cohesion pass (worklist W4.5a). This document and `base.html`/`app.css` are the base that pass
 draws on.
 
-**The obvious mechanism — a `requires build.jenesis.repository.ui` JPMS edge — does not work, and W4.5a is blocked
-on it.** Both console modules ship a `templates/` package (and a `static/` package), and the module layer refuses
-to instantiate two modules that split a package (`LayerInstantiationException: Package templates in both module …`).
-So the enterprise console currently **still re-vendors** these assets; it does not yet depend on this module. The
-principle-clean fix (a human architecture call) is to extract a dedicated shared base module with **non-colliding**
-resource dirs (`templates-base/`, `static-base/`) that both consoles `requires`, each adding a secondary Thymeleaf
-resolver + static-resource handler.
+**The sharing mechanism: this module's resources live under `META-INF`, which JPMS cannot split.** A plain
+`templates/` (or `static/`) directory is derived as a module *package*, and the module layer refuses to
+instantiate two modules that split a package (`LayerInstantiationException: Package templates in both module …`) —
+which blocked the obvious `requires build.jenesis.repository.ui` edge while both consoles shipped those
+directories. `META-INF` is not a legal package name (the hyphen), so nothing under it is ever a package: this
+module therefore ships its templates as `META-INF/templates/` (named by `spring.thymeleaf.prefix`) and its static
+assets as `META-INF/resources/` (the Servlet web-fragment convention Spring Boot serves first by default, so the
+`/css/…`/`/js/…` URLs are unchanged). A downstream console `requires` this module, keeps its own `templates/`,
+adds one secondary Thymeleaf resolver over `classpath:/META-INF/templates/` (`checkExistence`, lower order), and
+`th:replace`s the `base.html` fragments — one visual language, no re-vendored copy, no split package.
