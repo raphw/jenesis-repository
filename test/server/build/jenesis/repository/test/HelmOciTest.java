@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class HelmOciTest {
 
-    private static final String HELM = System.getProperty("user.home") + "/.local/helm/helm";
+    private static final String HELM = "helm";
 
     @TempDir
     static Path root;
@@ -45,7 +45,7 @@ public class HelmOciTest {
 
     @BeforeAll
     public void start() {
-        assumeTrue(Files.isExecutable(Path.of(HELM)), "helm is required for the Helm-over-OCI verification");
+        assumeTrue(commandAvailable(HELM), "helm is required for the Helm-over-OCI verification");
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("store").toString());
         running = RepositoryApplication.start(0);
         env = Map.of(
@@ -82,6 +82,17 @@ public class HelmOciTest {
                 .as("helm pull: " + lastOutput).isZero();
         assertThat(Files.exists(destination.resolve("jenesis-chart-0.1.0.tgz")))
                 .as("the chart pulled back from the OCI registry").isTrue();
+    }
+
+    /** Whether the helm client is on the PATH (locally and on CI); the test self-skips when it is not. */
+    private static boolean commandAvailable(String command) {
+        try {
+            new ProcessBuilder(command, "version").redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD).start().waitFor();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private int helm(int timeoutSeconds, Path cwd, String... arguments) throws IOException, InterruptedException {
