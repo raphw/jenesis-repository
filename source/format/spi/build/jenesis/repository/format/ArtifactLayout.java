@@ -33,4 +33,16 @@ public interface ArtifactLayout {
      *  through the format's own index), so a cleanup pass enumerates and unpublishes every pointer under them from the
      *  coordinate alone - no layout knowledge in the caller. Empty when the coordinate maps nowhere. */
     List<String> paths(String coordinate, String version, ArtifactStore store);
+
+    /** The request-path folders a coordinate version occupies computed from the coordinate alone - no artifact read,
+     *  the primary layout path first. A <em>read path</em> that only needs to navigate to a coordinate's folder (a
+     *  console search linking a hit into the browse tree) calls this, never {@link #paths(String, String, ArtifactStore)}
+     *  whose store-derived cross-published mirrors may open a stored artifact (Maven reads a jar's module name for its
+     *  {@code /module/} mirror) - so the read path never buffers a blob. Defaults to empty, which is exact for a format
+     *  whose pointers are not enumerable from the coordinate alone (the shared-{@code blobs} formats already return
+     *  empty from the store overload); a format overrides it when its primary folder is a pure function of the
+     *  coordinate. */
+    default List<String> paths(String coordinate, String version) {
+        return List.of();
+    }
 }
