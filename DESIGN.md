@@ -104,5 +104,9 @@ directories. `META-INF` is not a legal package name (the hyphen), so nothing und
 module therefore ships its templates as `META-INF/templates/` (named by `spring.thymeleaf.prefix`) and its static
 assets as `META-INF/resources/` (the Servlet web-fragment convention Spring Boot serves first by default, so the
 `/css/…`/`/js/…` URLs are unchanged). A downstream console `requires` this module, keeps its own `templates/`,
-adds one secondary Thymeleaf resolver over `classpath:/META-INF/templates/` (`checkExistence`, lower order), and
-`th:replace`s the `base.html` fragments — one visual language, no re-vendored copy, no split package.
+adds one secondary Thymeleaf resolver over `classpath:/META-INF/templates/` **pattern-scoped to the shared
+vocabulary** (`setResolvablePatterns(Set.of("base", "base/*"))`) and `th:replace`s the `base.html` fragments —
+one visual language, no re-vendored copy, no split package. Scope by pattern, not resolver order: this module
+also carries its own console pages under names a downstream console likely uses too (`browse`, `login`), and
+Thymeleaf consults explicitly ordered resolvers ahead of the unordered default, so an order-based fallback lets
+the wrong module answer a shared name.
