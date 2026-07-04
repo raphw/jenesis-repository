@@ -13,6 +13,7 @@ import build.jenesis.maven.PinPom;
 import build.jenesis.maven.Pom;
 import build.jenesis.module.JenesisModuleRepository;
 import build.jenesis.module.JenesisModuleRepositoryExport;
+import build.jenesis.module.JenesisRepository;
 import build.jenesis.module.ModularJarResolver;
 import build.jenesis.module.ModularProject;
 import build.jenesis.module.ModularStaging;
@@ -25,6 +26,7 @@ import build.jenesis.project.MultiProjectModule;
 import build.jenesis.project.ProjectModuleDescriptor;
 import build.jenesis.project.ProjectWatch;
 import build.jenesis.step.Bind;
+import build.jenesis.step.Bom;
 import build.jenesis.step.Dependencies;
 import build.jenesis.step.ImageStaging;
 import build.jenesis.step.Inventory;
@@ -37,6 +39,7 @@ public record Project(
         Path artifacts,
         SequencedSet<Path> metadata,
         SequencedSet<Path> configuration,
+        SequencedSet<Path> boms,
         SequencedSet<Path> profiles,
         BuildExecutorCache cache,
         HashDigestFunction hashFunction,
@@ -120,7 +123,7 @@ public record Project(
             executor.addModule(BUILD, (sub, inherited) -> {
                 Map<String, Repository> repositories = new LinkedHashMap<>(project.repositories());
                 repositories.putIfAbsent("maven",
-                        new MavenDefaultRepository()
+                        MavenDefaultRepository.of()
                                 .cached(project.artifacts() == null ? null : Files.createDirectories(project.artifacts())));
                 Map<String, Resolver> resolvers = new LinkedHashMap<>(project.resolvers());
                 resolvers.putIfAbsent("maven", new MavenPomResolver());
@@ -178,10 +181,11 @@ public record Project(
             executor.addModule(HELP, new HelpModule("modular", assembler.getClass().getName()));
             executor.addModule(SKILL, new SkillModule(project.target()));
             executor.addModule(METADATA, MetadataModule.toMetadataModule(project));
+            MultiProjectAssembler<? super ProjectModuleDescriptor> bomAware = new BomAwareAssembler(assembler, project.hashFunction());
             executor.addModule(BUILD, (sub, inherited) -> {
                 Map<String, Repository> repositories = new LinkedHashMap<>(project.repositories());
                 repositories.putIfAbsent("module",
-                        new JenesisModuleRepository(true)
+                        JenesisModuleRepository.of(JenesisRepository.Scope.MODULE)
                                 .cached(project.artifacts() == null ? null : Files.createDirectories(project.artifacts()))
                                 .prepend(JenesisModuleRepository.ofLocal()));
                 Map<String, Resolver> resolvers = new LinkedHashMap<>(project.resolvers());
@@ -199,7 +203,8 @@ public record Project(
                                 project.pinning(),
                                 true,
                                 Layout.licenseFiles(project, Dependencies.SPDX),
-                                (descriptor, mergedRepos, mergedResolvers) -> assembler.apply(
+                                project.boms(),
+                                (descriptor, mergedRepos, mergedResolvers) -> bomAware.apply(
                                         new ProjectModuleDescriptor(descriptor,
                                                 configurations(
                                                         modularConfigurationFolder(descriptor.location()),
@@ -249,13 +254,14 @@ public record Project(
                     BuildExecutorModule.PREVIOUS.repeat(2) + MultiProjectModule.MANIFESTS,
                     "module",
                     true);
+            MultiProjectAssembler<? super ProjectModuleDescriptor> bomAware = new BomAwareAssembler(pomAware, project.hashFunction());
             executor.addModule(BUILD, (sub, inherited) -> {
                 Map<String, Repository> repositories = new LinkedHashMap<>(project.repositories());
                 repositories.putIfAbsent("maven",
-                        new MavenDefaultRepository()
+                        MavenDefaultRepository.of()
                                 .cached(project.artifacts() == null ? null : Files.createDirectories(project.artifacts())));
                 repositories.putIfAbsent("module",
-                        new JenesisModuleRepository(false)
+                        JenesisModuleRepository.of(JenesisRepository.Scope.ARTIFACT)
                                 .cached(project.artifacts() == null ? null : Files.createDirectories(project.artifacts()))
                                 .prepend(JenesisModuleRepository.ofLocal()));
                 Map<String, Resolver> resolvers = new LinkedHashMap<>(project.resolvers());
@@ -275,7 +281,8 @@ public record Project(
                                 project.pinning(),
                                 true,
                                 Layout.licenseFiles(project, Dependencies.SPDX),
-                                (descriptor, mergedRepos, mergedResolvers) -> pomAware.apply(
+                                project.boms(),
+                                (descriptor, mergedRepos, mergedResolvers) -> bomAware.apply(
                                         new ProjectModuleDescriptor(descriptor,
                                                 configurations(modularConfigurationFolder(descriptor.location()), project.configuration(), project.profiles()),
                                                 project.tests(),
@@ -455,6 +462,7 @@ public record Project(
                       %{name}sources%{reset}, %{name}documentation%{reset}           Assemble source/javadoc jars
                       %{name}metadata%{reset}                         Path-separated list of extra metadata files
                       %{name}configuration%{reset}                    Directory the inferred tools search for config files (default: root; empty skips it)
+                      %{name}boms%{reset}                             Path-separated locations of local bom-<name>.properties files (default: configuration)
                       %{name}version%{reset}                          Project version
                       %{name}digest%{reset}                           Algorithm for pin and dependency checksums (default: SHA-256)
                       %{name}watch%{reset}                            Rebuild the selected target whenever a source file changes (Ctrl+C to stop)
@@ -479,6 +487,16 @@ public record Project(
                       pinned versions but skips checksum verification. Unset keeps existing
                       pins but tolerates missing ones.
 
+                    %{header}Pin step (-Djenesis.pin.<key>=<value>):%{reset}
+                      %{name}checksum%{reset} <true|false>          Record content checksums in pins (default: true);
+                                                       false writes versions only
+                      %{name}bom%{reset} <keep|flatten>             %{name}keep%{reset} (default) writes no pin for a dependency a
+                                                       BOM already supplies (removing a now-redundant
+                                                       pin line) and pins each versioned @jenesis.bom
+                                                       reference with its file hash; %{name}flatten%{reset} removes
+                                                       the @jenesis.bom declarations and pins the
+                                                       resolved closure in full
+
                     %{header}Platform (-Djenesis.platform.<token>=<true|false>):%{reset}
                       The active platform starts from the detected operating system and
                       chipset (%{name}windows%{reset}/%{name}linux%{reset}/%{name}macos%{reset} plus %{name}x86_64%{reset}/%{name}aarch64%{reset}). A
@@ -496,6 +514,12 @@ public record Project(
                       %{name}local%{reset} (on-disk cache) and %{name}token%{reset} (bearer credential) under
                       %{name}jenesis.maven.<key>%{reset} and %{name}jenesis.module.<key>%{reset}; each falls back to the
                       %{name}MAVEN_REPOSITORY_<KEY>%{reset} / %{name}JENESIS_REPOSITORY_<KEY>%{reset} environment variable.
+                      The %{name}uri%{reset} accepts a comma-separated list queried left to right; a
+                      %{name}<url>|<id>|...%{reset} entry only serves group ids (Maven) or module ids
+                      (Jenesis) that equal an %{name}<id>%{reset} or sit below it at a dot boundary.
+                      An %{name}@%{reset} entry splices in the default configuration (the environment
+                      value, else the built-in default) and %{name}@<name>%{reset} the value of that
+                      property or environment variable; unresolved or circular references fail.
 
                     %{header}Tests (-Djenesis.test.<key>=<value>):%{reset}
                       %{name}skip%{reset}                             Skip executing tests
@@ -547,6 +571,30 @@ public record Project(
                                                        an optional trailing %{name}[<token>,<token>...]%{reset} guard applies
                                                        the pin only when those tokens are in the active platform,
                                                        with an unguarded line for the same coordinate as fallback
+                      %{name}@jenesis.bom%{reset} <token> [<ver> [<algo>/<hex>]] [<guard>]
+                                                       Import a BOM properties file of version and checksum pins;
+                                                       the token follows the pin grammar (bare <module> is short for
+                                                       <group>/module/<module>) and names a BOM in the module
+                                                       repository, fetched at <ver> or floating latest without one;
+                                                       a token of [<group>/]bom-<name>.properties reads that file
+                                                       from the project's BOM locations (jenesis.project.boms,
+                                                       default: the configuration locations) instead; local
+                                                       @jenesis.pin lines override BOM entries
+
+                    %{header}Build-configuration files (in a module's build.jenesis config location; presence activates, contents configure):%{reset}
+                      %{name}packaging.properties%{reset}    Extra deliverables: jmod/jlink/bundle/launcher/native (booleans), jpackage=<type>
+                      %{name}sbom.properties%{reset}         CycloneDX SBOM format=json|xml|none (SBOM is on by default; -Djenesis.sbom.cyclonedx=false disables)
+                      %{name}bom.properties%{reset}          Publish the module's resolved closure as a repository BOM, <module>/<version>/<module>.properties (Jenesis repository only)
+                      %{name}licensing.properties%{reset}    License compliance check (allowed/denied/unknown/override.<coord>)
+                      %{name}vulnerability.properties%{reset} OSV vulnerability check (severity, warn)
+                      %{name}jacoco.properties%{reset}       JaCoCo test-coverage report
+                      %{name}graal.properties%{reset}        GraalVM native-image reachability agent during the test run
+                      %{name}pitest.properties%{reset}       PIT mutation testing
+                      %{name}javaformat.properties%{reset}   Java source formatter=google|palantir
+                      %{name}spdx.properties%{reset}         Extend the license alias/category tables
+                      %{name}process-<tool>.properties%{reset} Extra command-line arguments merged into a forked tool (javac, javadoc, jar, jlink, jpackage, ...)
+                      The inferred linters and other formatters activate instead from their own native config
+                      files (checkstyle.xml, pmd.xml, spotbugs-exclude.xml, .editorconfig, .scalafmt.conf, ...).
 
                     See README.md for the full reference.
                     """)
@@ -724,6 +772,14 @@ public record Project(
                       versions.properties   `<group>/<repository>/<coordinate>` ->
                                             `<version>[ <algo>/<hex>]`. Bill of
                                             materials for the resolution pass.
+                      boms.properties       `bom/<group>/<repository>/<coordinate>`
+                                            -> `[<version>[ <algo>/<hex>]]` BOM
+                                            references to fetch (empty version
+                                            floats to latest), and
+                                            `entry/<group>/<repository>/<coordinate>`
+                                            -> `<version>[ <algo>/<hex>]` entries
+                                            expanded from module-local BOM files;
+                                            merged below versions.properties.
                       exclusions.properties `<group>/<scope>/<repository>/<coordinate>`
                                             -> comma-separated
                                             `<groupId>/<artifactId>` exclusions.
@@ -808,7 +864,70 @@ public record Project(
                                                         active platform, with an
                                                         unguarded line for the same
                                                         coordinate as the fallback.
-                    
+                      @jenesis.bom <token> [<ver> [<algo>/<hex>]] [<guard>]
+                                                        Import a BOM properties
+                                                        file of version and
+                                                        checksum pins. The token
+                                                        follows the pin grammar
+                                                        (a bare <module>
+                                                        abbreviates
+                                                        <group>/module/<module>)
+                                                        and names a BOM in the
+                                                        module repository, fetched
+                                                        at <ver> or floating
+                                                        latest without one. A
+                                                        token of
+                                                        [<group>/]bom-<name>.properties
+                                                        (a dash never occurs in a
+                                                        module name) reads that
+                                                        file from the project's
+                                                        BOM locations
+                                                        (jenesis.project.boms,
+                                                        default: the configuration
+                                                        locations; fixed, never
+                                                        profile-resolved).
+                                                        BOM file keys omit the
+                                                        group (bare <module>,
+                                                        <groupId>/<artifactId>, or
+                                                        explicit
+                                                        <repo>/<coordinate>);
+                                                        local @jenesis.pin lines
+                                                        override BOM entries, and
+                                                        the first declared BOM
+                                                        wins a conflict.
+
+                    Build-configuration files (in a module's build.jenesis config
+                    location - a module's META-INF/build.jenesis/ folder, plus the
+                    project configuration locations; presence activates the
+                    feature, contents configure it):
+                      packaging.properties      Extra deliverables: jmod/jlink/
+                                                bundle/launcher/native (booleans),
+                                                jpackage=<type>.
+                      sbom.properties           CycloneDX SBOM format=json|xml|none.
+                                                The SBOM is on by default; this file
+                                                only tunes it (disable entirely with
+                                                -Djenesis.sbom.cyclonedx=false).
+                      bom.properties            Publish the module's resolved closure
+                                                as a repository BOM, export writes it
+                                                to <module>/<version>/<module>.properties
+                                                (Jenesis repository only; the Maven
+                                                export never carries it).
+                      licensing.properties      License compliance check
+                                                (allowed/denied/unknown/override.<coord>).
+                      vulnerability.properties  OSV vulnerability check (severity, warn).
+                      jacoco.properties         JaCoCo test-coverage report.
+                      graal.properties          GraalVM native-image reachability agent
+                                                attached during the test run.
+                      pitest.properties         PIT mutation testing.
+                      javaformat.properties     Java source formatter=google|palantir.
+                      spdx.properties           Extend the license alias/category tables.
+                      process-<tool>.properties Extra command-line arguments merged
+                                                into a forked tool (javac, javadoc,
+                                                jar, jlink, jpackage, ...).
+                    The inferred linters and the ktlint/scalafmt formatters activate
+                    instead from their own native config files (checkstyle.xml,
+                    pmd.xml, spotbugs-exclude.xml, .editorconfig, .scalafmt.conf, ...).
+
                     9. Set system properties for one-off overrides
                     ----------------------------------------------
                     Project-level (-Djenesis.project.<key>=<value>):
@@ -822,6 +941,16 @@ public record Project(
                                                   inferred tools' config files
                                                   (default root; empty uses only
                                                   each module's build.jenesis/).
+                                                  Path-separated; an @ entry
+                                                  splices the default, @<name> a
+                                                  property or env value.
+                      boms                        Path-separated locations of
+                                                  local bom-<name>.properties
+                                                  files (default: configuration;
+                                                  never profile-resolved). An @
+                                                  entry splices the configuration
+                                                  locations, @<name> a property
+                                                  or env value.
                       version                     Stamp version onto every
                                                   produced artifact.
                       digest                      Algorithm for pin and
@@ -839,6 +968,24 @@ public record Project(
                                                   (refresh pins via the pin step);
                                                   versions keeps pinned versions
                                                   but skips checksum verification.
+
+                    Pin step:
+                      -Djenesis.pin.checksum=true|false
+                                                  Record content checksums in
+                                                  pins (default true); false
+                                                  writes versions only.
+                      -Djenesis.pin.bom=keep|flatten
+                                                  keep (default) writes no pin
+                                                  for a dependency a BOM already
+                                                  supplies (a now-redundant pin
+                                                  line is removed) and pins each
+                                                  versioned @jenesis.bom
+                                                  reference with its file hash;
+                                                  flatten removes the
+                                                  @jenesis.bom declarations and
+                                                  pins the resolved closure in
+                                                  full (platform-guarded BOM
+                                                  declarations fail flattening).
 
                     Platform:
                       -Djenesis.platform.<token>=true|false  The active platform
@@ -859,10 +1006,19 @@ public record Project(
                       -Djenesis.maven.uri|local|token     Maven repository remote
                                                   URL, local cache and bearer token
                                                   (env fallbacks
-                                                  MAVEN_REPOSITORY_URI/LOCAL/TOKEN).
+                                                  MAVEN_REPOSITORY_URI/LOCAL/TOKEN);
+                                                  a comma-separated URL list is
+                                                  queried left to right, and a
+                                                  <url>|<group>|... entry only
+                                                  serves matching group ids. An @
+                                                  entry splices the default (env
+                                                  value, then built-in), @<name>
+                                                  a property or env value.
                       -Djenesis.module.uri|local|token    Jenesis module repository,
                                                   likewise (env fallbacks
-                                                  JENESIS_REPOSITORY_URI/LOCAL/TOKEN).
+                                                  JENESIS_REPOSITORY_URI/LOCAL/TOKEN);
+                                                  a <url>|<module>|... entry only
+                                                  serves matching module ids.
 
                     Build cache:
                       -Djenesis.cache.uri=<uri>           Reuse step outputs across
@@ -972,7 +1128,7 @@ public record Project(
                     classpath / module path. If exactly one module declares a
                     main, it is picked implicitly; otherwise disambiguate with
                     `-Djenesis.execute.module=<path>`, the module's source folder
-                    (a nested one as either `source/ui` or `source+ui`), and
+                    (a nested one as either `server/ui` or `server+ui`), and
                     `-Djenesis.execute.mainClass=<fqcn>`. Wrap the launched
                     program in Docker independently of the build with
                     `-Djenesis.execute.docker=true` and (optional)
@@ -1136,6 +1292,24 @@ public record Project(
         }
     }
 
+    private record BomAwareAssembler(MultiProjectAssembler<? super ProjectModuleDescriptor> base,
+                                     HashDigestFunction hashFunction) implements MultiProjectAssembler<ProjectModuleDescriptor> {
+
+        @Override
+        public AssemblyDescriptor apply(ProjectModuleDescriptor descriptor,
+                                        Map<String, Repository> repositories,
+                                        Map<String, Resolver> resolvers) {
+            AssemblyDescriptor assembly = base.apply(descriptor, repositories, resolvers);
+            if (BuildStep.locate(descriptor.configuration(), "bom.properties") == null) {
+                return assembly;
+            }
+            return assembly.mapBuild(delegate -> (sub, inherited) -> {
+                delegate.accept(sub, inherited);
+                sub.addStep("bom", new Bom(hashFunction), inherited.sequencedKeySet().stream());
+            });
+        }
+    }
+
     private record MavenIdentity(String prefix, String manifests) implements BuildStep {
 
         @Override
@@ -1178,15 +1352,21 @@ public record Project(
         SequencedSet<Path> resolvedConfiguration;
         if (configurationOverride == null) {
             resolvedConfiguration = new LinkedHashSet<>(List.of(resolvedRoot));
-        } else if (configurationOverride.isEmpty()) {
-            resolvedConfiguration = Collections.emptyNavigableSet();
         } else {
-            Path configurationRoot = resolvedRoot;
-            resolvedConfiguration = Arrays.stream(configurationOverride.split(Pattern.quote(File.pathSeparator)))
-                    .map(String::trim)
-                    .filter(value -> !value.isEmpty())
-                    .map(value -> configurationRoot.resolve(Path.of(value)))
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            resolvedConfiguration = new LinkedHashSet<>();
+            locations(configurationOverride,
+                    resolvedRoot,
+                    new LinkedHashSet<>(List.of(resolvedRoot)),
+                    new HashSet<>(),
+                    resolvedConfiguration);
+        }
+        String bomsOverride = System.getProperty("jenesis.project.boms");
+        SequencedSet<Path> resolvedBoms;
+        if (bomsOverride == null) {
+            resolvedBoms = resolvedConfiguration;
+        } else {
+            resolvedBoms = new LinkedHashSet<>();
+            locations(bomsOverride, resolvedRoot, resolvedConfiguration, new HashSet<>(), resolvedBoms);
         }
         String profilesOverride = System.getProperty("jenesis.project.properties");
         SequencedSet<Path> resolvedProfiles = profilesOverride == null
@@ -1241,6 +1421,7 @@ public record Project(
                 resolvedArtifacts,
                 resolvedMetadata,
                 resolvedConfiguration,
+                resolvedBoms,
                 resolvedProfiles,
                 resolvedCache,
                 new HashDigestFunction(System.getProperty("jenesis.project.digest", "SHA-256")),
@@ -1257,12 +1438,44 @@ public record Project(
                 Map.of());
     }
 
+    private static void locations(String text,
+                                  Path root,
+                                  SequencedSet<Path> defaults,
+                                  Set<String> visited,
+                                  SequencedSet<Path> target) {
+        for (String entry : text.split(Pattern.quote(File.pathSeparator))) {
+            String candidate = entry.trim();
+            if (candidate.isEmpty()) {
+                continue;
+            }
+            if (candidate.startsWith("@")) {
+                String name = candidate.substring(1);
+                if (name.isEmpty()) {
+                    target.addAll(defaults);
+                } else {
+                    String value = System.getProperty(name, System.getenv(name));
+                    if (value == null) {
+                        throw new IllegalStateException("Unresolved location reference: @" + name);
+                    }
+                    if (!visited.add(name)) {
+                        throw new IllegalStateException("Circular location reference: @" + name);
+                    }
+                    locations(value, root, defaults, visited, target);
+                    visited.remove(name);
+                }
+            } else {
+                target.add(root.resolve(Path.of(candidate)));
+            }
+        }
+    }
+
     public Project root(Path root) {
         return new Project(root,
                 target,
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1285,6 +1498,30 @@ public record Project(
                 artifacts,
                 metadata,
                 new LinkedHashSet<>(List.of(configuration)),
+                boms,
+                profiles,
+                cache,
+                hashFunction,
+                layout,
+                tests,
+                sources,
+                documentation,
+                pinning,
+                version,
+                defaultTarget,
+                assembler,
+                configurator,
+                repositories,
+                resolvers);
+    }
+
+    public Project boms(Path... boms) {
+        return new Project(root,
+                target,
+                artifacts,
+                metadata,
+                configuration,
+                new LinkedHashSet<>(List.of(boms)),
                 profiles,
                 cache,
                 hashFunction,
@@ -1307,6 +1544,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 new LinkedHashSet<>(List.of(profiles)),
                 cache,
                 hashFunction,
@@ -1329,6 +1567,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1351,6 +1590,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1373,6 +1613,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1395,6 +1636,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1417,6 +1659,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1439,6 +1682,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1461,6 +1705,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1483,6 +1728,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1505,6 +1751,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1527,6 +1774,7 @@ public record Project(
                 artifacts,
                 new LinkedHashSet<>(List.of(metadata)),
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1549,6 +1797,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1571,6 +1820,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1593,6 +1843,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1615,6 +1866,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1637,6 +1889,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
@@ -1659,6 +1912,7 @@ public record Project(
                 artifacts,
                 metadata,
                 configuration,
+                boms,
                 profiles,
                 cache,
                 hashFunction,
