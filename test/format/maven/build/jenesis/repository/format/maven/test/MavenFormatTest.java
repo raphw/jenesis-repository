@@ -98,6 +98,18 @@ class MavenFormatTest {
                 .containsExactlyInAnyOrder("/maven/org/example/lib/1.0", "/module/org.example.lib/1.0");
     }
 
+    @Test
+    void paths_from_the_coordinate_alone_returns_the_primary_folder_without_reading_the_jar() throws IOException {
+        // The read-path overload a console search uses: even with a modular jar published - whose /module/ mirror the
+        // store overload discovers by opening the jar - the store-free overload returns only the primary folder, so a
+        // search never buffers a blob to place its hits.
+        format.handle(new FakeExchange("PUT", "/maven/org/example/lib/1.0/lib-1.0.jar",
+                automaticModuleJar("org.example.lib")), store);
+
+        assertThat(format.paths("org.example:lib", "1.0")).containsExactly("/maven/org/example/lib/1.0");
+        assertThat(format.paths("no-colon", "1.0")).isEmpty();
+    }
+
     private static byte[] automaticModuleJar(String moduleName) throws IOException {
         java.util.jar.Manifest manifest = new java.util.jar.Manifest();
         manifest.getMainAttributes().putValue("Manifest-Version", "1.0");

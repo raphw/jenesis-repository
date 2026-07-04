@@ -52,19 +52,30 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     }
 
     @Override
-    public List<String> paths(String coordinate, String version, ArtifactStore store) {
+    public List<String> paths(String coordinate, String version) {
         int colon = coordinate.indexOf(':');
         if (colon < 0) {
             return List.of();
         }
         String group = coordinate.substring(0, colon).replace('.', '/');
         String artifact = coordinate.substring(colon + 1);
-        String mavenDir = "/maven/" + group + "/" + artifact + "/" + version;
-        List<String> paths = new ArrayList<>();
-        paths.add(mavenDir);
+        return List.of("/maven/" + group + "/" + artifact + "/" + version);
+    }
+
+    @Override
+    public List<String> paths(String coordinate, String version, ArtifactStore store) {
+        List<String> primary = paths(coordinate, version);
+        if (primary.isEmpty()) {
+            return primary;
+        }
+        int colon = coordinate.indexOf(':');
+        String artifact = coordinate.substring(colon + 1);
+        String mavenDir = primary.getFirst();
+        List<String> paths = new ArrayList<>(primary);
         // Also the module view this format cross-published for a modular jar: read the module name back from the
         // stored jar (the same read publish did), so a cleanup that unpublishes this version removes its /module/
-        // mirror too and the shared blob becomes unreferenced. Best-effort: no jar, no module, no mirror.
+        // mirror too and the shared blob becomes unreferenced. Best-effort: no jar, no module, no mirror. This is the
+        // one store read, and it is why a read path (a console search) must call the store-free overload instead.
         try {
             Publication publication = new Publication(store);
             Optional<String> key = publication.located(mavenDir + "/" + artifact + "-" + version + ".jar");

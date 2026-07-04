@@ -91,8 +91,15 @@ Status (`passed` / `quarantined` / `signed`) and config metadata (`live` / `rest
 
 ## 5. How the enterprise console extends this base
 
-The enterprise console is a separate module that reuses this base rather than re-vendoring it: it depends on this
-UI module (a `requires build.jenesis.repository.ui` JPMS edge), serves the same `app.css`, and `th:replace`-es the
-`base.html` fragments. Applying the shell and component set across every enterprise screen — and de-duplicating the
-now-shared vendored assets so there is a single source — is the cross-console cohesion pass (worklist W4.5a); this
-document and `base.html`/`app.css` are the base that pass draws on.
+The intended model is that the enterprise console reuses this base rather than re-vendoring it — serving the same
+`app.css` and `th:replace`-ing the `base.html` fragments — and applying the shell across every enterprise screen is
+the cross-console cohesion pass (worklist W4.5a). This document and `base.html`/`app.css` are the base that pass
+draws on.
+
+**The obvious mechanism — a `requires build.jenesis.repository.ui` JPMS edge — does not work, and W4.5a is blocked
+on it.** Both console modules ship a `templates/` package (and a `static/` package), and the module layer refuses
+to instantiate two modules that split a package (`LayerInstantiationException: Package templates in both module …`).
+So the enterprise console currently **still re-vendors** these assets; it does not yet depend on this module. The
+principle-clean fix (a human architecture call) is to extract a dedicated shared base module with **non-colliding**
+resource dirs (`templates-base/`, `static-base/`) that both consoles `requires`, each adding a secondary Thymeleaf
+resolver + static-resource handler.

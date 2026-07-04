@@ -300,9 +300,10 @@ The console has a small **design system** layered over the vendored Pico.css - a
 (`static/css/app.css`: a type scale, spacing, radii and a light/dark status palette) and a documented
 component set as Thymeleaf fragments (`templates/base.html`: page header, list/table, card,
 form-field-with-help, empty state, badge), with an accessibility baseline (semantic landmarks, a skip
-link, a visible focus ring, colour never the sole signal, WCAG-AA contrast in both themes). It is the
-shared base a downstream distribution's console extends rather than re-vendoring; see
-[`DESIGN.md`](DESIGN.md).
+link, a visible focus ring, colour never the sole signal, WCAG-AA contrast in both themes). It is
+designed to be the shared base a downstream distribution's console extends rather than re-vendoring
+(the direct `requires` edge is blocked by a JPMS split-package and awaits a shared-base module — see
+[`DESIGN.md`](DESIGN.md)).
 
 A repository-wide storage cap is optional: `-Djenesis.repository.quota=10GB` (a byte count or a `K`/`M`/`G`/`T`
 suffix) refuses a new artifact once stored content reaches the limit, with `507 Insufficient Storage`. Only
