@@ -52,6 +52,7 @@ class PublishInterceptorTest {
 
         private final Disposition verdict;
         private Disposition committed;
+        private ArtifactStore committedStore;
 
         Fixed(Disposition verdict) {
             this.verdict = verdict;
@@ -63,8 +64,9 @@ class PublishInterceptorTest {
         }
 
         @Override
-        public void committed(ArtifactDescriptor artifact, Disposition disposition) {
+        public void committed(ArtifactDescriptor artifact, Disposition disposition, ArtifactStore store) {
             this.committed = disposition;
+            this.committedStore = store;
         }
     }
 
@@ -91,6 +93,33 @@ class PublishInterceptorTest {
         assertThat(publication.located("/quarantine/raw/held")).as("only under the quarantine view")
                 .contains("blobs/" + published.hash());
         assertThat(interceptor.committed).isEqualTo(PublishInterceptor.Disposition.QUARANTINE);
+        assertThat(interceptor.committedStore).as("the outcome carries the scoped store").isSameAs(store);
+    }
+
+    @Test
+    void a_screened_upload_is_stored_but_the_accepted_link_is_the_callers() throws IOException {
+        Fixed interceptor = new Fixed(PublishInterceptor.Disposition.ACCEPT);
+        Publication publication = new Publication(store, List.of(interceptor));
+
+        Publication.Published screened = publication.screen(descriptor("/raw/external"), bytes("laid-out-elsewhere"));
+
+        assertThat(screened.disposition()).isEqualTo(PublishInterceptor.Disposition.ACCEPT);
+        assertThat(store.exists("blobs/" + screened.hash())).as("stored content-addressed for the caller").isTrue();
+        assertThat(publication.located("/raw/external")).as("but linked by the caller, not the screen").isEmpty();
+        assertThat(interceptor.committed).isEqualTo(PublishInterceptor.Disposition.ACCEPT);
+    }
+
+    @Test
+    void a_screened_upload_still_diverts_to_quarantine_on_that_verdict() throws IOException {
+        Publication publication = new Publication(store,
+                List.of(new Fixed(PublishInterceptor.Disposition.QUARANTINE)));
+
+        Publication.Published screened = publication.screen(descriptor("/raw/suspect"), bytes("held"));
+
+        assertThat(screened.disposition()).isEqualTo(PublishInterceptor.Disposition.QUARANTINE);
+        assertThat(publication.located("/raw/suspect")).isEmpty();
+        assertThat(publication.located("/quarantine/raw/suspect")).as("reviewable under the quarantine view")
+                .contains("blobs/" + screened.hash());
     }
 
     @Test

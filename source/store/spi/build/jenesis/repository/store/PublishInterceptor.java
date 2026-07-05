@@ -59,8 +59,11 @@ public interface PublishInterceptor {
     }
 
     /** React to the routed outcome once the collective disposition is decided - the seam for inventory recording on
-     *  {@code ACCEPT}, a quarantine or rejection audit otherwise. A hook that only rides an accepted publish and has
+     *  {@code ACCEPT}, a quarantine or rejection audit otherwise. The scoped store the publication routed through
+     *  rides along so such a record lands in the publish's own tenant/repository space - the doubly-scoped store
+     *  <em>is</em> the routed space, per this SPI's convention. A hook that only rides an accepted publish and has
      *  no say in the verdict belongs in the other hook class, the after-commit {@link PublicationObserver}. */
-    default void committed(ArtifactDescriptor artifact, Disposition disposition) throws IOException {
+    default void committed(ArtifactDescriptor artifact, Disposition disposition, ArtifactStore store)
+            throws IOException {
     }
 }

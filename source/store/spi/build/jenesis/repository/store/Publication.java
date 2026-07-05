@@ -106,6 +106,24 @@ public final class Publication {
      * publish - with any observer failure logged and contained, never unlinking the artifact or failing the upload.
      */
     public Published publish(ArtifactDescriptor artifact, InputStream content) throws IOException {
+        return route(artifact, content, true);
+    }
+
+    /**
+     * Store an upload content-addressed and run the {@link PublishInterceptor} chain over its neutral
+     * {@link ArtifactDescriptor} <em>without publishing it</em>: an accepted upload links no pointer - the caller
+     * owns the accepted write, storing the content into its own layout from the returned hash - while a quarantined
+     * one is still diverted to the {@code /quarantine} view for review and a rejected one leaves only the
+     * unreferenced blob for garbage collection. This is the seam for a format-external gate choreography (a serving
+     * surface screening an upload before it hands the stored body to the format that lays it out). The interceptors'
+     * {@link PublishInterceptor#committed} notifications fire; the after-commit {@link PublicationObserver}s do not,
+     * since nothing was published yet - they ride the actual publish, if the caller makes one.
+     */
+    public Published screen(ArtifactDescriptor artifact, InputStream content) throws IOException {
+        return route(artifact, content, false);
+    }
+
+    private Published route(ArtifactDescriptor artifact, InputStream content, boolean publish) throws IOException {
         String hash = storeBlob(content);
         ArtifactDescriptor stored = artifact.withBlob(hash, store.size("blobs/" + hash));
         PublishInterceptor.Content access = access(hash);
@@ -117,15 +135,19 @@ public final class Publication {
             }
         }
         switch (disposition) {
-            case ACCEPT -> link(artifact.path(), hash);
+            case ACCEPT -> {
+                if (publish) {
+                    link(artifact.path(), hash);
+                }
+            }
             case QUARANTINE -> link("/quarantine" + artifact.path(), hash);
             case REJECT -> {
             }
         }
         for (PublishInterceptor interceptor : interceptors) {
-            interceptor.committed(stored, disposition);
+            interceptor.committed(stored, disposition, store);
         }
-        if (disposition == PublishInterceptor.Disposition.ACCEPT) {
+        if (publish && disposition == PublishInterceptor.Disposition.ACCEPT) {
             for (PublicationObserver observer : observers) {
                 try {
                     observer.onPublished(stored, store);
