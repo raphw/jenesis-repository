@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The framework-neutral core of the repository dispatch: it offers a {@link FormatExchange} to the
@@ -52,5 +53,23 @@ public final class FormatDispatcher {
             }
         }
         return false;
+    }
+
+    /**
+     * The format that owns a request path - the first whose {@link RepositoryFormat#handles handles} it - so a
+     * read-side concern that only has a stored path can recover its format without re-implementing the matching. The
+     * {@code /api/assets} enumeration uses it to label a publication pointer with its format {@link
+     * RepositoryFormat#name() name} and, when the owner is an {@link build.jenesis.repository.format.ArtifactLayout
+     * ArtifactLayout}, its neutral coordinate through {@link
+     * build.jenesis.repository.format.ArtifactLayout#describe describe} - from the path alone, no blob opened. Empty
+     * when no installed format claims the path.
+     */
+    public Optional<RepositoryFormat> owner(String path) {
+        for (RepositoryFormat format : formats) {
+            if (format.handles(path)) {
+                return Optional.of(format);
+            }
+        }
+        return Optional.empty();
     }
 }

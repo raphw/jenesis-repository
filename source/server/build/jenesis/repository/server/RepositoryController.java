@@ -24,10 +24,14 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 
 /**
  * The HTTP surface of the free repository, mirroring {@link RepositoryApplication}'s framework-neutral
@@ -48,12 +52,20 @@ public class RepositoryController {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
+    /** A routable repository name, the same traversal-free segment shape the multi-tenant edition validates, so a
+     *  {@code repo=} query parameter can never escape its store scope (no {@code /}, {@code \} or {@code ..}). */
+    private static final Pattern REPOSITORY = Pattern.compile("[A-Za-z0-9_-]+");
+
+    private static final int DEFAULT_PAGE = 500;
+    private static final int MAX_PAGE = 1000;
+
     private final RepositoryRouting routing;
     private final FormatDispatcher dispatcher;
     private final List<ImportSourceProvider> importSources;
     private final ProxyFormat.Fetcher fetcher;
     private final BatchIngestion batch;
     private final UnaryOperator<String> settings;
+    private final ArtifactStore root;
 
     public RepositoryController(RepositoryRouting routing,
                                 FormatDispatcher dispatcher,
@@ -83,12 +95,27 @@ public class RepositoryController {
                                 ProxyFormat.Fetcher fetcher,
                                 BatchIngestion batch,
                                 UnaryOperator<String> settings) {
+        this(routing, dispatcher, importSources, fetcher, batch, settings, null);
+    }
+
+    /** As above, holding the un-scoped {@code root} {@link ArtifactStore} so the {@code /api/assets} enumeration can
+     *  scope to an explicitly named {@code repo} within the request's tenant ({@code root.scope(tenant).scope(repo)},
+     *  the same chain {@link RepositoryRouting} resolves). A {@code null} {@code root} leaves the enumeration on the
+     *  request's own routed space, so the convenience constructors above still serve the fixed-tenant deployment. */
+    public RepositoryController(RepositoryRouting routing,
+                                FormatDispatcher dispatcher,
+                                List<ImportSourceProvider> importSources,
+                                ProxyFormat.Fetcher fetcher,
+                                BatchIngestion batch,
+                                UnaryOperator<String> settings,
+                                ArtifactStore root) {
         this.routing = routing;
         this.dispatcher = dispatcher;
         this.importSources = importSources;
         this.fetcher = fetcher;
         this.batch = batch;
         this.settings = settings;
+        this.root = root;
     }
 
     /**
@@ -192,6 +219,76 @@ public class RepositoryController {
         response.setStatus(200);
         try (OutputStream out = response.getOutputStream()) {
             out.write(state.get());
+        }
+    }
+
+    /**
+     * The paged asset enumeration - the free product's first {@code /api} surface and the outbound mirror of the
+     * import connectors, so a jenesis instance can be walked by another tool (or another jenesis) and getting your
+     * data out is never the paid feature. {@code GET /api/assets?repo=<name>&cursor=<token>&limit=<n>} returns a
+     * flat, stably-ordered slice of the repository's published assets: each entry's {@code path}, {@code size} and
+     * {@code sha256} come straight from the {@link build.jenesis.repository.store.Publication publication pointer}
+     * (no blob is ever opened - read-first) and its {@code format}/{@code ecosystem}/{@code coordinate}/
+     * {@code version} from the owning format's layout. The opaque {@code cursor} in the response fetches the next
+     * page and is {@code null} once the walk is exhausted. {@code repo} defaults to the request's routed repository
+     * and is validated as a traversal-free segment before it scopes the store; the wire is key-auth'd like every
+     * other read ({@code repository:read}) by {@link RepositorySecurityAutoConfiguration}.
+     */
+    @GetMapping("/api/assets")
+    public void assets(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        RepositoryRouting.Route route = routing.route(request);
+        String repository = request.getParameter("repo");
+        if (repository == null || repository.isBlank()) {
+            repository = route.repository();
+        }
+        if (!REPOSITORY.matcher(repository).matches()) {
+            respond(response, 400, "repo must be a routable name matching " + REPOSITORY.pattern());
+            return;
+        }
+        String after;
+        String cursor = request.getParameter("cursor");
+        if (cursor == null || cursor.isBlank()) {
+            after = null;
+        } else {
+            try {
+                after = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException _) {
+                respond(response, 400, "malformed cursor");
+                return;
+            }
+        }
+        ArtifactStore store = root == null ? route.store() : root.scope(route.tenant()).scope(repository);
+        AssetCatalog.Page page = new AssetCatalog(store, dispatcher::owner).page(after, pageSize(request.getParameter("limit")));
+        List<Map<String, Object>> assets = new ArrayList<>();
+        for (AssetCatalog.Asset asset : page.assets()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("path", asset.path());
+            entry.put("size", asset.size());
+            entry.put("sha256", asset.sha256());
+            entry.put("format", asset.format());
+            entry.put("ecosystem", asset.ecosystem());
+            entry.put("coordinate", asset.coordinate());
+            entry.put("version", asset.version());
+            entry.put("prerelease", asset.prerelease());
+            assets.add(entry);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("repository", repository);
+        body.put("assets", assets);
+        body.put("cursor", page.cursor() == null ? null
+                : Base64.getUrlEncoder().withoutPadding().encodeToString(page.cursor().getBytes(StandardCharsets.UTF_8)));
+        response.setHeader("Content-Type", "application/json");
+        respond(response, 200, JSON.writeValueAsString(body));
+    }
+
+    private static int pageSize(String value) {
+        if (value == null || value.isBlank()) {
+            return DEFAULT_PAGE;
+        }
+        try {
+            return Math.max(1, Math.min(MAX_PAGE, Integer.parseInt(value.trim())));
+        } catch (NumberFormatException _) {
+            return DEFAULT_PAGE;
         }
     }
 

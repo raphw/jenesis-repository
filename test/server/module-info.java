@@ -100,7 +100,9 @@ open module build.jenesis.repository.test {
     requires build.jenesis.repository.importer;
     requires build.jenesis.repository.importer.nexus;
     requires build.jenesis.repository.importer.artifactory;
+    requires build.jenesis.repository.importer.jenesis;
     requires build.jenesis;
+    requires tools.jackson.databind;
     requires java.net.http;
     requires jdk.httpserver;
     requires org.junit.jupiter;
