@@ -7,7 +7,7 @@
 <body>
 <a class="app-skip-link" href="#main">Skip to content</a>
 <header class="container">
-    <nav>
+    <nav class="app-nav">
         <ul>
             <li><strong>jenesis-repository</strong></li>
         </ul>
@@ -15,6 +15,7 @@
             <li th:each="panel : ${panels}">
                 <a th:href="'#' + ${panel.id}" th:text="${panel.title}">Panel</a>
             </li>
+            <li><select th:replace="~{base :: themeSelect}"></select></li>
             <li>
                 <form th:action="@{/logout}" method="post" style="display:inline;margin:0">
                     <button type="submit" class="secondary outline">Sign out</button>
@@ -25,7 +26,11 @@
 </header>
 <main id="main" class="container">
     <header th:replace="~{base :: pageHeader('Repository console')}"></header>
-    <div th:if="${panels.isEmpty()}" th:replace="~{base :: empty('No panels are registered.')}"></div>
+    <!--/* th:if must sit on a wrapping block: on the same element, th:replace (precedence 100) runs BEFORE
+         th:if (300), so the empty state would render unconditionally. */-->
+    <th:block th:if="${panels.isEmpty()}">
+        <div th:replace="~{base :: empty('No panels are registered.')}"></div>
+    </th:block>
     <article th:each="panel : ${panels}" th:id="${panel.id}" class="app-card">
         <header><h2 th:text="${panel.title}">Panel</h2></header>
         <div th:utext="${panel.body}">panel body</div>

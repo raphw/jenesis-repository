@@ -98,6 +98,32 @@ public class ConsoleE2ETest {
     }
 
     @Test
+    public void the_theme_switch_script_is_served_and_wired_into_the_shell() throws Exception {
+        // /js/theme.js ships next to app.css: it applies a stored light/dark choice before first paint (loaded
+        // without defer by the shell head) and wires every [data-theme-select] control the nav carries.
+        HttpResponse<String> script = client.send(
+                HttpRequest.newBuilder(URI.create(base + "/js/theme.js")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(script.statusCode()).isEqualTo(200);
+        assertThat(script.body()).contains("data-theme-select").contains("jenesis-theme").contains("data-theme");
+        HttpResponse<String> console = authGet("/console");
+        assertThat(console.body()).as("the head loads the theme script and the nav carries the switch")
+                .contains("/js/theme.js").contains("data-theme-select").contains("aria-label=\"Color theme\"");
+    }
+
+    @Test
+    public void the_empty_state_renders_only_when_a_screen_is_actually_empty() throws Exception {
+        // Regression for the th:if/th:replace precedence trap: fragment inclusion (100) runs before the conditional
+        // (300), so `th:if` on the replaced element itself is ignored and the empty state renders always. The fix
+        // wraps the inclusion in a th:block - a populated console/browse must NOT show its empty message.
+        assertThat(authGet("/console").body()).doesNotContain("No panels are registered.");
+        assertThat(authGet("/browse").body()).doesNotContain("The repository is empty.");
+        // An actually-empty folder still gets the treatment, never a blank screen: the traversal-guarded ../blobs
+        // prefix lists nothing, so the shared empty component renders there.
+        assertThat(authGet("/browse?path=nowhere").body()).contains("app-empty").contains("This folder is empty.");
+    }
+
+    @Test
     public void the_console_redirects_an_anonymous_browser_request_to_login() throws Exception {
         HttpResponse<String> anonymous = client.send(
                 HttpRequest.newBuilder(URI.create(base + "/"))
