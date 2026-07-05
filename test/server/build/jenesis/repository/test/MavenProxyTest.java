@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the pull-through cache against the real Maven Central: the {@link build.jenesis.repository.format.maven.MavenFormat}
@@ -50,7 +50,7 @@ public class MavenProxyTest {
 
     @BeforeAll
     public void start() {
-        assumeTrue(reachable("repo1.maven.org", 443), "Maven Central must be reachable");
+        requireOrSkip(reachable("repo1.maven.org", 443), "Maven Central must be reachable");
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         ProxyFormat.Fetcher upstream = new HttpFetcher();
         fetches = new AtomicInteger();

@@ -51,6 +51,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
             echo "event=$GITHUB_EVENT_NAME -> running the full suite"
             echo "NEED_HELM=true" >> "$GITHUB_ENV"
+            echo "REQUIRE_TOOLS=true" >> "$GITHUB_ENV"
             exit 0
           fi
           CHANGED="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
@@ -59,6 +60,7 @@ jobs:
           if match '^(build/|\.github/|source/format/spi/|source/store/spi/|source/store/filesystem/|source/server/|source/proxy/|test/server/module-info\.java)'; then
             echo "core change -> running the full suite"
             echo "NEED_HELM=true" >> "$GITHUB_ENV"
+            echo "REQUIRE_TOOLS=true" >> "$GITHUB_ENV"
             exit 0
           fi
           inc_oci=false
@@ -113,12 +115,19 @@ jobs:
       - name: Build and test
         shell: bash
         run: |
+          # A full-suite run selects the `ci` profile: its process-override properties inject
+          # -Djenesis.test.required into the forked test JVMs, so a tool/network-gated test FAILS
+          # instead of self-skipping (docker/mvn are preinstalled, helm installed above). A pull
+          # request's partial run stays lenient - its excluded suites make missing tools expected.
+          ARGS=()
+          if [ "${REQUIRE_TOOLS:-}" = "true" ]; then
+            ARGS+=("-Djenesis.project.properties=ci")
+          fi
           if [ -n "${TAG:-}" ]; then
             echo "Running with jenesis.test.tag=$TAG"
-            java -Djenesis.test.tag="$TAG" build/jenesis/Project.java
-          else
-            java build/jenesis/Project.java
+            ARGS+=("-Djenesis.test.tag=$TAG")
           fi
+          java "${ARGS[@]}" build/jenesis/Project.java
 
       - name: Upload target on failure
         if: failure()

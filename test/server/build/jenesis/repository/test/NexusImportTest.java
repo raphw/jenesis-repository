@@ -30,7 +30,7 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link NexusSource} importer against a real Sonatype Nexus, not a hand-written fake. It boots the
@@ -68,8 +68,8 @@ public class NexusImportTest {
 
     @BeforeAll
     public void start() throws Exception {
-        assumeTrue(exec(30, null, "docker", "version").code() == 0, "Docker is required for the Nexus import test");
-        assumeTrue(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Nexus import test");
+        requireOrSkip(exec(30, null, "docker", "version").code() == 0, "Docker is required for the Nexus import test");
+        requireOrSkip(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Nexus import test");
         client = HttpClient.newHttpClient();
 
         // boot a real Nexus (OSS edition) and wait for it to come up.

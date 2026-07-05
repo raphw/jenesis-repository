@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link build.jenesis.repository.format.oci.OciFormat} pull-through adapter against the real Docker Hub: a
@@ -46,8 +46,8 @@ public class OciProxyTest {
 
     @BeforeAll
     public void start() {
-        assumeTrue(dockerAvailable(), "Docker is required for the OCI proxy integration test");
-        assumeTrue(reachable("registry-1.docker.io", 443), "Docker Hub must be reachable");
+        requireOrSkip(dockerAvailable(), "Docker is required for the OCI proxy integration test");
+        requireOrSkip(reachable("registry-1.docker.io", 443), "Docker Hub must be reachable");
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         running = RepositoryApplication.start(0, Map.of("oci", URI.create("https://registry-1.docker.io/")));
         registry = "localhost:" + running.port();

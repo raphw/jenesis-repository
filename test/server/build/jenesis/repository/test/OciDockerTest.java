@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link build.jenesis.repository.format.oci.OciFormat} plugin against the real {@code docker} client: it
@@ -44,7 +44,7 @@ public class OciDockerTest {
 
     @BeforeAll
     public void start() {
-        assumeTrue(dockerAvailable(), "Docker is required for the OCI (docker push/pull) integration test");
+        requireOrSkip(dockerAvailable(), "Docker is required for the OCI (docker push/pull) integration test");
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         running = RepositoryApplication.start(0);
         registry = "localhost:" + running.port();
