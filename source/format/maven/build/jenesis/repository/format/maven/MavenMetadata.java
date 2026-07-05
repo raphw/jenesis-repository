@@ -2,6 +2,7 @@ package build.jenesis.repository.format.maven;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
+import build.jenesis.repository.store.Publication;
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
@@ -17,8 +18,19 @@ import javax.xml.stream.XMLStreamWriter;
  * a Maven-style version comparison; {@code <lastUpdated>} is intentionally omitted so the rendered bytes are a
  * pure function of the version set and the checksum a client cached still matches a re-fetch. The matching
  * {@code .sha1} / {@code .md5} are computed from those same bytes.
+ *
+ * <p>Deriving is no longer the default (W5.12): a {@code maven-metadata.xml} a client publishes is stored verbatim
+ * like any artifact and served back byte-for-byte, so a publisher-authored document round-trips untouched. The
+ * derivation above is the opt-in {@link #COMPUTE_SETTING} computation instead - {@link #computed} reconciles a stored
+ * document's version list against the folders (leaving every other field verbatim) and falls back to a full
+ * {@link #serve derivation} only for a coordinate no client ever uploaded (the importer / batch case).
  */
 public final class MavenMetadata {
+
+    /** The bare setting key (under {@code jenesis.repository.}) that opts a deployment into computing the served
+     *  artifact-level {@code maven-metadata.xml} rather than serving the stored bytes verbatim - default off, read
+     *  off the exchange so the free format needs no settings dependency. */
+    public static final String COMPUTE_SETTING = "maven-metadata-compute";
 
     private final ArtifactStore store;
 
@@ -32,6 +44,140 @@ public final class MavenMetadata {
                 && (requestPath.endsWith("/maven-metadata.xml")
                 || requestPath.endsWith("/maven-metadata.xml.sha1")
                 || requestPath.endsWith("/maven-metadata.xml.md5"));
+    }
+
+    /**
+     * The bytes for a metadata request under the opt-in {@link #COMPUTE_SETTING} computation, or empty when the
+     * default verbatim serve should stand (the caller then streams the stored pointer, a 404 when none). For the
+     * {@code maven-metadata.xml} itself: a stored document has only its {@code <versions>} list reconciled against the
+     * stored version folders - every other field the publisher wrote (latest, release, lastUpdated, plugin prefixes,
+     * snapshot sections) is preserved verbatim, and a document with no {@code <versions>} list (a version-level
+     * SNAPSHOT document) passes through untouched; a coordinate with no stored document falls back to the full
+     * {@link #serve derivation} (the importer / batch case). A checksum is computed from the served bytes <em>only</em>
+     * when the document was authored here (a reconciled or derived document); an unchanged pass-through returns empty
+     * so the caller serves the publisher's own stored checksum byte-for-byte.
+     */
+    public Optional<byte[]> computed(String requestPath) throws IOException {
+        if (!isMetadataRequest(requestPath)) {
+            return Optional.empty();
+        }
+        if (requestPath.endsWith(".sha1") || requestPath.endsWith(".md5")) {
+            String documentPath = requestPath.substring(0, requestPath.lastIndexOf('.'));
+            Optional<byte[]> document = computedDocument(documentPath);
+            if (document.isEmpty()) {
+                return Optional.empty();
+            }
+            Optional<byte[]> stored = storedBytes(documentPath);
+            if (stored.isPresent() && Arrays.equals(stored.get(), document.get())) {
+                // The document is served verbatim, so its stored checksum is authoritative - never re-derived.
+                return Optional.empty();
+            }
+            String algorithm = requestPath.endsWith(".sha1") ? "SHA-1" : "MD5";
+            return Optional.of(hex(algorithm, document.get()).getBytes(StandardCharsets.UTF_8));
+        }
+        return computedDocument(requestPath);
+    }
+
+    /** The served artifact-level document under the computation flag: a stored document with its versions reconciled
+     *  (or unchanged when it carries none or lists them all), else the full derivation for a coordinate that never had
+     *  one uploaded. Empty when neither a stored document nor any published version exists (a 404). */
+    private Optional<byte[]> computedDocument(String documentPath) throws IOException {
+        Optional<byte[]> stored = storedBytes(documentPath);
+        if (stored.isPresent()) {
+            return Optional.of(reconcileVersions(documentPath, stored.get()));
+        }
+        return serve(documentPath);
+    }
+
+    /** The stored bytes a metadata (or checksum) path currently points at, or empty when nothing is published there. */
+    private Optional<byte[]> storedBytes(String requestPath) throws IOException {
+        Optional<String> key = new Publication(store).located(requestPath);
+        if (key.isEmpty()) {
+            return Optional.empty();
+        }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        store.read(key.get(), buffer);
+        return Optional.of(buffer.toByteArray());
+    }
+
+    /**
+     * Reconcile a stored document's {@code <versions>} list against the coordinate's stored version folders, leaving
+     * every byte outside {@code <versions>...</versions>} exactly as the publisher wrote it. A document with no
+     * {@code <versions>} element (a version-level SNAPSHOT document, whose versions live under
+     * {@code <snapshotVersions>}) is returned untouched, and so is one that already lists every stored folder - only a
+     * genuinely missing version rewrites the element, adding it in Maven version order.
+     */
+    private byte[] reconcileVersions(String documentPath, byte[] storedXml) {
+        String xml = new String(storedXml, StandardCharsets.UTF_8);
+        int open = xml.indexOf("<versions>");
+        int contentStart;
+        int contentEnd;
+        boolean selfClosed;
+        if (open >= 0) {
+            contentStart = open + "<versions>".length();
+            contentEnd = xml.indexOf("</versions>", contentStart);
+            if (contentEnd < 0) {
+                return storedXml;
+            }
+            selfClosed = false;
+        } else {
+            open = xml.indexOf("<versions/>");
+            if (open < 0) {
+                return storedXml;
+            }
+            contentStart = open + "<versions/>".length();
+            contentEnd = contentStart;
+            selfClosed = true;
+        }
+        List<String> folders = versions(coordinatePath(documentPath));
+        Set<String> existing = new HashSet<>(listedVersions(xml.substring(contentStart, contentEnd)));
+        if (existing.containsAll(folders)) {
+            return storedXml;
+        }
+        SequencedSet<String> union = new LinkedHashSet<>(existing);
+        union.addAll(folders);
+        List<String> reconciled = new ArrayList<>(union);
+        reconciled.sort(MavenMetadata::compareVersions);
+        String baseIndent = indentBefore(xml, open);
+        StringBuilder rebuilt = new StringBuilder(xml.length() + reconciled.size() * 32);
+        rebuilt.append(xml, 0, open).append("<versions>");
+        for (String version : reconciled) {
+            rebuilt.append('\n').append(baseIndent).append("  <version>").append(version).append("</version>");
+        }
+        rebuilt.append('\n').append(baseIndent).append("</versions>");
+        rebuilt.append(xml, selfClosed ? contentStart : contentEnd + "</versions>".length(), xml.length());
+        return rebuilt.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** The {@code <version>} texts a {@code <versions>} block already lists, in document order. */
+    private static List<String> listedVersions(String inner) {
+        List<String> listed = new ArrayList<>();
+        int cursor = 0;
+        while (true) {
+            int start = inner.indexOf("<version>", cursor);
+            if (start < 0) {
+                return listed;
+            }
+            int end = inner.indexOf("</version>", start);
+            if (end < 0) {
+                return listed;
+            }
+            listed.add(inner.substring(start + "<version>".length(), end).trim());
+            cursor = end + "</version>".length();
+        }
+    }
+
+    /** The whitespace indentation of the line the element at {@code index} sits on, or empty when it does not start a
+     *  line (so a reconciled block is indented consistently with the document). */
+    private static String indentBefore(String xml, int index) {
+        int lineStart = xml.lastIndexOf('\n', index) + 1;
+        String indent = xml.substring(lineStart, index);
+        return indent.isBlank() ? indent : "";
+    }
+
+    private static String coordinatePath(String requestPath) {
+        String body = requestPath.substring("/maven/".length());
+        return body.substring(0, body.lastIndexOf("/maven-metadata.xml"));
     }
 
     /**

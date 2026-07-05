@@ -11,6 +11,7 @@ import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.function.UnaryOperator;
 
 /**
  * Adapts a servlet request and response to the framework-neutral {@link FormatExchange} a {@link
@@ -24,11 +25,24 @@ public final class ServletFormatExchange implements FormatExchange {
     private final HttpServletRequest request;
     private final HttpServletResponse response;
     private final String path;
+    private final UnaryOperator<String> settings;
 
     public ServletFormatExchange(HttpServletRequest request, HttpServletResponse response, String path) {
+        this(request, response, path, key -> null);
+    }
+
+    /**
+     * As above, resolving {@link #setting(String)} through {@code settings} (the bare setting key to its effective
+     * value, {@code null} when unset) - the seam a serving dispatcher uses to let a format read a deployment toggle
+     * from the Spring environment without the format binding to it. A construction that carries no configuration keeps
+     * the shipped-default {@code key -> null}.
+     */
+    public ServletFormatExchange(HttpServletRequest request, HttpServletResponse response, String path,
+                                 UnaryOperator<String> settings) {
         this.request = request;
         this.response = response;
         this.path = path;
+        this.settings = settings;
     }
 
     @Override
@@ -54,6 +68,11 @@ public final class ServletFormatExchange implements FormatExchange {
     @Override
     public String requestHeader(String name) {
         return request.getHeader(name);
+    }
+
+    @Override
+    public String setting(String key) {
+        return settings.apply(key);
     }
 
     @Override

@@ -82,6 +82,11 @@ public final class PullThroughCache {
         }
 
         @Override
+        public String setting(String key) {
+            return delegate.setting(key);
+        }
+
+        @Override
         public InputStream requestStream() throws IOException {
             return delegate.requestStream();
         }

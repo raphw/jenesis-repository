@@ -24,6 +24,7 @@ final class FakeExchange implements FormatExchange {
     private final Map<String, String> query;
     private final Map<String, String> requestHeaders;
     private final byte[] requestBody;
+    private final Map<String, String> settings;
     private final Map<String, String> responseHeaders = new LinkedHashMap<>();
     private final ByteArrayOutputStream responseBody = new ByteArrayOutputStream();
     private int status = -1;
@@ -38,11 +39,23 @@ final class FakeExchange implements FormatExchange {
 
     FakeExchange(String method, String path, byte[] requestBody,
                  Map<String, String> query, Map<String, String> requestHeaders) {
+        this(method, path, requestBody, query, requestHeaders, Map.of());
+    }
+
+    FakeExchange(String method, String path, byte[] requestBody,
+                 Map<String, String> query, Map<String, String> requestHeaders, Map<String, String> settings) {
         this.method = method;
         this.path = path;
         this.requestBody = requestBody;
         this.query = query;
         this.requestHeaders = requestHeaders;
+        this.settings = settings;
+    }
+
+    /** A read exchange that carries the effective value of one deployment setting, so a test drives a format's
+     *  runtime-toggle path (the Maven metadata computation opt-in) without a settings layer. */
+    static FakeExchange get(String path, Map<String, String> settings) {
+        return new FakeExchange("GET", path, new byte[0], Map.of(), Map.of(), settings);
     }
 
     @Override
@@ -63,6 +76,11 @@ final class FakeExchange implements FormatExchange {
     @Override
     public String requestHeader(String name) {
         return requestHeaders.get(name);
+    }
+
+    @Override
+    public String setting(String key) {
+        return settings.get(key);
     }
 
     @Override

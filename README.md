@@ -4,8 +4,9 @@ jenesis-repository
 A dual-layout artifact repository: it serves the same artifacts under both the
 **Maven layout** (so any Maven, Gradle, or Jenesis Maven-mode build resolves them)
 and the **Jenesis module layout** (so a `modular`/`modular_to_maven` build resolves
-them by module name). Publish a module once and the server **computes its POM and
-`maven-metadata.xml`** so both ecosystems can consume it from a single upload. It is
+them by module name). Publish a module once and the server **computes its POM** so both
+ecosystems can consume it from a single upload; a published `maven-metadata.xml` is stored
+and served **verbatim** by default, with on-read computation an opt-in. It is
 **also an OCI / Docker registry**, so `docker push` and `docker pull` work against the
 very same store.
 
@@ -277,7 +278,7 @@ plug in through the console's extension points without forking the core.
 | `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). Selected with `jenesis.repository.store=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
 | `build.jenesis.repository.format`   | `source/format/spi`          | The `RepositoryFormat` SPI + the framework-neutral `FormatExchange`. A layout is a module that depends only on this and `provides RepositoryFormat`; the dispatcher discovers them with `ServiceLoader`, so formats plug in without the core knowing them. `java.base` + the store SPI only. |
 | `build.jenesis.repository.format.java`     | `source/format/java`         | The shared Java repository-layout primitives the Maven and Jenesis layouts build on: reading a jar's module name and parsing a Maven request path (`JavaLayout`). It also carries the cross-publish bridge (`ModuleView`) - exported *only* to those two modules, so cross-publishing stays off the public SPI. |
-| `build.jenesis.repository.format.maven`    | `source/format/maven`        | The Maven layout (`/repository/maven/...`): stores the blob, generates `maven-metadata.xml` on read, proxies Maven Central. When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
+| `build.jenesis.repository.format.maven`    | `source/format/maven`        | The Maven layout (`/repository/maven/...`): stores the blob, stores and serves a published `maven-metadata.xml` verbatim (computing it on read only under the `maven-metadata-compute` opt-in), proxies Maven Central (its `maven-metadata.xml` proxied fresh as a mutable index). When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
 | `build.jenesis.repository.format.jenesis`  | `source/format/jenesis`      | The Jenesis module layout (`/repository/module/...`, `/repository/artifact/...`): stores and serves modules over the same content-addressed blob. It `provides` the `ModuleView` the Maven layout uses to mirror a published modular jar in by module name; a module published here stays in the module layout (it is not mirrored back to Maven). |
 | `build.jenesis.repository.format.oci`      | `source/format/oci`          | The OCI / Docker registry format (`/v2/` Distribution API), so `docker push` / `docker pull` work over the same store. Self-contained (SPI + store only): an OCI `sha256:` digest *is* the content-addressed `blobs/<hex>` key, so layers, configs and manifests dedupe with everything else. |
 | `build.jenesis.repository.format.raw`      | `source/format/raw`          | The generic (raw) layout (`/repository/raw/...`): a plain content-addressed file store over the same `Publication` primitives - `PUT` stores a file, `GET` serves it back. It also `provides` a `RepositoryImporter`, so raw/generic assets migrate in alongside Maven and OCI. |
@@ -359,8 +360,9 @@ token and read the Artifactory storage listing, and another incumbent is one mor
 names none of them. The write half is a `RepositoryImporter` per format (in
 `build.jenesis.repository.format`, discovered the same way). `RepositoryImport` walks a source and
 routes each asset to the importer that handles its format, writing it through the format's own publish
-path so the imported repository regenerates its own `maven-metadata.xml` and indexes rather than
-copying the source's. The core imports **Maven** (with the module-layout bridge), **OCI / Docker** and
+path so the imported repository serves its own indexes rather than copying the source's (a source
+`maven-metadata.xml` is dropped; under the `maven-metadata-compute` opt-in the Maven layout derives one
+from the imported version folders). The core imports **Maven** (with the module-layout bridge), **OCI / Docker** and
 **raw / generic**; an asset whose format has no importer on the path is reported skipped and, because
 content is read lazily, never downloaded.
 

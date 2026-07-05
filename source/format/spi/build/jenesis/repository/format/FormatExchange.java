@@ -30,6 +30,19 @@ public interface FormatExchange {
 
     String requestHeader(String name);
 
+    /**
+     * A named server-configuration value the format reads to honour a runtime toggle, or {@code null} when unset -
+     * the seam through which a format consults a deployment setting without binding to any settings layer. The key is
+     * the bare setting name (e.g. {@code maven-metadata-compute}); the dispatcher that built the exchange resolves it
+     * from the deployment's effective configuration. The {@code default} returns {@code null}, so a format sees the
+     * shipped default on any exchange that carries no configuration (a headless embed, an internal push exchange, a
+     * test double); the servlet dispatcher overrides it to answer from the Spring environment, into which an
+     * operator's stored setting is layered.
+     */
+    default String setting(String key) {
+        return null;
+    }
+
     InputStream requestStream() throws IOException;
 
     void setResponseHeader(String name, String value);

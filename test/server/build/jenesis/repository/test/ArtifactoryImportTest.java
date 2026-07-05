@@ -84,6 +84,9 @@ public class ArtifactoryImportTest {
         result = new RepositoryImport().run(
                 new ArtifactorySource(URI.create(upstream), "libs-release", "maven", new HttpFetcher()), store);
 
+        // An imported coordinate has no stored maven-metadata.xml, so serving one needs the opt-in computation
+        // (W5.12): its derivation fallback covers exactly this importer case.
+        System.setProperty("jenesis.repository.maven-metadata-compute", "true");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port() + "/repository";
@@ -94,6 +97,7 @@ public class ArtifactoryImportTest {
         running.close();
         artifactory.stop(0);
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.maven-metadata-compute");
     }
 
     @Test

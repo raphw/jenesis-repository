@@ -146,6 +146,10 @@ public class RepositoryImportTest {
         raw = importer.run(new NexusSource(URI.create(upstream), "raw-hosted", new HttpFetcher()), store);
         npm = importer.run(new NexusSource(URI.create(upstream), "npm-hosted", new HttpFetcher()), store);
 
+        // The importer never copies a source maven-metadata.xml, so serving it back needs the opt-in computation
+        // (W5.12): with it on, a coordinate with no stored document falls back to deriving one from the version
+        // folders - the importer case the flag's derivation fallback exists for.
+        System.setProperty("jenesis.repository.maven-metadata-compute", "true");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
@@ -156,6 +160,7 @@ public class RepositoryImportTest {
         running.close();
         nexus.stop(0);
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.maven-metadata-compute");
     }
 
     @Test
