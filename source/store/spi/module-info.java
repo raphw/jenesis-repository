@@ -5,13 +5,17 @@
  * discovered on the module path with {@code ServiceLoader}: the default filesystem backend, plus the optional s3
  * and azure backends when on the graph. The {@code Tenants} directory of the shared
  * {@code <tenant>/<repository>/...} layout is discovered the same way ({@code TenantsProvider}); with no module
- * installed it is the fixed single tenant.
+ * installed it is the fixed single tenant. A publication carries two discovered hook classes: the ordered
+ * {@code PublishInterceptor} screens (accept / quarantine / reject before the pointer links, withhold on read) and
+ * the {@code PublicationObserver} after-commit observers (forwarding, webhooks, replication - notified only once an
+ * accepted artifact serves, contained so they never fail a publish); both chains are empty by default.
  *
  * @jenesis.release 25
  */
 module build.jenesis.repository.store {
     exports build.jenesis.repository.store;
     uses build.jenesis.repository.store.ArtifactStoreProvider;
+    uses build.jenesis.repository.store.PublicationObserver;
     uses build.jenesis.repository.store.PublishInterceptor;
     uses build.jenesis.repository.store.TenantsProvider;
 }

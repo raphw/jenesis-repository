@@ -3,14 +3,17 @@ package build.jenesis.repository.store;
 import module java.base;
 
 /**
- * A post-processing hook run when an artifact upload is committed, format-neutrally. Discovered with
- * {@link java.util.ServiceLoader} - like the formats, the storage backends and the module-view bridge - and run by
- * {@link Publication#publish}: once the blob is stored content-addressed but before its pointer is linked, every
- * interceptor {@link #assess assesses} the neutral {@link ArtifactDescriptor}; the publication is routed by the
- * strongest {@link Disposition} across the chain, then each interceptor is {@link #committed notified} of the outcome.
- * By default no provider ships, so the chain is empty and every upload is accepted and linked exactly as before;
- * a deployment can plug a compliance gate, quarantine audit or inventory recording in here - with no
- * format-specific logic, since the coordinate arrives on the descriptor.
+ * The verdict-bearing screen over an artifact publication, format-neutral. Discovered with
+ * {@link java.util.ServiceLoader} - like the formats, the storage backends and the module-view bridge - and run as an
+ * {@link #order() ordered} chain by {@link Publication#publish}: once the blob is stored content-addressed but before
+ * its pointer is linked, every screen {@link #assess assesses} the neutral {@link ArtifactDescriptor}; the publication
+ * is routed by the strongest {@link Disposition} across the chain, then each screen is {@link #committed notified} of
+ * the outcome. The screen also holds the quarantine read side: {@link Publication#located} asks the chain whether a
+ * published path is {@link #withheld}, so a verdict that changes after the fact retracts an already-linked artifact
+ * from serving. By default no provider ships, so the chain is empty and every upload is accepted, linked and served
+ * exactly as before; a deployment can plug a compliance gate, quarantine audit or inventory recording in here - with
+ * no format-specific logic, since the coordinate arrives on the descriptor. A hook with no say in the verdict - a
+ * forwarder, a webhook - is the other hook class, the after-commit {@link PublicationObserver}.
  */
 public interface PublishInterceptor {
 
@@ -34,13 +37,30 @@ public interface PublishInterceptor {
         Optional<byte[]> sibling(String path) throws IOException;
     }
 
+    /** The screen's position in the chain, lower first; screens sharing a position keep their discovery order. The
+     *  collective disposition is order-independent (the strongest verdict wins) - ordering matters to a screen that
+     *  reads what an earlier one recorded, and to the {@link #committed} notification sequence. */
+    default int order() {
+        return 0;
+    }
+
     /** Decide this artifact's disposition before its pointer is linked; {@code ACCEPT} by default. */
     default Disposition assess(ArtifactDescriptor artifact, Content content) throws IOException {
         return Disposition.ACCEPT;
     }
 
+    /** Whether the artifact published at this request path is currently withheld from serving - the quarantine read
+     *  side: a screen that diverts a fresh upload can also retract an already-linked path when its verdict changes
+     *  after the fact (a new advisory against an artifact that has served for months). Consulted by
+     *  {@link Publication#located} against the same scoped store the publication serves from, on every read - so an
+     *  implementation keeps it cheap. Serves ({@code false}) by default. */
+    default boolean withheld(String path, ArtifactStore store) throws IOException {
+        return false;
+    }
+
     /** React to the routed outcome once the collective disposition is decided - the seam for inventory recording on
-     *  {@code ACCEPT}, a quarantine or rejection audit otherwise, or handing a deeper scan to a background worker. */
+     *  {@code ACCEPT}, a quarantine or rejection audit otherwise. A hook that only rides an accepted publish and has
+     *  no say in the verdict belongs in the other hook class, the after-commit {@link PublicationObserver}. */
     default void committed(ArtifactDescriptor artifact, Disposition disposition) throws IOException {
     }
 }

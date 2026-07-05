@@ -118,6 +118,55 @@ class PublishInterceptorTest {
     }
 
     @Test
+    void screens_run_sorted_by_their_declared_order() throws IOException {
+        List<String> sequence = new ArrayList<>();
+        class Positioned implements PublishInterceptor {
+            private final String name;
+            private final int order;
+
+            Positioned(String name, int order) {
+                this.name = name;
+                this.order = order;
+            }
+
+            @Override
+            public int order() {
+                return order;
+            }
+
+            @Override
+            public Disposition assess(ArtifactDescriptor artifact, Content content) {
+                sequence.add(name);
+                return Disposition.ACCEPT;
+            }
+        }
+        Publication publication = new Publication(store, List.of(
+                new Positioned("last", 10), new Positioned("first", -10), new Positioned("middle", 0)));
+
+        publication.publish(descriptor("/raw/ordered"), bytes("x"));
+
+        assertThat(sequence).containsExactly("first", "middle", "last");
+    }
+
+    @Test
+    void a_withholding_screen_retracts_a_published_path_from_serving() throws IOException {
+        Publication publication = new Publication(store, List.of());
+        publication.publish(descriptor("/raw/served"), bytes("fine"));
+        publication.publish(descriptor("/raw/retracted"), bytes("later-flagged"));
+
+        Publication screened = new Publication(store, List.of(new PublishInterceptor() {
+            @Override
+            public boolean withheld(String path, ArtifactStore store) {
+                return path.equals("/raw/retracted");
+            }
+        }));
+
+        assertThat(screened.located("/raw/served")).as("an unflagged path still serves").isPresent();
+        assertThat(screened.located("/raw/retracted")).as("the flagged path is withheld").isEmpty();
+        assertThat(screened.blob("/raw/retracted")).as("but its pointer is untouched").isPresent();
+    }
+
+    @Test
     void the_content_view_reads_the_just_stored_blob_and_a_published_sibling() throws IOException {
         new Publication(store, List.of()).publish(descriptor("/raw/pom"), bytes("the-pom"));
 
