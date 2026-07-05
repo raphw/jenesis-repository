@@ -7,6 +7,8 @@ import build.jenesis.repository.importer.ImportSourceProvider;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.QuotaArtifactStore;
+import build.jenesis.repository.store.Tenants;
+import build.jenesis.repository.store.TenantsProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -30,8 +32,9 @@ import java.util.ServiceLoader;
  * {@code upstreams} (format name to upstream URI, from {@code jenesis.repository.proxy.*}) and upstream
  * {@link ProxyFormat.Fetcher}, the framework-neutral {@link FormatDispatcher}, the {@link RepositoryRouting} (the
  * {@link FixedTenantRouting} default, resolving every request to the configured
- * {@code jenesis.repository.tenant}/{@code jenesis.repository.repository} artifact space), and the
- * {@link RepositoryController} itself. Because an auto-configuration is applied after
+ * {@code jenesis.repository.tenant}/{@code jenesis.repository.repository} artifact space), the {@link Tenants}
+ * directory (resolved through {@code TenantsProvider}; the fixed single tenant unless a tenants module is
+ * discovered), and the {@link RepositoryController} itself. Because an auto-configuration is applied after
  * user configuration, a bean an embedder contributes - an audited or replicating {@link ArtifactStore} decorator, a
  * multi-tenant {@code RepositoryRouting}, a custom controller - wins, and this backs off. Every bean is plain domain
  * code; Spring only assembles it.
@@ -108,6 +111,15 @@ public class RepositoryAutoConfiguration {
     @ConditionalOnMissingBean
     public RepositoryRouting repositoryRouting(ArtifactStore store, RepositoryProperties properties) {
         return new FixedTenantRouting(store, properties.getTenant(), properties.getRepository());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public Tenants tenants(ArtifactStore store, RepositoryProperties properties, Environment environment) {
+        // The tenant directory is a discovered plugin (a multi-tenant edition's store-backed module); with none
+        // installed the directory is exactly the one configured tenant, and a console gates tenant management on
+        // TenantsProvider.installed().
+        return TenantsProvider.resolve(store, environment::getProperty, properties.getTenant());
     }
 
     @Bean

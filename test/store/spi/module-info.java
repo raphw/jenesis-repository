@@ -3,8 +3,9 @@
  * {@link build.jenesis.repository.store.filesystem.FilesystemArtifactStore} rooted at a JUnit {@code @TempDir} (through
  * {@link build.jenesis.repository.store.ArtifactStoreProvider#resolve}) so the store primitives are exercised without
  * the server or any network: the content-addressed {@link build.jenesis.repository.store.Publication} pointer model, the
- * {@link build.jenesis.repository.store.QuotaArtifactStore} byte-ceiling decorator, and the provider's ServiceLoader
- * resolution with its filesystem fallback.
+ * {@link build.jenesis.repository.store.QuotaArtifactStore} byte-ceiling decorator, the provider's ServiceLoader
+ * resolution with its filesystem fallback, and the {@link build.jenesis.repository.store.Tenants} directory seam
+ * falling back to the fixed single tenant.
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.store
