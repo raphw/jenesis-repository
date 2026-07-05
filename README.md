@@ -76,6 +76,11 @@ a deployment simply runs whichever plug-ins are on its module path:
    `REJECT`, so a quarantine gate, scanner or audit plugs in without any format knowing it.
    The core ships no interceptor, so every upload is accepted and served exactly as before;
    a commercial edition plugs its compliance gate in here.
+ - **The tenant directory** (`TenantsProvider`, returning a `Tenants`) - which tenants exist in the
+   shared `<tenant>/<repository>/...` layout, with the lifecycle to add one, is a discovered module;
+   without one the directory is exactly the configured fixed tenant, and a console or API offers
+   tenant management only when `TenantsProvider.installed()` says the capability is there. A
+   multi-tenant edition backs it with the store, its tenants the top-level scopes.
 
 A whole format is three methods over the already tenant-and-repository-scoped store:
 
