@@ -51,15 +51,28 @@ public class RepositoryController {
     private final FormatDispatcher dispatcher;
     private final List<ImportSourceProvider> importSources;
     private final ProxyFormat.Fetcher fetcher;
+    private final BatchIngestion batch;
 
     public RepositoryController(RepositoryRouting routing,
                                 FormatDispatcher dispatcher,
                                 List<ImportSourceProvider> importSources,
                                 ProxyFormat.Fetcher fetcher) {
+        this(routing, dispatcher, importSources, fetcher, null);
+    }
+
+    /** As above, with batch archive ingestion wired in: a {@code PUT}/{@code POST} carrying the explode header is
+     *  exploded into per-entry publishes through the same {@link FormatDispatcher} when {@code batch} claims it.
+     *  A {@code null} {@code batch} leaves the feature off (the header is then an inert plain upload). */
+    public RepositoryController(RepositoryRouting routing,
+                                FormatDispatcher dispatcher,
+                                List<ImportSourceProvider> importSources,
+                                ProxyFormat.Fetcher fetcher,
+                                BatchIngestion batch) {
         this.routing = routing;
         this.dispatcher = dispatcher;
         this.importSources = importSources;
         this.fetcher = fetcher;
+        this.batch = batch;
     }
 
     /**
@@ -68,13 +81,20 @@ public class RepositoryController {
      * root, resolved to its artifact space and offered to the {@link RepositoryFormat} plugins over that store by the
      * {@link FormatDispatcher}. More specific routes ({@code /repository/admin/import}) and the Actuator endpoints win in
      * Spring, so this only sees a format's own paths; an unclaimed one is a {@code 404}. A format with a configured
-     * upstream that is a {@link ProxyFormat} serves a local miss through the {@link PullThroughCache}.
+     * upstream that is a {@link ProxyFormat} serves a local miss through the {@link PullThroughCache}. A write
+     * carrying the batch explode header is walked entry by entry by {@link BatchIngestion} - each member dispatched
+     * as its own publish through the same loop - when the feature is enabled; otherwise the header is inert and the
+     * body is a plain single upload.
      */
     @RequestMapping(value = {"/repository/**", "/v2", "/v2/**"}, method = {RequestMethod.GET, RequestMethod.HEAD,
             RequestMethod.PUT, RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
         RepositoryRouting.Route route = routing.route(request);
         ServletFormatExchange exchange = new ServletFormatExchange(request, response, route.path());
+        if (batch != null && batch.claims(exchange)) {
+            batch.explode(exchange, route.store(), dispatcher);
+            return;
+        }
         if (!dispatcher.dispatch(exchange, route.store())) {
             response.setStatus(404);
         }

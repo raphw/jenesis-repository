@@ -123,11 +123,19 @@ public class RepositoryAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean
+    public BatchIngestion batchIngestion(RepositoryProperties properties) {
+        // Off by default; the archive-explode feature is a deployment opt-in, its entry cap the zip-bomb bound.
+        return new BatchIngestion(properties::isBatchUpload, properties::getBatchUploadMaxEntries);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(name = "repositoryController")
     public RepositoryController repositoryController(RepositoryRouting routing,
                                                      FormatDispatcher dispatcher,
                                                      List<ImportSourceProvider> importSources,
-                                                     ProxyFormat.Fetcher fetcher) {
-        return new RepositoryController(routing, dispatcher, importSources, fetcher);
+                                                     ProxyFormat.Fetcher fetcher,
+                                                     BatchIngestion batch) {
+        return new RepositoryController(routing, dispatcher, importSources, fetcher, batch);
     }
 }
