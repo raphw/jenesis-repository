@@ -41,6 +41,8 @@ public class RepositoryProperties {
 
     private int batchUploadMaxEntries = 10_000;
 
+    private boolean demo = false;
+
     public String getStore() {
         return store;
     }
@@ -154,5 +156,16 @@ public class RepositoryProperties {
 
     public void setBatchUploadMaxEntries(int batchUploadMaxEntries) {
         this.batchUploadMaxEntries = batchUploadMaxEntries;
+    }
+
+    /** Whether demo mode seeds a fresh, completely empty repository with real artifacts through the formats' own
+     *  pull-through paths so an evaluator has data to look at; off by default, and a no-op against a non-empty store
+     *  (a seeded or in-use repository is never re-seeded), so turning it on in production is harmless. */
+    public boolean isDemo() {
+        return demo;
+    }
+
+    public void setDemo(boolean demo) {
+        this.demo = demo;
     }
 }

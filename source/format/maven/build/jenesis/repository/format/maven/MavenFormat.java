@@ -192,6 +192,23 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     }
 
     /**
+     * Demo-mode suggestions: a Log4Shell-era {@code log4j-core 2.14.1} (its POM and jar) and a
+     * {@code commons-collections 3.2.1} (the classic deserialization coordinate), deliberately old,
+     * benign-but-vulnerable releases so a fresh repository's vulnerability and quarantine surfaces light up at once -
+     * the coordinates are what the OSV / GHSA / KEV / EPSS feeds and a demo gate config key on (a version floor
+     * quarantines the old log4j-core, a deny-list rejects commons-collections), and the bytes themselves are ordinary,
+     * harmless libraries. The seeder pulls these through this format's own upstream ({@link #defaultUpstream() Maven
+     * Central}); nothing malicious is ever fetched.
+     */
+    @Override
+    public List<String> demoArtifacts() {
+        return List.of(
+                "/maven/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.pom",
+                "/maven/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar",
+                "/maven/commons-collections/commons-collections/3.2.1/commons-collections-3.2.1.jar");
+    }
+
+    /**
      * Proxy a {@code /maven/} miss to the upstream Maven repository (Maven Central). Artifacts (jars, poms and their
      * checksums) are immutable and cached, and a cached modular jar is cross-published like a local one;
      * {@code maven-metadata.xml} is a mutable index, so it is proxied fresh from upstream on each miss (W5.12) - never

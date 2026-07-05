@@ -3,6 +3,7 @@ package build.jenesis.repository.format;
 import build.jenesis.repository.store.ArtifactStore;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -35,5 +36,19 @@ public interface RepositoryFormat {
      */
     default Optional<IconResource> icon() {
         return Optional.empty();
+    }
+
+    /**
+     * Request paths this format suggests seeding a fresh, empty repository with, so an evaluator has real data to
+     * look at - browse rows, a proxied artifact, and (when a coordinate is old and benign-but-vulnerable) a lit-up
+     * vulnerability and quarantine surface. Each entry is a plain request path this format {@link #handles claims}
+     * (e.g. a Maven jar under {@code /maven/...}), which the demo seeder fetches through the format's own pull-through
+     * path - the normal pipeline, so the inspectors screen the proxy leg and the compliance gate populates itself; no
+     * blob is embedded here. A {@code default} of nothing, so a format carries none unless it opts in and the demo
+     * mode is a no-op for it; suggestions are best-effort over the public registries and never fetch actual malicious
+     * bytes. The seeder only runs against a completely empty artifact space and only when the {@code demo} flag is on.
+     */
+    default List<String> demoArtifacts() {
+        return List.of();
     }
 }
