@@ -129,6 +129,21 @@ public class RepositoryAutoConfiguration {
         return new BatchIngestion(properties::isBatchUpload, properties::getBatchUploadMaxEntries);
     }
 
+    @Bean(initMethod = "start")
+    @ConditionalOnMissingBean
+    public DemoSeeding demoSeeding(@Qualifier("formats") List<RepositoryFormat> formats,
+                                   ProxyFormat.Fetcher fetcher,
+                                   ArtifactStore store,
+                                   RepositoryProperties properties) {
+        // Demo mode seeds a fresh, empty repository with real artifacts through the formats' own pull-through paths -
+        // a background walk after boot, never blocking it, and only against a completely empty artifact space; off by
+        // default. It targets the configured fixed-tenant space (root.scope(tenant).scope(repository)), the same
+        // space FixedTenantRouting resolves reads to.
+        ArtifactStore scoped = store.scope(properties.getTenant()).scope(properties.getRepository());
+        return new DemoSeeding(properties.isDemo(), new DemoSeeder(formats, fetcher), scoped, () -> {
+        });
+    }
+
     @Bean
     @ConditionalOnMissingBean(name = "repositoryController")
     public RepositoryController repositoryController(RepositoryRouting routing,
