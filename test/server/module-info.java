@@ -105,4 +105,6 @@ open module build.jenesis.repository.test {
     requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
+    provides build.jenesis.repository.store.PublishInterceptor
+            with build.jenesis.repository.test.MarkerInterceptor;
 }

@@ -37,6 +37,10 @@ public class RepositoryProperties {
 
     private Duration proxyMissTtl = Duration.ofSeconds(60);
 
+    private boolean batchUpload = false;
+
+    private int batchUploadMaxEntries = 10_000;
+
     public String getStore() {
         return store;
     }
@@ -129,5 +133,26 @@ public class RepositoryProperties {
 
     public void setProxyMissTtl(Duration proxyMissTtl) {
         this.proxyMissTtl = proxyMissTtl;
+    }
+
+    /** Whether a publish request carrying the {@code X-Jenesis-Explode} header is walked as an archive and exploded
+     *  into a per-entry publish through {@link BatchIngestion}; off by default, so the header is inert and an archive
+     *  is stored verbatim as one artifact unless a deployment opts in. */
+    public boolean isBatchUpload() {
+        return batchUpload;
+    }
+
+    public void setBatchUpload(boolean batchUpload) {
+        this.batchUpload = batchUpload;
+    }
+
+    /** The ceiling on how many members one exploded archive may publish - the zip-bomb axis that matters, since every
+     *  entry streams and its size is irrelevant; a walk stops at the cap and reports it in the manifest. */
+    public int getBatchUploadMaxEntries() {
+        return batchUploadMaxEntries;
+    }
+
+    public void setBatchUploadMaxEntries(int batchUploadMaxEntries) {
+        this.batchUploadMaxEntries = batchUploadMaxEntries;
     }
 }
