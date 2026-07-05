@@ -29,17 +29,18 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The HTTP surface of the free single-tenant repository, mirroring {@link RepositoryApplication}'s framework-neutral
+ * The HTTP surface of the free repository, mirroring {@link RepositoryApplication}'s framework-neutral
  * dispatch but over Spring MVC. A catch-all resolves the request to its artifact space through {@link RepositoryRouting}
- * (single-tenant by default) and offers it the {@link RepositoryFormat} plugins over that store through the shared
- * {@link FormatDispatcher}: the first format whose {@code handles(path)} is true serves or accepts the request through a
- * {@link ServletFormatExchange}; an unclaimed path is a {@code 404}. When an upstream is configured for the matched
- * format and the format is a {@link ProxyFormat}, a local miss is served through the {@link PullThroughCache} from that
- * upstream and cached, so a later read is a local hit. {@code /repository/admin/import} triggers an asynchronous migration through
- * the first {@link ImportSourceProvider} that handles the requested source - discovered with {@code ServiceLoader} like
- * the formats, so the server knows no incumbent by name - run as a background {@link ImportJobs}, and {@code
- * GET /repository/admin/import/<id>} returns its state. Authorization is not done here: {@link RepositorySecurityAutoConfiguration}
- * gates the wire through the {@link Authorization} credential model.
+ * (fixed-tenant by default) and offers it the {@link RepositoryFormat} plugins over that doubly-scoped store through the
+ * shared {@link FormatDispatcher}: the first format whose {@code handles(path)} is true serves or accepts the request
+ * through a {@link ServletFormatExchange}; an unclaimed path is a {@code 404}. When an upstream is configured for the
+ * matched format and the format is a {@link ProxyFormat}, a local miss is served through the {@link PullThroughCache}
+ * from that upstream and cached, so a later read is a local hit. {@code /repository/admin/import} triggers an
+ * asynchronous migration through the first {@link ImportSourceProvider} that handles the requested source - discovered
+ * with {@code ServiceLoader} like the formats, so the server knows no incumbent by name - run as a background
+ * {@link ImportJobs} writing into the request's routed artifact space (so an import lands exactly where serving reads),
+ * and {@code GET /repository/admin/import/<id>} returns its state. Authorization is not done here:
+ * {@link RepositorySecurityAutoConfiguration} gates the wire through the {@link Authorization} credential model.
  */
 @RestController
 public class RepositoryController {
@@ -49,18 +50,15 @@ public class RepositoryController {
     private final RepositoryRouting routing;
     private final FormatDispatcher dispatcher;
     private final List<ImportSourceProvider> importSources;
-    private final ArtifactStore store;
     private final ProxyFormat.Fetcher fetcher;
 
     public RepositoryController(RepositoryRouting routing,
                                 FormatDispatcher dispatcher,
                                 List<ImportSourceProvider> importSources,
-                                ArtifactStore store,
                                 ProxyFormat.Fetcher fetcher) {
         this.routing = routing;
         this.dispatcher = dispatcher;
         this.importSources = importSources;
-        this.store = store;
         this.fetcher = fetcher;
     }
 
@@ -102,12 +100,17 @@ public class RepositoryController {
      * counts.
      */
     @PostMapping("/repository/admin/import")
-    public void submitImport(@RequestBody(required = false) String body, HttpServletResponse response)
+    public void submitImport(@RequestBody(required = false) String body,
+                             HttpServletRequest request,
+                             HttpServletResponse response)
             throws IOException {
         if (fetcher == ProxyFormat.Fetcher.NONE) {
             respond(response, 501, "no upstream fetcher module is installed on this deployment");
             return;
         }
+        // The import writes into the same routed artifact space serving reads from, so a migrated artifact is
+        // found where a later request looks for it; the job state rides along under that space's imports/ keys.
+        ArtifactStore store = routing.route(request).store();
         ImportJobs jobs = new ImportJobs();
         JsonNode spec = JSON.readTree(body == null || body.isBlank() ? "{}" : body);
         String url = spec.path("url").asString(null);
@@ -120,14 +123,14 @@ public class RepositoryController {
         ImportJobs.Snapshot prior = resume == null ? null : jobs.snapshot(store, resume).orElse(null);
         String cursor = prior == null ? null : prior.cursor();
         String sourceName = spec.path("source").asString(null);
-        ImportRequest request = new ImportRequest(URI.create(url), repository)
+        ImportRequest importRequest = new ImportRequest(URI.create(url), repository)
                 .withFormat(spec.path("format").asString(null))
                 .withCredentials(spec.path("username").asString(null), spec.path("password").asString(null))
                 .withCursor(cursor);
         ImportSource source = importSources.stream()
                 .filter(provider -> provider.handles(sourceName))
                 .findFirst()
-                .map(provider -> provider.create(request, fetcher))
+                .map(provider -> provider.create(importRequest, fetcher))
                 .orElse(null);
         if (source == null) {
             respond(response, 400, "unknown import source, or its configuration is incomplete");
@@ -141,8 +144,10 @@ public class RepositoryController {
 
     /** Return a job's persisted state as raw JSON ({@code 404} if there is no such job). */
     @GetMapping("/repository/admin/import/{id}")
-    public void importStatus(@PathVariable("id") String id, HttpServletResponse response) throws IOException {
-        Optional<byte[]> state = new ImportJobs().status(store, id);
+    public void importStatus(@PathVariable("id") String id,
+                             HttpServletRequest request,
+                             HttpServletResponse response) throws IOException {
+        Optional<byte[]> state = new ImportJobs().status(routing.route(request).store(), id);
         if (state.isEmpty()) {
             response.setStatus(404);
             return;

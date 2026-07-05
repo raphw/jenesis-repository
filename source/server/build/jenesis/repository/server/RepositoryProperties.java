@@ -9,7 +9,10 @@ import java.util.Map;
 
 /**
  * The configuration of the Spring repository server, bound from {@code jenesis.repository.*}: the artifact-store
- * backend name ({@code filesystem} by default, chosen through {@code ArtifactStoreProvider}), whether the wire is
+ * backend name ({@code filesystem} by default, chosen through {@code ArtifactStoreProvider}), the fixed
+ * {@link #getTenant() tenant} / {@link #getRepository() repository} artifact space every request resolves to
+ * (each {@code default} by default, the {@link FixedTenantRouting} specialization of the shared
+ * {@code <tenant>/<repository>/...} store layout), whether the wire is
  * gated by the {@link Authorization} credential model (anonymous by default, the headless deployment), an
  * optional repository-wide storage {@link #getQuota() quota}, and the pull-through {@link #getProxy() proxy}
  * upstreams keyed by format name ({@code jenesis.repository.proxy.<format>}), so a format that is a
@@ -19,6 +22,10 @@ import java.util.Map;
 public class RepositoryProperties {
 
     private String store = "filesystem";
+
+    private String tenant = "default";
+
+    private String repository = "default";
 
     private boolean auth = false;
 
@@ -36,6 +43,26 @@ public class RepositoryProperties {
 
     public void setStore(String store) {
         this.store = store;
+    }
+
+    /** The tenant of the fixed artifact space this deployment serves; a multi-tenant routing ignores it and reads
+     *  the tenant from the request instead. */
+    public String getTenant() {
+        return tenant;
+    }
+
+    public void setTenant(String tenant) {
+        this.tenant = tenant;
+    }
+
+    /** The repository of the fixed artifact space this deployment serves; a multi-tenant routing ignores it and
+     *  reads the repository from the request path instead. */
+    public String getRepository() {
+        return repository;
+    }
+
+    public void setRepository(String repository) {
+        this.repository = repository;
     }
 
     public String getQuota() {

@@ -288,6 +288,24 @@ The server `requires` no layout, backend or importer of its own (see *Extensible
 it discovers whatever layout modules, store backends, importers and the `ui` console are on its
 module path at startup, so a deployment selects the ones it wants alongside `source+server`.
 
+Inside the store, every artifact space lives under `<tenant>/<repository>/...` - one layout shared by
+this fixed-tenant server and a multi-tenant distribution, so switching a deployment either way is a
+configuration change and the data is found where it was left. The free server resolves every request
+to the configured space:
+
+    -Djenesis.repository.tenant=default -Djenesis.repository.repository=default
+
+(both default to `default`, so a fresh deployment stores under `default/default/`). **Upgrading a
+deployment whose data predates this layout** - its `blobs/`, `publish/` and `oci/` trees (plus
+`imports/` job state, if kept) sit directly under the store root - is a one-time move of those trees
+into the default space; on the filesystem backend:
+
+    cd "$JENESIS_STORE_ROOT" && mkdir -p default/default && mv blobs publish oci imports default/default/
+
+(move the trees that exist; on S3 / Azure the equivalent per-prefix server-side move, e.g.
+`aws s3 mv --recursive` per prefix). Credentials under `auth/` are deployment-wide, not artifact data,
+and stay at the store root. There is no runtime shim: the server reads only the scoped layout.
+
 The web console is served at `/console` - browse artifacts, view repositories and their
 configuration. The generic artifact browse is at `/browse`: a breadcrumbed, lazy tree over any
 repository's published namespace, read one prefix level at a time through the store's listing seam

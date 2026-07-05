@@ -100,8 +100,10 @@ public class ArtifactoryOssImportTest {
         // migrate the repo - the deep File List API is Pro-gated on OSS, so this exercises the Folder Info crawl - then
         // serve the migrated store.
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        // Import into the default/default artifact space, the doubly-scoped layout the server serves from.
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null)
+                .scope("default").scope("default");
         result = new RepositoryImport().run(new ArtifactorySource(URI.create(upstream), REPO, "maven",
                 new HttpFetcher()).withCredentials("admin", "password"), store);
         running = RepositoryApplication.start(0);

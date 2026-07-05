@@ -94,8 +94,10 @@ public class NexusImportTest {
 
         // migrate maven-releases from the live Components API into a filesystem store, then serve that store.
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        // Import into the default/default artifact space, the doubly-scoped layout the server serves from.
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null)
+                .scope("default").scope("default");
         result = new RepositoryImport().run(new NexusSource(URI.create(nexus), "maven-releases", new HttpFetcher())
                 .withCredentials("admin", password), store);
         running = RepositoryApplication.start(0);
