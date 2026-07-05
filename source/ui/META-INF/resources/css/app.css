@@ -272,3 +272,59 @@
     fill: currentColor;
     flex: 0 0 auto;
 }
+
+/* ---- Component: alert / flash message ---------------------------------------------------------------------- */
+/* The one treatment for a transient outcome banner (saved / failed / signed out): tinted with the status palette,
+   so it holds WCAG-AA contrast in both themes, and always carrying its meaning in text, never colour alone. */
+.app-alert {
+    padding: var(--app-space-3) var(--app-space-4);
+    margin-bottom: var(--app-space-4);
+    border-radius: var(--app-radius-md);
+    background: var(--app-status-info-bg);
+    color: var(--app-status-info-fg);
+}
+.app-alert--danger { background: var(--app-status-danger-bg); color: var(--app-status-danger-fg); }
+.app-alert--warn { background: var(--app-status-warn-bg); color: var(--app-status-warn-fg); }
+.app-alert--pass { background: var(--app-status-pass-bg); color: var(--app-status-pass-fg); }
+
+/* Inline danger text (a per-row error detail inside a table cell, where a block alert would not fit). */
+.app-danger-text { color: var(--app-status-danger-fg); }
+
+/* ---- Utility: visually hidden -------------------------------------------------------------------------------- */
+/* Screen-reader-only text, e.g. the header of an icon-only actions column - present in the accessibility tree,
+   absent from the layout. */
+.app-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ---- Loading state ------------------------------------------------------------------------------------------- */
+/* htmx marks the element that triggered an in-flight request with .htmx-request; the tree toggle (the console's one
+   async control) shows a busy cursor and dims while its folder's children load - a state, not a decorative spinner. */
+.app-tree-toggle.htmx-request {
+    cursor: progress;
+    opacity: 0.5;
+}
+
+/* ---- Navigation ---------------------------------------------------------------------------------------------- */
+/* The shell nav wraps on a narrow viewport instead of overflowing off-screen (Pico's nav lists are no-wrap flex). */
+.app-nav,
+.app-nav ul {
+    flex-wrap: wrap;
+}
+
+/* The theme switch is a compact inline control in the nav, not a full-width Pico form field. */
+.app-theme-select {
+    width: auto;
+    margin: 0;
+    padding-top: var(--app-space-1);
+    padding-bottom: var(--app-space-1);
+    font-size: var(--app-font-size-sm);
+}

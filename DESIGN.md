@@ -73,11 +73,28 @@ Label, control, help text (`aria-describedby`-linked). The atom the config page 
 adds validation state (`.app-field--invalid`) and a default-vs-effective note (`.app-field__note`).
 
 ### Empty / loading / error state — `base :: empty(message)`
-One consistent treatment (`role="status"`), never a blank screen.
+One consistent treatment (`role="status"`), never a blank screen. A list/table that can be empty renders this
+*instead of* the bare table, with a message that says what fills it. **Caution:** `th:if` must sit on a *wrapping*
+`th:block`, never on the `th:replace` element itself — fragment inclusion (precedence 100) runs before the
+conditional (300), so a same-element `th:if` is silently ignored and the empty state renders always.
+The loading state rides htmx: the element that triggered an in-flight request carries `.htmx-request`
+(`.app-tree-toggle.htmx-request` shows a busy cursor and dims) — a state, not a decorative spinner.
 
 ### Badge / pill — `base :: badge(label, kind)`
 Status (`passed` / `quarantined` / `signed`) and config metadata (`live` / `restart`, `changed`). `kind ∈
 {pass,warn,danger,info,muted}`. The **label text always carries the meaning**, so colour is never the only signal.
+
+### Alert / flash message — `base :: alert(message, kind)`
+The one outcome-banner treatment (saved / failed / signed out): tinted from the status palette (`kind ∈
+{pass,warn,danger}`, `null` = info), `role="alert"` when danger so it is announced, `role="status"` otherwise.
+`.app-danger-text` is the inline sibling for a per-row error detail inside a table cell.
+
+### Theme switch — `base :: themeSelect`
+A compact labelled `<select>` (`Auto / Light / Dark`) the shell nav carries. `/js/theme.js` — loaded un-deferred by
+`base :: head` so a stored choice applies before first paint — wires every `[data-theme-select]`, persists the
+choice per browser (`localStorage`, key `jenesis-theme`) and sets `data-theme` on `<html>`; `Auto` removes the
+override so Pico's `prefers-color-scheme` rules decide. No server round-trip: the theme is presentation, not a
+deployment setting.
 
 ## 4. Accessibility baseline
 
@@ -88,6 +105,10 @@ Status (`passed` / `quarantined` / `signed`) and config metadata (`live` / `rest
 - **Contrast** — WCAG-AA in both light and dark; the status palette is tuned per theme.
 - **Icons** — `currentColor`-friendly (`.app-icon { fill: currentColor }`) so they invert with the theme, at one
   uniform size.
+- **Hidden-but-announced** — `.app-sr-only` for text that exists only for assistive technology (the header of an
+  icon-only actions column, an input's label where the design shows a placeholder).
+- **Responsive** — the shell nav wraps on narrow viewports (`.app-nav`); wide tables live in a `<figure>` so Pico
+  scrolls them horizontally instead of breaking the page layout.
 
 ## 5. How the enterprise console extends this base
 

@@ -9,12 +9,14 @@
   th:replace-ing these fragments rather than re-vendoring a second copy that would drift.
 
   Fragments provided:
-    head(title)                     — the shell <head>: viewport, Pico, app.css, htmx.
+    head(title)                     — the shell <head>: viewport, Pico, app.css, htmx, the theme switch script.
     pageHeader(title)               — a page header with just a title.
     pageHeaderCrumbs(title, crumbs) — a page header with a breadcrumb (crumbs: List<Map{href,label}>, last is current).
     empty(message)                  — the one empty-state treatment.
     badge(label, kind)              — a status pill; kind ∈ {pass,warn,danger,info,muted}.
     field(label, name, value, help) — a labelled text input with inline help text.
+    alert(message, kind)            — a flash/outcome banner; kind ∈ {pass,warn,danger} or null for info.
+    themeSelect                     — the light/dark/auto switch (wired by /js/theme.js, persisted per browser).
 
   Kept in sync with DESIGN.md (the component catalogue) and app.css (the tokens/styles).
 -->
@@ -26,6 +28,8 @@
     <title th:text="${title} + ' · jenesis-repository'">jenesis-repository</title>
     <link rel="stylesheet" th:href="@{/css/pico.min.css}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
+    <!-- Deliberately not deferred: a stored dark/light choice must apply before the first paint. -->
+    <script th:src="@{/js/theme.js}"></script>
     <script th:src="@{/js/htmx.min.js}" defer></script>
 </head>
 
@@ -71,6 +75,20 @@
            th:attr="aria-describedby=${name} + '-help'">
     <small class="app-field__help" th:id="${name} + '-help'" th:text="${help}">Help text.</small>
 </div>
+
+<!-- Alert / flash message: the one outcome-banner treatment. An error is role=alert so assistive technology
+     announces it; anything else is a polite status. The text always carries the meaning, never colour alone. -->
+<p th:fragment="alert(message, kind)" class="app-alert"
+   th:classappend="${kind} != null ? 'app-alert--' + ${kind} : ''"
+   th:attr="role=${kind == 'danger'} ? 'alert' : 'status'" th:text="${message}">message</p>
+
+<!-- Theme switch: a compact labelled select the shell nav carries. /js/theme.js (loaded by the head fragment)
+     applies the stored choice before first paint and wires every [data-theme-select]; "auto" follows the OS. -->
+<select th:fragment="themeSelect" class="app-theme-select" data-theme-select aria-label="Color theme">
+    <option value="auto">Auto</option>
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+</select>
 
 </body>
 </html>
