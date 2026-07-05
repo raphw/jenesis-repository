@@ -29,7 +29,9 @@ import java.util.ServiceLoader;
  * otherwise anonymous), the {@link RepositoryFormat} plugins discovered with {@link ServiceLoader}, the pull-through
  * {@code upstreams} (format name to upstream URI, from {@code jenesis.repository.proxy.*}) and upstream
  * {@link ProxyFormat.Fetcher}, the framework-neutral {@link FormatDispatcher}, the {@link RepositoryRouting} (the
- * single-tenant default), and the {@link RepositoryController} itself. Because an auto-configuration is applied after
+ * {@link FixedTenantRouting} default, resolving every request to the configured
+ * {@code jenesis.repository.tenant}/{@code jenesis.repository.repository} artifact space), and the
+ * {@link RepositoryController} itself. Because an auto-configuration is applied after
  * user configuration, a bean an embedder contributes - an audited or replicating {@link ArtifactStore} decorator, a
  * multi-tenant {@code RepositoryRouting}, a custom controller - wins, and this backs off. Every bean is plain domain
  * code; Spring only assembles it.
@@ -104,8 +106,8 @@ public class RepositoryAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public RepositoryRouting repositoryRouting(ArtifactStore store) {
-        return new SingleTenantRouting(store);
+    public RepositoryRouting repositoryRouting(ArtifactStore store, RepositoryProperties properties) {
+        return new FixedTenantRouting(store, properties.getTenant(), properties.getRepository());
     }
 
     @Bean
@@ -113,8 +115,7 @@ public class RepositoryAutoConfiguration {
     public RepositoryController repositoryController(RepositoryRouting routing,
                                                      FormatDispatcher dispatcher,
                                                      List<ImportSourceProvider> importSources,
-                                                     ArtifactStore store,
                                                      ProxyFormat.Fetcher fetcher) {
-        return new RepositoryController(routing, dispatcher, importSources, store, fetcher);
+        return new RepositoryController(routing, dispatcher, importSources, fetcher);
     }
 }

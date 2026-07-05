@@ -79,8 +79,10 @@ public class RepositoryImportTest {
     @BeforeAll
     public void setUp() throws IOException {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        // Import into the default/default artifact space, the doubly-scoped layout the server serves from.
         ArtifactStore store = ArtifactStoreProvider.resolve("filesystem",
-                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null)
+                .scope("default").scope("default");
 
         jar = jarWithModuleName("com.acme.app");
         byte[] pom = "<project><modelVersion>4.0.0</modelVersion></project>".getBytes(StandardCharsets.UTF_8);
