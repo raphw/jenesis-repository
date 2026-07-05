@@ -70,12 +70,19 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Rate limiting** (`RateLimiterProvider`) - the metering strategy behind the 429 filter is a discovered
    module (`source/ratelimit`, an in-memory token bucket); a coordinated limiter for a replicated deployment
    would be another module, and without one nothing is limited.
- - **Upload post-processing** (`PublishInterceptor`) - a hook run when an upload commits,
-   after the blob is stored content-addressed but *before* its pointer is linked: it reads
-   the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` / `QUARANTINE` /
-   `REJECT`, so a quarantine gate, scanner or audit plugs in without any format knowing it.
-   The core ships no interceptor, so every upload is accepted and served exactly as before;
-   a commercial edition plugs its compliance gate in here.
+ - **Publication screening** (`PublishInterceptor`) - the verdict-bearing hook run when an upload
+   commits, after the blob is stored content-addressed but *before* its pointer is linked: an
+   ordered chain reads the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` /
+   `QUARANTINE` / `REJECT`, and the same screen can *withhold* an already-published path on read
+   (the quarantine read side, for a verdict that changes after the fact) - so a compliance gate,
+   scanner or audit plugs in without any format knowing it.
+ - **After-commit observation** (`PublicationObserver`) - the second publication hook class, with
+   no say in any verdict: notified only once an accepted artifact's pointer is linked and serving
+   (never for a quarantined or rejected publish), with a failure logged and contained so it can
+   never fail the upload - the seam forwarding, webhooks, replication or a scan hand-off ride,
+   leaving at most a small store object for a background worker to drain.
+   The core ships no screen and no observer, so every upload is accepted and served exactly as
+   before; a commercial edition plugs its compliance gate and forwarders in here.
  - **The tenant directory** (`TenantsProvider`, returning a `Tenants`) - which tenants exist in the
    shared `<tenant>/<repository>/...` layout, with the lifecycle to add one, is a discovered module;
    without one the directory is exactly the configured fixed tenant, and a console or API offers
@@ -184,7 +191,8 @@ with ...` it from a module on the path:
 | A migration importer               | `RepositoryImporter`    | `build.jenesis.repository.format.RepositoryImporter` |
 | An import source (incumbent connector) | `ImportSourceProvider` | `build.jenesis.repository.importer.ImportSourceProvider` |
 | A console panel                    | `Panel`                 | `build.jenesis.repository.ui.Panel`                  |
-| An upload post-processor           | `PublishInterceptor`    | `build.jenesis.repository.store.PublishInterceptor`  |
+| An upload screen (gate/quarantine) | `PublishInterceptor`    | `build.jenesis.repository.store.PublishInterceptor`  |
+| An after-commit publish observer   | `PublicationObserver`   | `build.jenesis.repository.store.PublicationObserver` |
 
 A format may additionally implement one or both of two optional capabilities, detected
 by `instanceof` so a format that has no use for them is unaffected: `ProxyFormat` to gain
@@ -263,7 +271,7 @@ plug in through the console's extension points without forking the core.
 
 | Module | Folder | What it is |
 |--------|--------|------------|
-| `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through - including its gated `publish(descriptor, stream)`, which stores the blob, runs the `ServiceLoader`-discovered `PublishInterceptor` chain over the neutral `ArtifactDescriptor`, and routes the pointer by the strongest disposition (accept / quarantine / reject). `java.base` only, so a format plugin builds on it without pulling in the server. |
+| `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through - including its gated `publish(descriptor, stream)`, which stores the blob, runs the ordered `ServiceLoader`-discovered `PublishInterceptor` chain over the neutral `ArtifactDescriptor`, routes the pointer by the strongest disposition (accept / quarantine / reject), and only then notifies the `PublicationObserver` after-commit hooks (contained, accepted publishes only); its serving lookup (`located`) asks the same screens whether a path is withheld - the quarantine read side. `java.base` only, so a format plugin builds on it without pulling in the server. |
 | `build.jenesis.repository.store.filesystem` | `source/store/filesystem` | The default filesystem backend: blobs under a mounted root (`JENESIS_STORE_ROOT`), the provider `ArtifactStoreProvider.resolve` falls back to when no other backend is named. `provides` its `ArtifactStoreProvider`, discovered with `ServiceLoader`; the store SPI + `java.base` only. |
 | `build.jenesis.repository.store.s3`       | `source/store/s3`         | S3-compatible backend (AWS SDK v2). Selected with `jenesis.repository.store=s3` and `JENESIS_AWS_BUCKET`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
 | `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). Selected with `jenesis.repository.store=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |

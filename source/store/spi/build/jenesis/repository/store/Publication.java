@@ -13,31 +13,51 @@ import module java.base;
  */
 public final class Publication {
 
-    /** The interceptor chain, discovered once at class load like {@code MavenFormat.MODULE_VIEWS} - empty in the free
+    private static final System.Logger LOGGER = System.getLogger(Publication.class.getName());
+
+    /** The screen chain, discovered once at class load like {@code MavenFormat.MODULE_VIEWS} - empty in the free
      *  edition (no provider on the module path), so {@link #publish} is a plain store-then-link there. */
     private static final List<PublishInterceptor> DISCOVERED = ServiceLoader.load(PublishInterceptor.class)
             .stream().map(ServiceLoader.Provider::get).toList();
 
+    /** The after-commit observers, discovered the same way - the hook class with no say in any verdict. */
+    private static final List<PublicationObserver> OBSERVERS = ServiceLoader.load(PublicationObserver.class)
+            .stream().map(ServiceLoader.Provider::get).toList();
+
     private final ArtifactStore store;
     private final List<PublishInterceptor> interceptors;
+    private final List<PublicationObserver> observers;
 
     public Publication(ArtifactStore store) {
-        this(store, DISCOVERED);
+        this(store, DISCOVERED, OBSERVERS);
     }
 
-    /** A publication whose upload post-processing runs an explicit interceptor list rather than the
-     *  {@code ServiceLoader}-discovered one - the seam an embedder uses to order interceptors or inject ones that are
-     *  not on the module path. */
+    /** A publication whose upload post-processing runs an explicit screen list rather than the
+     *  {@code ServiceLoader}-discovered one - the seam an embedder uses to inject screens that are not on the module
+     *  path. Either way the chain runs sorted by {@link PublishInterceptor#order()}, ties keeping their given order. */
     public Publication(ArtifactStore store, List<PublishInterceptor> interceptors) {
+        this(store, interceptors, OBSERVERS);
+    }
+
+    /** The fully explicit seam: screens and after-commit observers both injected rather than discovered. */
+    public Publication(ArtifactStore store, List<PublishInterceptor> interceptors, List<PublicationObserver> observers) {
         this.store = store;
-        this.interceptors = interceptors;
+        this.interceptors = interceptors.stream().sorted(Comparator.comparingInt(PublishInterceptor::order)).toList();
+        this.observers = observers;
     }
 
     /** The blob key ({@code blobs/<hash>}) a path resolves to when it is published and the blob is present - what a
      *  streaming {@code GET} sets its {@code Content-Length} from (through {@link ArtifactStore#size}) and then copies
      *  to the response (through {@link ArtifactStore#read}), instead of buffering the blob to learn its length. Empty
-     *  when nothing is published there or the blob is gone. */
+     *  when nothing is published there, the blob is gone, or a screen {@link PublishInterceptor#withheld withholds}
+     *  the path - the quarantine read side, so a verdict that changes after the fact retracts a linked artifact from
+     *  every serving surface without touching its pointer. */
     public Optional<String> located(String requestPath) throws IOException {
+        for (PublishInterceptor interceptor : interceptors) {
+            if (interceptor.withheld(requestPath, store)) {
+                return Optional.empty();
+            }
+        }
         return blob(requestPath).map(hash -> "blobs/" + hash).filter(store::exists);
     }
 
@@ -81,7 +101,9 @@ public final class Publication {
      * (stored but not served), {@code REJECT} links nothing (the orphaned blob is left for garbage collection). The
      * blob is inert until a pointer references it, so the chain gates before the first link - nothing is buffered and
      * there is no published-then-retracted window. With the default empty chain this is exactly a
-     * {@link #storeBlob} followed by a {@link #link}.
+     * {@link #storeBlob} followed by a {@link #link}. Once an accepted artifact is linked, every discovered
+     * {@link PublicationObserver} is notified - only then, so an observer never sees a quarantined or rejected
+     * publish - with any observer failure logged and contained, never unlinking the artifact or failing the upload.
      */
     public Published publish(ArtifactDescriptor artifact, InputStream content) throws IOException {
         String hash = storeBlob(content);
@@ -102,6 +124,16 @@ public final class Publication {
         }
         for (PublishInterceptor interceptor : interceptors) {
             interceptor.committed(stored, disposition);
+        }
+        if (disposition == PublishInterceptor.Disposition.ACCEPT) {
+            for (PublicationObserver observer : observers) {
+                try {
+                    observer.onPublished(stored, store);
+                } catch (Exception exception) {
+                    LOGGER.log(System.Logger.Level.WARNING, "publication observer "
+                            + observer.getClass().getName() + " failed for " + stored.path(), exception);
+                }
+            }
         }
         return new Published(disposition, hash);
     }
