@@ -31,7 +31,7 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link ArtifactorySource} importer against a real, free JFrog Artifactory - exercising the OSS fallback,
@@ -74,8 +74,8 @@ public class ArtifactoryOssImportTest {
 
     @BeforeAll
     public void start() throws Exception {
-        assumeTrue(exec(30, null, "docker", "version").code() == 0, "Docker is required for the Artifactory import test");
-        assumeTrue(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Artifactory import test");
+        requireOrSkip(exec(30, null, "docker", "version").code() == 0, "Docker is required for the Artifactory import test");
+        requireOrSkip(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Artifactory import test");
         client = HttpClient.newHttpClient();
 
         // boot a real Artifactory (OSS edition) and wait for it to come up.

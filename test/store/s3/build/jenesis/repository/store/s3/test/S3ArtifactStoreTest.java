@@ -11,7 +11,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.store.s3.test.Requirement.requireOrSkip;
 
 /**
  * Exercises {@link S3ArtifactStore} against a real S3 API served by MinIO (a free, S3-compatible object
@@ -38,7 +38,7 @@ public class S3ArtifactStoreTest {
 
     @BeforeAll
     public void start() throws Exception {
-        assumeTrue(Docker.available(), "Docker is required for the S3 (MinIO) integration test");
+        requireOrSkip(Docker.available(), "Docker is required for the S3 (MinIO) integration test");
         minio = Docker.start(IMAGE, API_PORT, "server", "/data");
         int port = minio.hostPort(API_PORT);
         s3 = S3Client.builder()

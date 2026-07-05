@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Verifies that Helm works against the repository with no Helm-specific code: a Helm 3 chart is an OCI artifact, so
@@ -45,7 +45,7 @@ public class HelmOciTest {
 
     @BeforeAll
     public void start() {
-        assumeTrue(commandAvailable(HELM), "helm is required for the Helm-over-OCI verification");
+        requireOrSkip(commandAvailable(HELM), "helm is required for the Helm-over-OCI verification");
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("store").toString());
         running = RepositoryApplication.start(0);
         env = Map.of(

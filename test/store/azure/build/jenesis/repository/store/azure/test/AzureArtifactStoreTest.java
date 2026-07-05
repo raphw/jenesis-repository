@@ -9,7 +9,7 @@ import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.store.azure.test.Requirement.requireOrSkip;
 
 /**
  * Exercises {@link AzureArtifactStore} against a real Azure Blob API served by Azurite (the official local
@@ -37,7 +37,7 @@ public class AzureArtifactStoreTest {
 
     @BeforeAll
     public void start() throws Exception {
-        assumeTrue(Docker.available(), "Docker is required for the Azure Blob (Azurite) integration test");
+        requireOrSkip(Docker.available(), "Docker is required for the Azure Blob (Azurite) integration test");
         // --skipApiVersionCheck: the azure-storage-blob SDK sends a newer x-ms-version than the pinned
         // Azurite image recognises; the flag tells Azurite to accept any API version.
         azurite = Docker.start(IMAGE, BLOB_PORT,

@@ -28,7 +28,7 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link build.jenesis.repository.format.maven.MavenFormat} plugin against the real Apache Maven client: it
@@ -60,7 +60,7 @@ public class MavenClientTest {
 
     @BeforeAll
     public void start() throws Exception {
-        assumeTrue(mvn(30, "-v") == 0, "Apache Maven (mvn) is required for the Maven client integration test");
+        requireOrSkip(mvn(30, "-v") == 0, "Apache Maven (mvn) is required for the Maven client integration test");
         // Route plugin resolution through the same Central mirror the rest of the build uses (set on CI to dodge
         // Central rate limits); unset locally, so mvn falls back to Central directly.
         String mirror = System.getenv("MAVEN_REPOSITORY_URI");
