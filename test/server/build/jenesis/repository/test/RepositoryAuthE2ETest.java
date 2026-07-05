@@ -35,6 +35,7 @@ public class RepositoryAuthE2ETest {
     private RepositoryApplication.Running server;
     private HttpClient client;
     private String base;
+    private String root;
     private String ci;
     private String ro;
     private String bogus;
@@ -53,7 +54,8 @@ public class RepositoryAuthE2ETest {
         authorization.grant(ro, "*", Authorization.REPOSITORY_READ);
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
-        base = "http://localhost:" + server.port() + "/repository/";
+        root = "http://localhost:" + server.port();
+        base = root + "/repository/";
     }
 
     @AfterAll
@@ -84,6 +86,22 @@ public class RepositoryAuthE2ETest {
     @Test
     public void an_unknown_key_is_forbidden() throws Exception {
         assertThat(get("maven/org/example/a/1/a-1.jar", bogus).statusCode()).isEqualTo(403);
+    }
+
+    @Test
+    public void the_asset_enumeration_requires_a_read_key() throws Exception {
+        // /api/assets is a read of the wire like any other - the export endpoint is not an open backdoor.
+        assertThat(assets(null).statusCode()).isEqualTo(401);
+        assertThat(assets(bogus).statusCode()).isEqualTo(403);
+        assertThat(assets(ro).statusCode()).isEqualTo(200);
+    }
+
+    private HttpResponse<byte[]> assets(String key) throws IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(root + "/api/assets?repo=default")).GET();
+        if (key != null) {
+            request.header("Jenesis-Repository-Key", key);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
     }
 
     private HttpResponse<byte[]> put(String path, String key) throws IOException, InterruptedException {

@@ -151,11 +151,13 @@ public class RepositoryAutoConfiguration {
                                                      List<ImportSourceProvider> importSources,
                                                      ProxyFormat.Fetcher fetcher,
                                                      BatchIngestion batch,
+                                                     ArtifactStore store,
                                                      Environment environment) {
         // A format reads a runtime toggle off the exchange (the Maven metadata computation opt-in); resolve the bare
         // setting key against the environment under the shared jenesis.repository.* prefix, into which a stored
-        // setting is layered at boot, so the format needs no settings dependency.
+        // setting is layered at boot, so the format needs no settings dependency. The un-scoped store is handed in so
+        // the /api/assets enumeration can scope to an explicitly named repo within the request's tenant.
         return new RepositoryController(routing, dispatcher, importSources, fetcher, batch,
-                key -> environment.getProperty("jenesis.repository." + key));
+                key -> environment.getProperty("jenesis.repository." + key), store);
     }
 }
