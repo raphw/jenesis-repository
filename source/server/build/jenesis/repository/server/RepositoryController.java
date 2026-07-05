@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 
 /**
  * The HTTP surface of the free repository, mirroring {@link RepositoryApplication}'s framework-neutral
@@ -52,6 +53,7 @@ public class RepositoryController {
     private final List<ImportSourceProvider> importSources;
     private final ProxyFormat.Fetcher fetcher;
     private final BatchIngestion batch;
+    private final UnaryOperator<String> settings;
 
     public RepositoryController(RepositoryRouting routing,
                                 FormatDispatcher dispatcher,
@@ -68,11 +70,25 @@ public class RepositoryController {
                                 List<ImportSourceProvider> importSources,
                                 ProxyFormat.Fetcher fetcher,
                                 BatchIngestion batch) {
+        this(routing, dispatcher, importSources, fetcher, batch, key -> null);
+    }
+
+    /** As above, resolving each request's {@link build.jenesis.repository.format.FormatExchange#setting(String)}
+     *  through {@code settings} (a bare setting key to its effective value, {@code null} when unset), so a format can
+     *  read a deployment toggle - the Maven metadata computation opt-in, say - off the exchange. A deployment builds
+     *  it from its configuration; {@code key -> null} keeps every format on its shipped default. */
+    public RepositoryController(RepositoryRouting routing,
+                                FormatDispatcher dispatcher,
+                                List<ImportSourceProvider> importSources,
+                                ProxyFormat.Fetcher fetcher,
+                                BatchIngestion batch,
+                                UnaryOperator<String> settings) {
         this.routing = routing;
         this.dispatcher = dispatcher;
         this.importSources = importSources;
         this.fetcher = fetcher;
         this.batch = batch;
+        this.settings = settings;
     }
 
     /**
@@ -90,7 +106,7 @@ public class RepositoryController {
             RequestMethod.PUT, RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
         RepositoryRouting.Route route = routing.route(request);
-        ServletFormatExchange exchange = new ServletFormatExchange(request, response, route.path());
+        ServletFormatExchange exchange = new ServletFormatExchange(request, response, route.path(), settings);
         if (batch != null && batch.claims(exchange)) {
             batch.explode(exchange, route.store(), dispatcher);
             return;

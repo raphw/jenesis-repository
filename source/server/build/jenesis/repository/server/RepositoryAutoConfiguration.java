@@ -135,7 +135,12 @@ public class RepositoryAutoConfiguration {
                                                      FormatDispatcher dispatcher,
                                                      List<ImportSourceProvider> importSources,
                                                      ProxyFormat.Fetcher fetcher,
-                                                     BatchIngestion batch) {
-        return new RepositoryController(routing, dispatcher, importSources, fetcher, batch);
+                                                     BatchIngestion batch,
+                                                     Environment environment) {
+        // A format reads a runtime toggle off the exchange (the Maven metadata computation opt-in); resolve the bare
+        // setting key against the environment under the shared jenesis.repository.* prefix, into which a stored
+        // setting is layered at boot, so the format needs no settings dependency.
+        return new RepositoryController(routing, dispatcher, importSources, fetcher, batch,
+                key -> environment.getProperty("jenesis.repository." + key));
     }
 }

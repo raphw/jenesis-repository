@@ -14,8 +14,11 @@ import build.jenesis.repository.store.ArtifactStore;
 
 /**
  * The Maven layout ({@code /maven/...}): a {@code PUT} stores the blob content-addressed through the shared
- * {@link Publication} store, and a {@code GET} serves it or generates {@code maven-metadata.xml} on read through
- * {@link MavenMetadata} (a metadata upload is dropped, since the metadata is derived). When the uploaded artifact is a
+ * {@link Publication} store - including a {@code maven-metadata.xml} and its checksum siblings, stored verbatim like
+ * any artifact - and a {@code GET} serves the stored bytes byte-for-byte, an absent one a 404. Deriving
+ * {@code maven-metadata.xml} on read is no longer the default: it is the opt-in {@link MavenMetadata#COMPUTE_SETTING}
+ * computation, read off the exchange, which reconciles a stored document's version list (or derives one for a
+ * coordinate no client uploaded). When the uploaded artifact is a
  * modular jar, it is cross-published into the Jenesis module layout: this format reads the module name and hands it to
  * the {@link ModuleView} the Jenesis format provides (discovered with {@link ServiceLoader}), so a client resolving by
  * module name reaches the same blob - the bridge between the two layouts, exposed only between them and never on the
@@ -113,18 +116,23 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     public void handle(FormatExchange exchange, ArtifactStore store) throws IOException {
         String path = exchange.path();
         if (exchange.method().equals("PUT")) {
-            if (MavenMetadata.isMetadataRequest(path)) {
-                exchange.respond(201);
-                return;
-            }
+            // W5.12(1): a maven-metadata.xml (and its checksum siblings) is stored verbatim like any artifact rather
+            // than dropped, so a publisher-authored document round-trips even when the server does not derive one.
             exchange.respond(status(publish(store, path, exchange.requestStream()).disposition()));
             return;
         }
-        Optional<byte[]> generated = new MavenMetadata(store).serve(path);
-        if (generated.isPresent()) {
-            exchange.respond(200, generated.get());
-            return;
+        // W5.12(3): with the opt-in computation on, an artifact-level document has its version list reconciled (or is
+        // derived for a coordinate no client uploaded); a checksum is served from the authored bytes. Empty means the
+        // default verbatim serve stands.
+        if (MavenMetadata.isMetadataRequest(path) && metadataCompute(exchange)) {
+            Optional<byte[]> computed = new MavenMetadata(store).computed(path);
+            if (computed.isPresent()) {
+                exchange.respond(200, computed.get());
+                return;
+            }
         }
+        // W5.12(2): the default - serve the stored metadata (and its stored checksums) byte-for-byte, a 404 when
+        // absent; a normal artifact is streamed from its content-addressed blob.
         Optional<String> key = new Publication(store).located(path);
         if (key.isEmpty()) {
             exchange.respond(404);
@@ -133,6 +141,12 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         try (OutputStream out = exchange.respond(200, store.size(key.get()))) {
             store.read(key.get(), out);
         }
+    }
+
+    /** Whether this deployment opts into computing {@code maven-metadata.xml} on read (default off), read off the
+     *  exchange so this free format consults the setting without depending on any settings layer. */
+    private static boolean metadataCompute(FormatExchange exchange) {
+        return Boolean.parseBoolean(exchange.setting(MavenMetadata.COMPUTE_SETTING));
     }
 
     /** Store the artifact through the gated {@link Publication#publish} (streamed straight to storage, then the upload
@@ -180,18 +194,29 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
     /**
      * Proxy a {@code /maven/} miss to the upstream Maven repository (Maven Central). Artifacts (jars, poms and their
      * checksums) are immutable and cached, and a cached modular jar is cross-published like a local one;
-     * {@code maven-metadata.xml} is generated locally from the version folders, so it is not proxied.
+     * {@code maven-metadata.xml} is a mutable index, so it is proxied fresh from upstream on each miss (W5.12) - never
+     * derived locally or cached - the way every other format's index is, so a later upstream publish shows through.
      */
     @Override
     public boolean proxy(FormatExchange exchange, ArtifactStore store, URI upstream, ProxyFormat.Fetcher fetcher)
             throws IOException {
         String path = exchange.path();
-        if (!path.startsWith("/maven/") || MavenMetadata.isMetadataRequest(path)) {
+        if (!path.startsWith("/maven/")) {
             return false;
         }
         String rest = path.substring("/maven/".length());
         String root = upstream.toString();
         String prefix = root.endsWith("/") ? root : root + "/";
+        if (MavenMetadata.isMetadataRequest(path)) {
+            // A mutable index: fetch it fresh (the small buffered fetch, not a cached download) and stream it straight
+            // to the client, leaving nothing cached, so the repository never serves a stale metadata document.
+            Optional<ProxyFormat.Fetched> index = fetcher.fetch(URI.create(prefix + rest), Map.of());
+            if (index.isEmpty() || index.get().status() != 200) {
+                return false;
+            }
+            exchange.respond(200, index.get().body());
+            return true;
+        }
         Optional<ProxyFormat.Download> fetched = fetcher.download(URI.create(prefix + rest), Map.of());
         if (fetched.isEmpty()) {
             return false;
