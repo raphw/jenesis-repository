@@ -145,4 +145,98 @@ public class S3ArtifactStoreTest {
         assertThat(other.exists("isolate/x")).isFalse();
         assertThat(other.list("isolate")).isEmpty();
     }
+
+    @Test
+    public void a_ranged_read_seeks_to_the_window_over_a_real_range_get() throws IOException {
+        byte[] body = new byte[64];
+        for (int i = 0; i < body.length; i++) {
+            body[i] = (byte) i;
+        }
+        store.write("blobs/ranged", new ByteArrayInputStream(body));
+
+        // The serving layer wraps a client Range in this OutputStream+RangedSink; S3ArtifactStore recognizes the
+        // RangedSink and issues a `Range: bytes=10-17` GET, so only the window ever crosses the wire, and the sink
+        // receives exactly those bytes. A store that ignored the RangedSink would still slice correctly here - this
+        // asserts the window is right; the ranged GET is what avoids pulling the whole blob to serve a slice.
+        ByteArrayOutputStream window = new ByteArrayOutputStream();
+        store.read("blobs/ranged", new RangeOutputStream(window, 10, 8));
+        assertThat(window.toByteArray()).isEqualTo(Arrays.copyOfRange(body, 10, 18));
+
+        // A window that runs to the last byte reads to end-of-object without a 416.
+        ByteArrayOutputStream tail = new ByteArrayOutputStream();
+        store.read("blobs/ranged", new RangeOutputStream(tail, 60, 4));
+        assertThat(tail.toByteArray()).isEqualTo(Arrays.copyOfRange(body, 60, 64));
+    }
+
+    @Test
+    public void list_pages_past_the_thousand_key_boundary() throws IOException {
+        // S3 ListObjectsV2 caps a page at 1000 keys; writing 1001 forces the paginator across a page boundary, so
+        // this proves list() concatenates pages rather than truncating at the first (a silent, hard-to-notice loss).
+        int count = 1001;
+        for (int i = 0; i < count; i++) {
+            store.writeVersioned("paged/" + String.format("%04d", i), new byte[]{1}, null);
+        }
+        List<String> children = store.list("paged");
+        assertThat(children).hasSize(count);
+        assertThat(children).contains("0000", "0999", "1000");
+    }
+
+    /** Mirrors the server's range sink: forwards only a window of the bytes written, and is a {@link
+     *  ArtifactStore.RangedSink} the store seeks to. Kept local so the test drives the real serving shape. */
+    private static final class RangeOutputStream extends OutputStream implements ArtifactStore.RangedSink {
+
+        private final OutputStream out;
+        private final long start;
+        private final long length;
+        private long skip;
+        private long remaining;
+
+        private RangeOutputStream(OutputStream out, long start, long length) {
+            this.out = out;
+            this.start = start;
+            this.length = length;
+            this.skip = start;
+            this.remaining = length;
+        }
+
+        @Override
+        public long offset() {
+            return start;
+        }
+
+        @Override
+        public long length() {
+            return length;
+        }
+
+        @Override
+        public OutputStream sink() {
+            return out;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            if (skip > 0) {
+                skip--;
+            } else if (remaining > 0) {
+                out.write(b);
+                remaining--;
+            }
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            if (skip > 0) {
+                long skipped = Math.min(skip, length);
+                skip -= skipped;
+                offset += (int) skipped;
+                length -= (int) skipped;
+            }
+            if (remaining > 0 && length > 0) {
+                int written = (int) Math.min(remaining, length);
+                out.write(bytes, offset, written);
+                remaining -= written;
+            }
+        }
+    }
 }
