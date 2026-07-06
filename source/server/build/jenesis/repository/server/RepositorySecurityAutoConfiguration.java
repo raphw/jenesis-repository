@@ -44,6 +44,14 @@ public class RepositorySecurityAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public AuthFailures authFailures() {
+        // A registry-free accessor seam: the key entry point (and the console's OIDC/SAML login failure handlers)
+        // record denials here, and a metrics layer scrapes them into jenesis.auth.failures.
+        return new AuthFailures();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public RateLimitFilter rateLimitFilter(RateLimiter rateLimiter, Authorization authorization,
                                            RepositoryProperties properties) {
         // A bean (not an inline filter) so a metrics layer can scrape the same instance the chain sheds load with.
@@ -56,9 +64,10 @@ public class RepositorySecurityAutoConfiguration {
                                                    @Qualifier("repositoryAuthorizationManager")
                                                    AuthorizationManager<RequestAuthorizationContext> authorizationManager,
                                                    RateLimitFilter rateLimitFilter,
+                                                   AuthFailures authFailures,
                                                    ObjectProvider<SecurityChainCustomizer> customizers)
             throws Exception {
-        RepositoryAuthorizationEntryPoint entryPoint = new RepositoryAuthorizationEntryPoint();
+        RepositoryAuthorizationEntryPoint entryPoint = new RepositoryAuthorizationEntryPoint(authFailures);
         http
                 .csrf(csrf -> csrf.disable())
                 .httpBasic(basic -> basic.disable())

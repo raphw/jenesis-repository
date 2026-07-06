@@ -14,9 +14,17 @@ import org.springframework.security.web.access.AccessDeniedHandler;
  * {@link AuthenticationEntryPoint} (Spring's path for a denial it deems unauthenticated) and the
  * {@link AccessDeniedHandler} (its path for a denial it deems authenticated), so either path answers {@code 403}
  * for a {@code FORBIDDEN} decision (a key that lacks the right) and {@code 401} otherwise (no key, a malformed or
- * expired key). The decision drives the status, so a present-but-unauthorized key is always a {@code 403}.
+ * expired key). The decision drives the status, so a present-but-unauthorized key is always a {@code 403}. Every
+ * denial it answers is recorded on the {@link AuthFailures} accessor under the {@code key} mechanism, so a metrics
+ * layer can surface {@code jenesis.auth.failures} without this component depending on any registry.
  */
 public final class RepositoryAuthorizationEntryPoint implements AuthenticationEntryPoint, AccessDeniedHandler {
+
+    private final AuthFailures failures;
+
+    public RepositoryAuthorizationEntryPoint(AuthFailures failures) {
+        this.failures = failures;
+    }
 
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException exception) {
@@ -30,6 +38,8 @@ public final class RepositoryAuthorizationEntryPoint implements AuthenticationEn
 
     private void respond(HttpServletRequest request, HttpServletResponse response) {
         Object decision = request.getAttribute("jenesis.repository.decision");
-        response.setStatus(decision == Authorization.Decision.FORBIDDEN ? 403 : 401);
+        int status = decision == Authorization.Decision.FORBIDDEN ? 403 : 401;
+        response.setStatus(status);
+        failures.record("key", status);
     }
 }

@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -28,6 +29,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final long defaultPermitsPerMinute;
     private final ConcurrentHashMap<String, long[]> ceilings = new ConcurrentHashMap<>();
     private final AtomicLong rejected = new AtomicLong();
+    private final ConcurrentHashMap<String, AtomicLong> rejectedByTenant = new ConcurrentHashMap<>();
 
     public RateLimitFilter(RateLimiter limiter, Authorization authorization, long defaultPermitsPerMinute) {
         this.limiter = limiter;
@@ -38,6 +40,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     /** The number of requests shed with {@code 429} since startup - a back-pressure signal a metrics layer can scrape. */
     public long rejected() {
         return rejected.get();
+    }
+
+    /** Requests shed with {@code 429} since startup, broken down by the bucket they metered against ({@code anonymous}
+     *  for a keyless request, else the tenant), so a metrics layer can tag {@code jenesis.ratelimit.rejected} by
+     *  tenant. A snapshot view; a tenant that has never been rate-limited is absent rather than zero. */
+    public Map<String, Long> rejectedByTenant() {
+        return rejectedByTenant.entrySet().stream()
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get()));
     }
 
     @Override
@@ -51,6 +61,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String bucket = tenant == null ? "anonymous" : tenant;
         if (!limiter.allow(bucket, ceiling(bucket, tenant))) {
             rejected.incrementAndGet();
+            rejectedByTenant.computeIfAbsent(bucket, key -> new AtomicLong()).incrementAndGet();
             response.setStatus(429);
             response.setHeader("Retry-After", "60");
             return;

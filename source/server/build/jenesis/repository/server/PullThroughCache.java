@@ -5,6 +5,7 @@ import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
+import io.micrometer.observation.ObservationRegistry;
 
 /**
  * The format-agnostic pull-through loop shared by every dispatcher. A {@code GET} of a path the format handles is
@@ -13,13 +14,25 @@ import build.jenesis.repository.store.ArtifactStore;
  * later read is a local hit. A non-{@code GET} request, a local hit, or an adapter that declines passes straight
  * through (the 404 stands). The single network call sits behind {@link ProxyFormat.Fetcher} so the cache behaviour
  * is tested without the network.
+ *
+ * <p>Each proxy-eligible read is wrapped in a {@code jenesis.proxy.fetch} {@link Observations observation} tagged
+ * with the {@code format} and the {@code outcome} - {@code hit} (served locally, no upstream call), {@code miss}
+ * (fetched from upstream) or {@code negative} (upstream also missed) - so the upstream leg is visible in metrics,
+ * logs and traces from one instrumentation point. Given an {@link ObservationRegistry#NOOP NOOP} registry (the
+ * default constructor, and every test that builds this directly) the wrapper is inert.
  */
 public final class PullThroughCache {
 
     private final ProxyFormat.Fetcher fetcher;
+    private final ObservationRegistry observations;
 
     public PullThroughCache(ProxyFormat.Fetcher fetcher) {
+        this(fetcher, ObservationRegistry.NOOP);
+    }
+
+    public PullThroughCache(ProxyFormat.Fetcher fetcher, ObservationRegistry observations) {
         this.fetcher = fetcher;
+        this.observations = observations;
     }
 
     public void serve(RepositoryFormat format,
@@ -31,11 +44,22 @@ public final class PullThroughCache {
             format.handle(exchange, store);
             return;
         }
-        Deferred deferred = new Deferred(exchange);
-        format.handle(deferred, store);
-        if (deferred.missed() && !proxy.proxy(exchange, store, upstream, fetcher)) {
-            exchange.respond(404);
-        }
+        Observations.observe(observations, "jenesis.proxy.fetch", null, null, observation -> {
+            observation.lowCardinalityKeyValue("format", format.name());
+            Deferred deferred = new Deferred(exchange);
+            format.handle(deferred, store);
+            if (!deferred.missed()) {
+                observation.lowCardinalityKeyValue("outcome", "hit");
+                return null;
+            }
+            if (proxy.proxy(exchange, store, upstream, fetcher)) {
+                observation.lowCardinalityKeyValue("outcome", "miss");
+            } else {
+                observation.lowCardinalityKeyValue("outcome", "negative");
+                exchange.respond(404);
+            }
+            return null;
+        });
     }
 
     /**
