@@ -139,6 +139,19 @@
     top: var(--app-space-2);
 }
 
+/* ---- Component: brand ------------------------------------------------------------------------------------- */
+/* The product logo + name in the nav. Two logo files (ink+amber on light, cream+amber on dark) toggle by theme
+   so the two-tone mark stays legible on either background; the amber accent is identical in both. */
+.app-brand { display: inline-flex; align-items: center; gap: var(--app-space-2); text-decoration: none; color: inherit; }
+.app-brand__mark { height: 1.4rem; width: auto; display: inline-block; }
+.app-brand__mark--dark { display: none; }
+[data-theme="dark"] .app-brand__mark--light { display: none; }
+[data-theme="dark"] .app-brand__mark--dark { display: inline-block; }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .app-brand__mark--light { display: none; }
+    :root:not([data-theme="light"]) .app-brand__mark--dark { display: inline-block; }
+}
+
 /* ---- Component: page header -------------------------------------------------------------------------------- */
 /* Title, an optional breadcrumb above it, and a single primary-action slot pinned to the right. */
 .app-page-header {

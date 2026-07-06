@@ -9,7 +9,7 @@
 <header class="container">
     <nav class="app-nav">
         <ul>
-            <li><strong>jenesis-repository</strong></li>
+            <li th:replace="~{base :: brand('jenesis-repository', @{/})}"></li>
         </ul>
         <ul>
             <li th:each="panel : ${panels}">
