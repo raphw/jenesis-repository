@@ -38,9 +38,9 @@
 <!-- Brand: the product logo + name for the top nav. `name` is the product label; `href` is where it links
      (the console home). The logo is served from the shared ui resources, so the enterprise console renders
      the same fragment with its own name. -->
-<a th:fragment="brand(name, href)" th:href="${href}" class="app-brand">
-    <img class="app-brand__mark app-brand__mark--light" th:src="@{/img/jenesis-repository-light.svg}" alt="" width="20" height="20">
-    <img class="app-brand__mark app-brand__mark--dark" th:src="@{/img/jenesis-repository-dark.svg}" alt="" width="20" height="20">
+<a th:fragment="brand(name, href, logo)" th:href="${href}" class="app-brand">
+    <img class="app-brand__mark app-brand__mark--light" th:src="@{|/img/${logo}-light.svg|}" alt="" width="20" height="20">
+    <img class="app-brand__mark app-brand__mark--dark" th:src="@{|/img/${logo}-dark.svg|}" alt="" width="20" height="20">
     <strong th:text="${name}">Jenesis</strong>
 </a>
 
