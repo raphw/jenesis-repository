@@ -39,6 +39,7 @@ public class RepositoryAuthE2ETest {
     private String ci;
     private String ro;
     private String bogus;
+    private String releasesRo;
 
     @BeforeAll
     public void boot() throws IOException {
@@ -52,6 +53,8 @@ public class RepositoryAuthE2ETest {
         bogus = Authorization.mint("acme");
         authorization.grant(ci, "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
         authorization.grant(ro, "*", Authorization.REPOSITORY_READ);
+        releasesRo = Authorization.mint("acme");
+        authorization.grant(releasesRo, "releases", Authorization.REPOSITORY_READ);
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         root = "http://localhost:" + server.port();
@@ -96,8 +99,22 @@ public class RepositoryAuthE2ETest {
         assertThat(assets(ro).statusCode()).isEqualTo(200);
     }
 
+    @Test
+    public void a_repository_scoped_key_cannot_enumerate_another_repository() throws Exception {
+        // releasesRo carries repository:read on "releases" only. It reads its own repo's assets, but the enumeration
+        // is authorized against the effective ?repo=, not the routed name - so it cannot pivot to another repo by
+        // passing repo=default (the header-authorizes-A / param-scopes-B mismatch). A wildcard read key still may.
+        assertThat(assets(releasesRo, "releases").statusCode()).isEqualTo(200);
+        assertThat(assets(releasesRo, "default").statusCode()).isEqualTo(403);
+        assertThat(assets(ro, "default").statusCode()).isEqualTo(200);
+    }
+
     private HttpResponse<byte[]> assets(String key) throws IOException, InterruptedException {
-        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(root + "/api/assets?repo=default")).GET();
+        return assets(key, "default");
+    }
+
+    private HttpResponse<byte[]> assets(String key, String repo) throws IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(root + "/api/assets?repo=" + repo)).GET();
         if (key != null) {
             request.header("Jenesis-Repository-Key", key);
         }

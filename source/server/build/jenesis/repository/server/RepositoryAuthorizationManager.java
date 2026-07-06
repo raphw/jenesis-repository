@@ -39,11 +39,23 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
         String required = method.equals("GET") || method.equals("HEAD")
                 ? Authorization.REPOSITORY_READ
                 : Authorization.REPOSITORY_WRITE;
+        String scope = request.getHeader("Jenesis-Repository-Name");
+        // The asset enumeration scopes the store it reads by the ?repo= parameter, not the routed name, so authorize
+        // the repository that is actually enumerated - otherwise a key scoped to repository A could satisfy the header
+        // check for A and then read repository B by passing repo=B. Read the parameter only for that GET route (never
+        // on an upload path, where touching getParameter could drain a form-encoded body). When repo is absent the
+        // controller falls back to the routed name, which is exactly this header, so the scopes stay in lock-step.
+        if ("/api/assets".equals(request.getRequestURI())) {
+            String repo = request.getParameter("repo");
+            if (repo != null && !repo.isBlank()) {
+                scope = repo;
+            }
+        }
         Authorization.Decision decision;
         try {
             decision = authorization.authorize(
                     request.getHeader("Jenesis-Repository-Key"),
-                    request.getHeader("Jenesis-Repository-Name"),
+                    scope,
                     required);
         } catch (IOException e) {
             decision = Authorization.Decision.FORBIDDEN;
