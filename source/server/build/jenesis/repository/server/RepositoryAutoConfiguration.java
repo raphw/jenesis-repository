@@ -15,6 +15,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
+import io.micrometer.observation.ObservationRegistry;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -103,8 +104,16 @@ public class RepositoryAutoConfiguration {
     @ConditionalOnMissingBean
     public FormatDispatcher formatDispatcher(List<RepositoryFormat> formats,
                                              @Qualifier("upstreams") Map<String, URI> upstreams,
-                                             ProxyFormat.Fetcher fetcher) {
-        return new FormatDispatcher(formats, upstreams, fetcher);
+                                             ProxyFormat.Fetcher fetcher, ObservationRegistry observations) {
+        return new FormatDispatcher(formats, upstreams, fetcher, observations);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public LoggingObservationHandler loggingObservationHandler() {
+        // The one logging pillar of the Observation API, registered once beside the Observations wrapper so every
+        // jenesis.* operation logs from a single handler. Boot attaches it to the auto-configured ObservationRegistry.
+        return new LoggingObservationHandler();
     }
 
     @Bean
