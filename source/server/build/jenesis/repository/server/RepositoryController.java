@@ -269,7 +269,9 @@ public class RepositoryController {
      * {@code version} from the owning format's layout. The opaque {@code cursor} in the response fetches the next
      * page and is {@code null} once the walk is exhausted. {@code repo} defaults to the request's routed repository
      * and is validated as a traversal-free segment before it scopes the store; the wire is key-auth'd like every
-     * other read ({@code repository:read}) by {@link RepositorySecurityAutoConfiguration}.
+     * other read ({@code repository:read}) by {@link RepositorySecurityAutoConfiguration}, which authorizes the
+     * <em>effective</em> {@code repo} the store is scoped to (not merely the routed name) so this enumeration cannot
+     * read a repository the key is not scoped for.
      */
     @GetMapping("/api/assets")
     public void assets(HttpServletRequest request, HttpServletResponse response) throws IOException {
