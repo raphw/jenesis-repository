@@ -42,7 +42,7 @@ public final class AzureArtifactStore implements ArtifactStore {
 
     @Override
     public ArtifactStore scope(String tenant) {
-        return new AzureArtifactStore(container, keyPrefix + tenant + "/");
+        return new AzureArtifactStore(container, keyPrefix + ArtifactStore.segment(tenant) + "/");
     }
 
     @Override

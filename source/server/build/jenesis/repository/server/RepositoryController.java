@@ -66,6 +66,7 @@ public class RepositoryController {
     private final BatchIngestion batch;
     private final UnaryOperator<String> settings;
     private final ArtifactStore root;
+    private final RoutedServing routed;
 
     public RepositoryController(RepositoryRouting routing,
                                 FormatDispatcher dispatcher,
@@ -109,6 +110,22 @@ public class RepositoryController {
                                 BatchIngestion batch,
                                 UnaryOperator<String> settings,
                                 ArtifactStore root) {
+        this(routing, dispatcher, importSources, fetcher, batch, settings, root, RoutedServing.NONE);
+    }
+
+    /** As above, consulting {@code routed} on a read ({@code GET}/{@code HEAD}) so a repository defined as a
+     *  read-through proxy or a group view serves across its backings rather than only its own hosted store; a plain
+     *  hosted repository is dispatched normally, keeping the format-level pull-through. {@link RoutedServing#NONE}
+     *  (the default the convenience constructors pass) leaves every repository on its own store, so the free
+     *  single-tenant edition is unchanged. */
+    public RepositoryController(RepositoryRouting routing,
+                                FormatDispatcher dispatcher,
+                                List<ImportSourceProvider> importSources,
+                                ProxyFormat.Fetcher fetcher,
+                                BatchIngestion batch,
+                                UnaryOperator<String> settings,
+                                ArtifactStore root,
+                                RoutedServing routed) {
         this.routing = routing;
         this.dispatcher = dispatcher;
         this.importSources = importSources;
@@ -116,6 +133,7 @@ public class RepositoryController {
         this.batch = batch;
         this.settings = settings;
         this.root = root;
+        this.routed = routed;
     }
 
     /**
@@ -138,9 +156,28 @@ public class RepositoryController {
             batch.explode(exchange, route.store(), dispatcher);
             return;
         }
+        // A read of a routed repository (a proxy of an upstream, or a group view over members) is served across its
+        // backings through the routing seam - a proxy pulls through its own upstream on a local miss, a group tries
+        // its members in order - so every format gets per-repository routing behind this one controller. A plain
+        // hosted repository (the common case, and the only case the free edition binds) declines the seam and
+        // dispatches over its own store, keeping the deployment-wide format-level pull-through. Writes are never
+        // routed here: a routed group deploy lands in its push-target member on the write path.
+        if (isRead(request.getMethod()) && routed.routes(route.repository())) {
+            Optional<RepositoryFormat> owner = dispatcher.owner(exchange.path());
+            if (owner.isPresent()) {
+                routed.serve(route.tenant(), route.repository(), owner.get(), exchange);
+            } else {
+                response.setStatus(404);
+            }
+            return;
+        }
         if (!dispatcher.dispatch(exchange, route.store())) {
             response.setStatus(404);
         }
+    }
+
+    private static boolean isRead(String method) {
+        return "GET".equals(method) || "HEAD".equals(method);
     }
 
     /**

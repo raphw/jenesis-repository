@@ -18,6 +18,23 @@ public interface ArtifactStore {
     /** A view confined to one tenant's subspace (a subdirectory on a filesystem, a key prefix on an object store). */
     ArtifactStore scope(String tenant);
 
+    /**
+     * Validate {@code segment} as a single traversal-free scope name and return it - defence in depth for
+     * {@link #scope(String)}. Every routing edge already rejects a non-{@code [A-Za-z0-9_-]} tenant / repository name
+     * before it scopes the store, so this is a backstop: it stops a store backend from silently escaping its subspace
+     * on a {@code scope("../x")} or misplacing one on a {@code scope("a/b")} should a future caller forget to validate.
+     * A segment carrying a path separator ({@code /} or {@code \}) or resolving to the current / parent directory
+     * ({@code .}, {@code ..}, empty, or {@code null}) is rejected; a plain hidden-subspace name (the {@code .tests} /
+     * {@code .scans} internal spaces) is allowed. Each backend's {@code scope} runs the argument through this.
+     */
+    static String segment(String segment) {
+        if (segment == null || segment.isEmpty() || segment.equals(".") || segment.equals("..")
+                || segment.indexOf('/') >= 0 || segment.indexOf('\\') >= 0) {
+            throw new IllegalArgumentException("Not a traversal-free scope segment: " + segment);
+        }
+        return segment;
+    }
+
     /** Whether a blob exists at this object key. */
     boolean exists(String key);
 
