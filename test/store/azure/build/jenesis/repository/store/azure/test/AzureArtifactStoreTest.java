@@ -141,4 +141,96 @@ public class AzureArtifactStoreTest {
         assertThat(other.exists("isolate/x")).isFalse();
         assertThat(other.list("isolate")).isEmpty();
     }
+
+    @Test
+    public void a_ranged_read_seeks_to_the_window_over_a_real_blob_range() throws IOException {
+        byte[] body = new byte[64];
+        for (int i = 0; i < body.length; i++) {
+            body[i] = (byte) i;
+        }
+        store.write("blobs/ranged", new ByteArrayInputStream(body));
+
+        // The serving layer wraps a client Range in this OutputStream+RangedSink; AzureArtifactStore recognizes the
+        // RangedSink and opens the blob at a BlobRange(10, 8), so only the window is pulled and the sink receives
+        // exactly those bytes. The window-to-end case reads through to the last byte without overrunning the blob.
+        ByteArrayOutputStream window = new ByteArrayOutputStream();
+        store.read("blobs/ranged", new RangeOutputStream(window, 10, 8));
+        assertThat(window.toByteArray()).isEqualTo(Arrays.copyOfRange(body, 10, 18));
+
+        ByteArrayOutputStream tail = new ByteArrayOutputStream();
+        store.read("blobs/ranged", new RangeOutputStream(tail, 60, 4));
+        assertThat(tail.toByteArray()).isEqualTo(Arrays.copyOfRange(body, 60, 64));
+    }
+
+    @Test
+    public void list_returns_every_child_of_a_more_than_thousand_key_prefix() throws IOException {
+        // Azure's hierarchical listing is paged by the SDK; a >1000-key prefix proves list() drains every page of the
+        // PagedIterable rather than stopping at the first, so a large flat directory enumerates in full.
+        int count = 1001;
+        for (int i = 0; i < count; i++) {
+            store.writeVersioned("paged/" + String.format("%04d", i), new byte[]{1}, null);
+        }
+        List<String> children = store.list("paged");
+        assertThat(children).hasSize(count);
+        assertThat(children).contains("0000", "0999", "1000");
+    }
+
+    /** Mirrors the server's range sink: forwards only a window of the bytes written, and is a {@link
+     *  ArtifactStore.RangedSink} the store seeks to. Kept local so the test drives the real serving shape. */
+    private static final class RangeOutputStream extends OutputStream implements ArtifactStore.RangedSink {
+
+        private final OutputStream out;
+        private final long start;
+        private final long length;
+        private long skip;
+        private long remaining;
+
+        private RangeOutputStream(OutputStream out, long start, long length) {
+            this.out = out;
+            this.start = start;
+            this.length = length;
+            this.skip = start;
+            this.remaining = length;
+        }
+
+        @Override
+        public long offset() {
+            return start;
+        }
+
+        @Override
+        public long length() {
+            return length;
+        }
+
+        @Override
+        public OutputStream sink() {
+            return out;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            if (skip > 0) {
+                skip--;
+            } else if (remaining > 0) {
+                out.write(b);
+                remaining--;
+            }
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            if (skip > 0) {
+                long skipped = Math.min(skip, length);
+                skip -= skipped;
+                offset += (int) skipped;
+                length -= (int) skipped;
+            }
+            if (remaining > 0 && length > 0) {
+                int written = (int) Math.min(remaining, length);
+                out.write(bytes, offset, written);
+                remaining -= written;
+            }
+        }
+    }
 }

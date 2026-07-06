@@ -2,7 +2,10 @@ package build.jenesis.repository.store.s3;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -17,7 +20,11 @@ import java.util.function.UnaryOperator;
  * MinIO, LocalStack). Selected with {@code jenesis.repository.store=s3}; configured by
  * {@code JENESIS_AWS_BUCKET} (required), {@code JENESIS_AWS_REGION} (default {@code us-east-1}) and an
  * optional {@code JENESIS_AWS_ENDPOINT} (an S3-compatible endpoint, enabling path-style access).
- * Credentials come from the standard AWS chain (environment, profile or instance role). The blob I/O
+ * Credentials come from the standard AWS chain (environment, profile or instance role) unless
+ * {@code JENESIS_AWS_ACCESS_KEY_ID} and {@code JENESIS_AWS_SECRET_ACCESS_KEY} are both supplied through
+ * the config lookup, in which case those static keys are used - the path a self-hosted S3-compatible
+ * store (MinIO, Ceph) takes, and the seam that lets a test drive {@code create()} end to end against a
+ * container through an injected config lookup, without touching the process environment. The blob I/O
  * and the conditional compare-and-set semantics live in {@link S3ArtifactStore}.
  */
 public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
@@ -40,7 +47,7 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
         S3ClientBuilder builder = S3Client.builder()
                 .region(Region.of(region))
                 .httpClient(UrlConnectionHttpClient.create())
-                .credentialsProvider(DefaultCredentialsProvider.create());
+                .credentialsProvider(credentials(config));
         String endpoint = config.apply("JENESIS_AWS_ENDPOINT");
         if (endpoint != null && !endpoint.isBlank()) {
             builder.endpointOverride(URI.create(endpoint)).forcePathStyle(true);
@@ -53,5 +60,18 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
             // below surface a clear error if the bucket is truly unusable.
         }
         return new S3ArtifactStore(s3, bucket);
+    }
+
+    /**
+     * Static keys when both {@code JENESIS_AWS_ACCESS_KEY_ID} and {@code JENESIS_AWS_SECRET_ACCESS_KEY} are
+     * present in the config lookup, otherwise the standard AWS chain (environment, profile, instance role).
+     */
+    private static AwsCredentialsProvider credentials(UnaryOperator<String> config) {
+        String accessKey = config.apply("JENESIS_AWS_ACCESS_KEY_ID");
+        String secretKey = config.apply("JENESIS_AWS_SECRET_ACCESS_KEY");
+        if (accessKey != null && !accessKey.isBlank() && secretKey != null && !secretKey.isBlank()) {
+            return StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey));
+        }
+        return DefaultCredentialsProvider.create();
     }
 }
