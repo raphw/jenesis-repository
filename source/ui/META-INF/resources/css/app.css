@@ -50,9 +50,38 @@
     --app-status-info-fg: #084298;
     --app-status-muted-bg: var(--pico-muted-border-color, #e0e0e0);
     --app-status-muted-fg: var(--pico-muted-color, #555);
+
+    /* Jenesis brand palette — from the logo kit: ink #26221C, amber #C97E2C, cream #F7F3EC, rust #9A5A1B.
+       Wired into Pico's primary variables so links, buttons, focus rings and active states carry the brand
+       (the semantic status palette above stays semantic). Light theme uses the darker rust for AA contrast
+       on light surfaces; the dark blocks below switch primary to amber. Keep in step with the documentation
+       site (jenesis-documentation), which reuses this file. */
+    --app-brand-ink: #26221C;
+    --app-brand-amber: #C97E2C;
+    --app-brand-cream: #F7F3EC;
+    --app-brand-rust: #9A5A1B;
+
+    --pico-primary: var(--app-brand-rust);
+    --pico-primary-background: var(--app-brand-rust);
+    --pico-primary-border: var(--app-brand-rust);
+    --pico-primary-hover: var(--app-brand-ink);
+    --pico-primary-hover-background: var(--app-brand-ink);
+    --pico-primary-hover-border: var(--app-brand-ink);
+    --pico-primary-focus: rgba(201, 126, 44, 0.375);
+    --pico-primary-inverse: var(--app-brand-cream);
+    --pico-primary-underline: rgba(154, 90, 27, 0.5);
 }
 
 [data-theme="dark"] {
+    --pico-primary: var(--app-brand-amber);
+    --pico-primary-background: var(--app-brand-amber);
+    --pico-primary-border: var(--app-brand-amber);
+    --pico-primary-hover: var(--app-brand-cream);
+    --pico-primary-hover-background: var(--app-brand-cream);
+    --pico-primary-hover-border: var(--app-brand-cream);
+    --pico-primary-inverse: var(--app-brand-ink);
+    --pico-primary-underline: rgba(201, 126, 44, 0.5);
+
     --app-status-pass-bg: #14351f;
     --app-status-pass-fg: #a8e6bf;
     --app-status-warn-bg: #3d3210;
@@ -66,6 +95,15 @@
 /* Honour the OS preference when a deployment has not pinned a theme, so dark tokens apply automatically. */
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
+        --pico-primary: var(--app-brand-amber);
+        --pico-primary-background: var(--app-brand-amber);
+        --pico-primary-border: var(--app-brand-amber);
+        --pico-primary-hover: var(--app-brand-cream);
+        --pico-primary-hover-background: var(--app-brand-cream);
+        --pico-primary-hover-border: var(--app-brand-cream);
+        --pico-primary-inverse: var(--app-brand-ink);
+        --pico-primary-underline: rgba(201, 126, 44, 0.5);
+
         --app-status-pass-bg: #14351f;
         --app-status-pass-fg: #a8e6bf;
         --app-status-warn-bg: #3d3210;
