@@ -40,7 +40,7 @@ public final class S3ArtifactStore implements ArtifactStore {
 
     @Override
     public ArtifactStore scope(String tenant) {
-        return new S3ArtifactStore(s3, bucket, keyPrefix + tenant + "/");
+        return new S3ArtifactStore(s3, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/");
     }
 
     @Override

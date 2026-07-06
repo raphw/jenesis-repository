@@ -20,7 +20,7 @@ public final class FilesystemArtifactStore implements ArtifactStore {
 
     @Override
     public ArtifactStore scope(String tenant) {
-        return new FilesystemArtifactStore(root.resolve(tenant));
+        return new FilesystemArtifactStore(root.resolve(ArtifactStore.segment(tenant)));
     }
 
     private Path resolve(String key) {

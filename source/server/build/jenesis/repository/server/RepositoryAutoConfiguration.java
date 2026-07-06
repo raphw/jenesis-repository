@@ -124,6 +124,15 @@ public class RepositoryAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public RoutedServing routedServing() {
+        // No per-repository routing in the free single-tenant edition: every repository serves over its own hosted
+        // store. A distribution that offers proxy/group repositories contributes its own RoutedServing bean (backed
+        // by its router), which this @ConditionalOnMissingBean default backs off behind.
+        return RoutedServing.NONE;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public BatchIngestion batchIngestion(RepositoryProperties properties) {
         // Off by default; the archive-explode feature is a deployment opt-in, its entry cap the zip-bomb bound.
         return new BatchIngestion(properties::isBatchUpload, properties::getBatchUploadMaxEntries);
@@ -152,12 +161,14 @@ public class RepositoryAutoConfiguration {
                                                      ProxyFormat.Fetcher fetcher,
                                                      BatchIngestion batch,
                                                      ArtifactStore store,
+                                                     RoutedServing routed,
                                                      Environment environment) {
         // A format reads a runtime toggle off the exchange (the Maven metadata computation opt-in); resolve the bare
         // setting key against the environment under the shared jenesis.repository.* prefix, into which a stored
         // setting is layered at boot, so the format needs no settings dependency. The un-scoped store is handed in so
-        // the /api/assets enumeration can scope to an explicitly named repo within the request's tenant.
+        // the /api/assets enumeration can scope to an explicitly named repo within the request's tenant. The routed
+        // serving seam (NONE here, a router in a multi-repository distribution) drives a read of a proxy/group repo.
         return new RepositoryController(routing, dispatcher, importSources, fetcher, batch,
-                key -> environment.getProperty("jenesis.repository." + key), store);
+                key -> environment.getProperty("jenesis.repository." + key), store, routed);
     }
 }

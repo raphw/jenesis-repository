@@ -111,6 +111,23 @@ class FilesystemArtifactStoreTest {
     }
 
     @Test
+    void a_scope_name_that_escapes_its_subspace_is_rejected_but_a_hidden_space_is_allowed() throws IOException {
+        assertThatThrownBy(() -> store.scope("../escape"))
+                .as("a parent traversal never scopes the store").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.scope("a/b"))
+                .as("a path separator never scopes the store").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.scope(".."))
+                .as("a bare parent segment is rejected").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.scope(""))
+                .as("an empty segment is rejected").isInstanceOf(IllegalArgumentException.class);
+
+        ArtifactStore hidden = store.scope(".tests");
+        hidden.write("blobs/x", bytes("internal"));
+        assertThat(store.exists(".tests/blobs/x"))
+                .as("a hidden internal space (.tests / .scans) still scopes as a subdirectory").isTrue();
+    }
+
+    @Test
     void write_versioned_is_a_compare_and_set_on_the_last_modified_token() throws IOException {
         assertThat(store.writeVersioned("meta/m", "v1".getBytes(StandardCharsets.UTF_8), null))
                 .as("create-if-absent succeeds against a null expectation").isTrue();
