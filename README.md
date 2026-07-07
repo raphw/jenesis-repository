@@ -325,7 +325,10 @@ The web console is served at `/console` - browse artifacts, view repositories an
 configuration. The generic artifact browse is at `/browse`: a breadcrumbed, lazy tree over any
 repository's published namespace, read one prefix level at a time through the store's listing seam
 (folder vs artifact, with sizes) and generic across every format - a folder's children are fetched on
-demand (`/browse/children`), so a browse never scans or buffers a whole tree. Sign-in is OAuth2 / OIDC;
+demand (`/browse/children`), so a browse never scans or buffers a whole tree. The browse page also offers a
+**Download asset listing** action (`/assets`): the console face of the `GET /api/assets` walk, streamed as
+NDJSON of every published pointer (path, size, SHA-256) straight from the store - so getting your data out is
+a one-click export, never the paid feature. Sign-in is OAuth2 / OIDC;
 the `dev` profile (`SPRING_PROFILES_ACTIVE=dev`) swaps in a built-in `admin`/`admin` form login for
 local runs.
 

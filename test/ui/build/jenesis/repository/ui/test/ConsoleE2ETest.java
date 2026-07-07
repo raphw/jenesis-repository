@@ -190,6 +190,36 @@ public class ConsoleE2ETest {
         assertThat(page.body()).doesNotContain(blobHash);
     }
 
+    @Test
+    public void the_asset_listing_downloads_as_ndjson_of_the_published_pointers() throws Exception {
+        // The console face of GET /api/assets: a streamed, downloadable export of every published asset. One NDJSON
+        // line per pointer - the request path, the stored size (3 bytes) and the content address (the blob's SHA-256,
+        // its checksum, not a secret) - read straight from the publish/ pointer tree, never an artifact blob.
+        HttpResponse<String> assets = authGet("/assets");
+        assertThat(assets.statusCode()).isEqualTo(200);
+        assertThat(assets.headers().firstValue("Content-Disposition")).hasValueSatisfying(
+                disposition -> assertThat(disposition).contains("attachment").contains("assets.ndjson"));
+        assertThat(assets.body()).contains("\"path\":\"/maven/org/example/demo/1/demo-1.jar\"")
+                .contains("\"size\":3").contains("\"sha256\":\"" + blobHash + "\"");
+        // The content-addressed blobs bucket is never walked, so no raw blobs/ key ever leaks as an exported path.
+        assertThat(assets.body()).doesNotContain("\"path\":\"/blobs");
+        // The browse page links the download so a console user can reach it.
+        assertThat(authGet("/browse").body()).contains("/assets").contains("Download asset listing");
+    }
+
+    @Test
+    public void the_asset_listing_is_denied_to_an_anonymous_request() throws Exception {
+        // Deny-by-default: the export is a GET caught by anyRequest().authenticated(), so an anonymous browser request
+        // is bounced to login rather than handed the store's contents.
+        HttpResponse<String> anonymous = client.send(
+                HttpRequest.newBuilder(URI.create(base + "/assets"))
+                        .header("Accept", "text/html").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(anonymous.statusCode()).isEqualTo(302);
+        assertThat(anonymous.headers().firstValue("Location")).hasValueSatisfying(
+                location -> assertThat(location).contains("/login"));
+    }
+
     private HttpResponse<String> authGet(String path) throws Exception {
         String credentials = Base64.getEncoder()
                 .encodeToString("admin:admin".getBytes(StandardCharsets.UTF_8));
