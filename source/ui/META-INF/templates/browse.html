@@ -34,6 +34,12 @@
 <main id="main" class="container">
     <header th:replace="~{base :: pageHeaderCrumbs('Browse', ${crumbs})}"></header>
 
+    <p>
+        <a th:href="@{/assets}" role="button" class="secondary" download="assets.ndjson">Download asset listing (NDJSON) &darr;</a>
+    </p>
+    <p><small>Every published asset - path, size and SHA-256 - streamed straight from the store. The same walk the
+        <code>/api/assets</code> API serves, so getting your data out is never the paid feature.</small></p>
+
     <table class="app-list">
         <thead>
         <tr>

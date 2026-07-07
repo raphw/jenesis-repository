@@ -2,16 +2,21 @@ package build.jenesis.repository.ui;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Publication;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The generic artifact browse: a breadcrumbed, lazy tree over any repository's published namespace, read through the
@@ -60,6 +65,85 @@ public class BrowseController {
     public String children(@RequestParam(name = "path", defaultValue = "") String path, Model model) throws IOException {
         model.addAttribute("entries", children(sanitize(path)));
         return "browse :: rows";
+    }
+
+    /**
+     * The console face of the free {@code GET /api/assets} enumeration: a downloadable, streamed export of every
+     * published asset in the repository as NDJSON (one {@code {"path","size","sha256"}} object per line), the outbound
+     * mirror of the import connectors so getting your data out is never the paid feature. It walks the {@code publish/}
+     * pointer tree through the same {@link ArtifactStore} listing seam the browse uses - reading only the tiny
+     * publication pointer (its content <em>is</em> the blob hash) and the blob's stored size, never an artifact blob -
+     * and writes each entry as it is reached, so an arbitrarily large repository exports without buffering the tree.
+     * A path the store withholds (a retracted or quarantined artifact) is skipped through {@link Publication#located},
+     * and the {@code /quarantine} review subtree is never walked, so the export serves exactly what a {@code GET}
+     * would. It is deny-by-default authenticated like the browse (a GET any signed-in user may take); the coordinate
+     * enrichment {@code /api/assets} adds needs the owning format, which this store-only console does not carry, so the
+     * export carries the format-neutral pointer facts.
+     */
+    @GetMapping("/assets")
+    public void assets(HttpServletResponse response) throws IOException {
+        response.setHeader("Content-Type", "application/x-ndjson");
+        response.setHeader("Content-Disposition", "attachment; filename=\"assets.ndjson\"");
+        try (Writer out = new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8)) {
+            walk("", out);
+        }
+    }
+
+    /** Depth-first over the {@code publish/} pointer tree, emitting each leaf pointer as one NDJSON line; the
+     *  content-addressed {@code blobs/} bucket and the {@code /quarantine} review subtree are never walked. */
+    private void walk(String relative, Writer out) throws IOException {
+        List<String> children = store.list(relative.isEmpty() ? ROOT : ROOT + "/" + relative);
+        if (children.isEmpty()) {
+            if (!relative.isEmpty()) {
+                emit(relative, out);
+            }
+            return;
+        }
+        for (String child : children) {
+            if (relative.isEmpty() && child.equals("quarantine")) {
+                continue;
+            }
+            walk(relative.isEmpty() ? child : relative + "/" + child, out);
+        }
+    }
+
+    /** Emit one published leaf as an NDJSON object; a pointer the store withholds (quarantined/retracted) or whose blob
+     *  is gone resolves to no key and is skipped, so the export never names an unserved path. */
+    private void emit(String relative, Writer out) throws IOException {
+        String requestPath = "/" + relative;
+        Optional<String> located = publication.located(requestPath);
+        if (located.isEmpty()) {
+            return;
+        }
+        String key = located.get();
+        long size = store.size(key);
+        String sha256 = key.substring("blobs/".length());
+        out.write("{\"path\":\"" + jsonEscape(requestPath) + "\",\"size\":" + size
+                + ",\"sha256\":\"" + jsonEscape(sha256) + "\"}\n");
+    }
+
+    /** Minimal JSON string escaping for the two fields the export carries - a request path and a hex digest - so a path
+     *  segment carrying a quote, backslash or control character stays valid NDJSON. */
+    private static String jsonEscape(String value) {
+        StringBuilder escaped = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char c = value.charAt(index);
+            switch (c) {
+                case '"' -> escaped.append("\\\"");
+                case '\\' -> escaped.append("\\\\");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        escaped.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        escaped.append(c);
+                    }
+                }
+            }
+        }
+        return escaped.toString();
     }
 
     /** The immediate children under a (sanitized) browse path, each classified folder-vs-artifact with a size. */
