@@ -70,9 +70,9 @@ jobs:
           inc_maven=false
           if match '^source/format/maven/' || match '/Maven.*Test\.java'; then inc_maven=true; fi
           inc_nexus=false
-          if match '^source/importer/(spi|nexus)/' || match '/NexusImportTest\.java'; then inc_nexus=true; fi
+          if match '^source/importer/(spi|nexus|maven)/' || match '/NexusImportTest\.java'; then inc_nexus=true; fi
           inc_artifactory=false
-          if match '^source/importer/(spi|artifactory)/' || match '/ArtifactoryOssImportTest\.java'; then inc_artifactory=true; fi
+          if match '^source/importer/(spi|artifactory|maven)/' || match '/ArtifactoryOssImportTest\.java'; then inc_artifactory=true; fi
           inc_s3=false
           if match '^source/store/s3/' || match '^test/store/s3/'; then inc_s3=true; fi
           inc_azure=false

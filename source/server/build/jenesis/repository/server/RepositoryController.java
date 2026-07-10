@@ -193,11 +193,11 @@ public class RepositoryController {
 
     /**
      * The admin trigger for a migration, asynchronous so the call returns at once: a small JSON body
-     * ({@code {"source":"nexus|artifactory","url":...,"repository":...,"format":...,"username":...,"password":...,
-     * "resume":...}}) starts a background job (see {@link ImportJobs}) and answers {@code 202} with its id. The
-     * format ({@code maven}, {@code docker}, {@code raw}) is required for an Artifactory source and optional for a
-     * Nexus one. A {@code resume} naming a prior job continues its walk from the recorded continuation token and
-     * counts.
+     * ({@code {"source":"nexus|artifactory|maven|jenesis","url":...,"repository":...,"format":...,"username":...,
+     * "password":...,"resume":...}}) starts a background job (see {@link ImportJobs}) and answers {@code 202} with
+     * its id. The format ({@code maven}, {@code docker}, {@code raw}) is required for an Artifactory source and
+     * optional for the others. A {@code resume} naming a prior job continues its walk from the recorded continuation
+     * token and counts.
      */
     @PostMapping("/repository/admin/import")
     public void submitImport(@RequestBody(required = false) String body,
