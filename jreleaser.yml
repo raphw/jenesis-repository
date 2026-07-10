@@ -1,0 +1,38 @@
+project:
+  name: jenesis-repository
+  description: A dual-layout artifact repository serving the Maven layout, the Jenesis module layout and OCI from one content-addressed store.
+  authors: [Rafael Winterhalter]
+  license: Apache-2.0
+  links:
+    homepage: https://github.com/raphw/jenesis-repository
+  languages:
+    java:
+      groupId: build.jenesis
+      artifactId: build.jenesis.repository
+      version: '25'
+
+signing:
+  active: ALWAYS
+  pgp:
+    armored: true
+    mode: MEMORY
+
+release:
+  github:
+    owner: raphw
+    name: jenesis-repository
+    branch: main
+    branchPush: main
+    skipRelease: false
+    skipTag: false
+    tagName: 'v{{projectVersion}}'
+
+deploy:
+  maven:
+    mavenCentral:
+      sonatype:
+        active: ALWAYS
+        url: https://central.sonatype.com/api/v1/publisher
+        applyMavenCentralRules: true
+        stagingRepositories:
+          - target/stage/maven/output

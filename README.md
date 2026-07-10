@@ -354,6 +354,17 @@ A Jenesis build points at it with the existing knobs - no new client:
     -Djenesis.module.uri=https://repo.example.com/repository/ -Djenesis.module.token=jenk_<tenant>.<secret>
     -Djenesis.maven.uri=https://repo.example.com/repository/maven/
 
+Releasing
+---------
+
+A release rides a commit-message marker: a push to `main` whose head commit message starts with
+`[release]` (next minor of the latest tag) or `[release <version>]` (explicit) publishes, once the
+test workflow is green for that commit, every module to Maven Central under the `build.jenesis`
+group id - each with sources and javadoc, staged under strict dependency pinning with the POM
+metadata from [`project.properties`](project.properties) - and cuts the matching GitHub release and
+`v<version>` tag. See [`.github/workflows/release.yml`](.github/workflows/release.yml) and
+[`jreleaser.yml`](jreleaser.yml).
+
 Importing from another repository
 ---------------------------------
 
