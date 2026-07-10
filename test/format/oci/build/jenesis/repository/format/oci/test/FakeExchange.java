@@ -96,4 +96,8 @@ final class FakeExchange implements FormatExchange {
     String responseHeader(String name) {
         return responseHeaders.get(name);
     }
+
+    Map<String, String> responseHeaders() {
+        return responseHeaders;
+    }
 }

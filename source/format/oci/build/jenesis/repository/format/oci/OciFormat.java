@@ -23,6 +23,11 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
+    private static final String MANIFEST_ACCEPT = String.join(", ", OCI_MANIFEST,
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json");
+
     @Override
     public String name() {
         return "oci";
@@ -42,6 +47,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         String rest = path.substring("/v2/".length());
+        if (rest.equals("_catalog")) {
+            catalog(store, exchange);
+            return;
+        }
         if (rest.endsWith("/tags/list")) {
             tags(rest.substring(0, rest.length() - "/tags/list".length()), store, exchange);
             return;
@@ -239,6 +248,52 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         exchange.respond(200, JSON.writeValueAsString(body).getBytes(StandardCharsets.UTF_8));
     }
 
+    /** The Distribution catalog ({@code GET /v2/_catalog}): every image name that carries at least one tag pointer,
+     *  sorted, honouring the API's optional {@code n}/{@code last} paging with a {@code Link} to the next page -
+     *  the index through which a registry (and a jenesis repository serving this format) is enumerable, so
+     *  migration off this repository works over the format's own protocol. */
+    private void catalog(ArtifactStore store, FormatExchange exchange) throws IOException {
+        List<String> repositories = new ArrayList<>();
+        images(store, "", repositories);
+        Collections.sort(repositories);
+        String last = exchange.queryParameter("last");
+        if (last != null) {
+            repositories.removeIf(name -> name.compareTo(last) <= 0);
+        }
+        String limit = exchange.queryParameter("n");
+        int page;
+        try {
+            page = limit == null ? Integer.MAX_VALUE : Integer.parseInt(limit);
+        } catch (NumberFormatException invalid) {
+            exchange.respond(400);
+            return;
+        }
+        if (page < repositories.size()) {
+            repositories.subList(page, repositories.size()).clear();
+            exchange.setResponseHeader("Link", "</v2/_catalog?n=" + page + "&last="
+                    + URLEncoder.encode(repositories.getLast(), StandardCharsets.UTF_8) + ">; rel=\"next\"");
+        }
+        exchange.setResponseHeader("Content-Type", "application/json");
+        exchange.respond(200, JSON.writeValueAsString(Map.of("repositories", repositories))
+                .getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Collect every image name under the {@code oci/} prefix - a directory with a non-empty {@code tags} child.
+     *  The format's own sidecar prefixes ({@code types}, {@code uploads}) and the {@code tags} leaf itself are
+     *  reserved by this layout and never image-name segments. */
+    private void images(ArtifactStore store, String prefix, List<String> names) {
+        for (String child : store.list(prefix.isEmpty() ? "oci" : "oci/" + prefix)) {
+            if (child.equals("tags") || prefix.isEmpty() && (child.equals("types") || child.equals("uploads"))) {
+                continue;
+            }
+            String name = prefix.isEmpty() ? child : prefix + "/" + child;
+            if (!store.list("oci/" + name + "/tags").isEmpty()) {
+                names.add(name);
+            }
+            images(store, name, names);
+        }
+    }
+
     /**
      * Proxy a {@code /v2/} manifest or blob miss to the upstream registry (Docker Hub by default). Blobs and
      * manifests are immutable by digest, so they are stored exactly as a push would and re-served locally; a
@@ -372,6 +427,162 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         }
         headers.put("Authorization", "Bearer " + token);
         return fetcher.download(url, headers);
+    }
+
+    /**
+     * Walk an upstream registry through its own Distribution index: page the {@code /v2/_catalog} repository list,
+     * page each image's {@code /v2/<name>/tags/list}, and expand each tagged manifest - an image index's
+     * per-platform manifests first, then a manifest's config and layer blobs, then the manifest itself - so an
+     * import stores every blob before the manifest and tag pointer that reference it. Blob and by-digest manifest
+     * coordinates are deduplicated across the walk (tags share layers); the manifest fetch itself rides the same
+     * bearer-challenge flow the proxy path uses. A registry that disables the catalog (Docker Hub does) answers
+     * {@code 404} there, which surfaces as the initial index failure - enumeration honestly needs the catalog.
+     */
+    @Override
+    public Stream<Coordinate> enumerate(ProxyFormat.Fetcher fetcher, URI upstream) throws IOException {
+        String root = upstream.toString();
+        URI base = URI.create(root.endsWith("/") ? root : root + "/");
+        Iterator<String> repositories = paged(URI.create(base + "v2/_catalog"), "repositories", fetcher);
+        Set<String> emitted = new HashSet<>();
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(repositories, Spliterator.ORDERED), false)
+                .flatMap(name -> {
+                    try {
+                        Iterator<String> tags = paged(URI.create(base + "v2/" + name + "/tags/list"), "tags", fetcher);
+                        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(tags, Spliterator.ORDERED), false)
+                                .map(tag -> Map.entry(name, tag));
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                })
+                .flatMap(tagged -> {
+                    try {
+                        List<Coordinate> coordinates = new ArrayList<>();
+                        expand(base, tagged.getKey(), manifest(base, tagged.getKey(), tagged.getValue(), fetcher),
+                                coordinates, emitted, fetcher);
+                        coordinates.add(new Coordinate("v2/" + tagged.getKey() + "/manifests/" + tagged.getValue(),
+                                URI.create(base + "v2/" + tagged.getKey() + "/manifests/" + tagged.getValue()),
+                                Map.of("Accept", MANIFEST_ACCEPT)));
+                        return coordinates.stream();
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+    }
+
+    /** Add the coordinates one manifest transitively references, depth-first: an index's per-platform manifests
+     *  (each expanded then added by digest), a manifest's config and layers as blobs - each digest once per walk. */
+    private void expand(URI base, String name, byte[] manifest, List<Coordinate> coordinates, Set<String> emitted,
+                        ProxyFormat.Fetcher fetcher) throws IOException {
+        JsonNode node = JSON.readTree(new String(manifest, StandardCharsets.UTF_8));
+        if (node.has("manifests")) {
+            for (JsonNode child : node.path("manifests")) {
+                String digest = child.path("digest").asString(null);
+                if (digest == null || !emitted.add(digest)) {
+                    continue;
+                }
+                expand(base, name, manifest(base, name, digest, fetcher), coordinates, emitted, fetcher);
+                coordinates.add(new Coordinate("v2/" + name + "/manifests/" + digest,
+                        URI.create(base + "v2/" + name + "/manifests/" + digest),
+                        Map.of("Accept", MANIFEST_ACCEPT)));
+            }
+            return;
+        }
+        String config = node.path("config").path("digest").asString(null);
+        if (config != null && emitted.add(config)) {
+            coordinates.add(blob(base, name, config));
+        }
+        for (JsonNode layer : node.path("layers")) {
+            String digest = layer.path("digest").asString(null);
+            if (digest != null && emitted.add(digest)) {
+                coordinates.add(blob(base, name, digest));
+            }
+        }
+        for (JsonNode layer : node.path("fsLayers")) {
+            String digest = layer.path("blobSum").asString(null);
+            if (digest != null && emitted.add(digest)) {
+                coordinates.add(blob(base, name, digest));
+            }
+        }
+    }
+
+    private static Coordinate blob(URI base, String name, String digest) {
+        return new Coordinate("v2/" + name + "/blobs/" + digest, URI.create(base + "v2/" + name + "/blobs/" + digest));
+    }
+
+    /** One manifest, by tag or digest, negotiated with the manifest media types and fetched buffered (a manifest is
+     *  small metadata) through the bearer-challenge flow. */
+    private byte[] manifest(URI base, String name, String reference, ProxyFormat.Fetcher fetcher) throws IOException {
+        URI url = URI.create(base + "v2/" + name + "/manifests/" + reference);
+        Optional<ProxyFormat.Fetched> fetched = fetch(url, MANIFEST_ACCEPT, fetcher);
+        if (fetched.isEmpty()) {
+            throw new IOException("No response from " + url);
+        }
+        if (fetched.get().status() != 200) {
+            throw new IOException("Manifest fetch failed (" + fetched.get().status() + ") for " + url);
+        }
+        return fetched.get().body();
+    }
+
+    /** Iterate one string-array field across the Distribution API's pages, following each page's
+     *  {@code Link; rel="next"}. The first page is read eagerly (so an unreachable or catalog-less source fails
+     *  the walk up front); later pages are read as the iteration reaches them. */
+    private Iterator<String> paged(URI first, String field, ProxyFormat.Fetcher fetcher) throws IOException {
+        Page initial = page(first, field, fetcher);
+        return new Iterator<>() {
+            private Page current = initial;
+            private int index;
+
+            @Override
+            public boolean hasNext() {
+                while (index == current.values().size() && current.next() != null) {
+                    try {
+                        current = page(current.next(), field, fetcher);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                    index = 0;
+                }
+                return index < current.values().size();
+            }
+
+            @Override
+            public String next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return current.values().get(index++);
+            }
+        };
+    }
+
+    private record Page(List<String> values, URI next) {
+    }
+
+    private Page page(URI url, String field, ProxyFormat.Fetcher fetcher) throws IOException {
+        Optional<ProxyFormat.Fetched> fetched = fetch(url, "application/json", fetcher);
+        if (fetched.isEmpty()) {
+            throw new IOException("No response from " + url);
+        }
+        if (fetched.get().status() != 200) {
+            throw new IOException("Index fetch failed (" + fetched.get().status() + ") for " + url);
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode value : JSON.readTree(new String(fetched.get().body(), StandardCharsets.UTF_8)).path(field)) {
+            String name = value.asString(null);
+            if (name != null) {
+                values.add(name);
+            }
+        }
+        String link = fetched.get().header("Link");
+        URI next = null;
+        if (link != null && link.contains("rel=\"next\"")) {
+            int open = link.indexOf('<');
+            int close = link.indexOf('>');
+            if (open >= 0 && close > open) {
+                next = url.resolve(link.substring(open + 1, close));
+            }
+        }
+        return new Page(List.copyOf(values), next);
     }
 
     private String token(String challenge, ProxyFormat.Fetcher fetcher) throws IOException {

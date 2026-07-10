@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * The optional pull-through capability of a {@link RepositoryFormat}: a format that also implements this serves a
@@ -38,6 +39,34 @@ public interface ProxyFormat {
      */
     default Optional<URI> defaultUpstream() {
         return Optional.empty();
+    }
+
+    /**
+     * Enumerate every artifact the upstream rooted at {@code upstream} publishes through this format's own
+     * mirror-style index - the same PEP 503 project list, V3 catalog, {@code Packages} index or {@code repodata}
+     * the format already reads to serve pull-through, pointed at "list everything" instead of "resolve one". The
+     * stream is lazy (an index page is only read as the stream advances) and each {@link Coordinate} pairs the
+     * layout path the artifact occupies under this format - the path this format's
+     * {@link RepositoryImporter} accepts - with the upstream URL its bytes download from, so a vendor-neutral
+     * migration walks any repository that speaks the format's own protocol, including another jenesis. The
+     * default returns an empty stream: a format whose ecosystem publishes no walkable index (Conan exposes only a
+     * search API) simply cannot enumerate, and a caller treats "nothing enumerated" as that format's honest
+     * answer. Failures reading the initial index throw; a failure while the stream advances surfaces as an
+     * {@link java.io.UncheckedIOException}.
+     */
+    default Stream<Coordinate> enumerate(Fetcher fetcher, URI upstream) throws IOException {
+        return Stream.empty();
+    }
+
+    /** One enumerated artifact: the layout {@code path} it occupies under this format (no leading slash, the shape
+     *  the format's {@link RepositoryImporter} accepts), the upstream {@code url} its bytes download from, and the
+     *  request {@code headers} that download needs (the {@code Accept} an OCI manifest is negotiated with, say) -
+     *  empty for a plain download. */
+    record Coordinate(String path, URI url, Map<String, String> headers) {
+
+        public Coordinate(String path, URI url) {
+            this(path, url, Map.of());
+        }
     }
 
     /**

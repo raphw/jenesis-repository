@@ -27,7 +27,8 @@ API), so the Docker and OCI tooling talks to it directly, with no plugin or side
 
 It implements the registry protocol end to end: monolithic **and** chunked blob
 uploads, manifests addressed by tag or by digest (the media type kept in a sidecar so a
-pull returns it verbatim), `tags/list`, and `HEAD` existence checks. It can also run as
+pull returns it verbatim), `tags/list`, the paged `_catalog` repository list, and `HEAD`
+existence checks. It can also run as
 a **pull-through mirror**: a manifest or blob miss is fetched from an upstream registry
 (Docker Hub by default), verified by digest, stored, and re-served, following the
 Distribution bearer-token flow and resolving multi-arch image indexes.
@@ -288,6 +289,7 @@ plug in through the console's extension points without forking the core.
 | `build.jenesis.repository.importer.artifactory` | `source/importer/artifactory` | The JFrog Artifactory connector: `provides` an `ImportSourceProvider` that reads the storage listing (a repository has one package type, supplied up front). Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.jenesis` | `source/importer/jenesis` | The jenesis-to-jenesis connector - the read half of the exit story, symmetric with Nexus/Artifactory: `provides` an `ImportSourceProvider` that walks another instance's `GET /api/assets` enumeration by its opaque cursor (format reported per asset), so a jenesis repository migrates into another jenesis with no lock-in. Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.maven` | `source/importer/maven` | The vendor-neutral Maven connector: `provides` an `ImportSourceProvider` that walks *any* repository serving the Maven layout over plain HTTP - no vendor API. A recursive directory-listing walk where the server exposes an autoindex; where listing is disabled, the published Nexus repository index (a pure-JDK reader of the legacy chunk format) supplies the coordinates, each refreshed through its `maven-metadata.xml` for versions the index lags behind. Covers Nexus, Artifactory, plain httpd/nginx, static buckets - anything serving the Maven layout with a browsable listing or a published index (registry formats still need their vendor API or format protocol). Import SPI + format SPI + `java.xml` only. |
+| `build.jenesis.repository.importer.index` | `source/importer/index` | The format-native enumeration connector: `provides` an `ImportSourceProvider` (`index`) that resolves the requested format among the installed `RepositoryFormat`s and walks the upstream through the format's own `ProxyFormat.enumerate` - the format module's reading of its ecosystem's mirror-style index pointed at "list everything" - so every enumerable format's repositories (including another jenesis, which serves those same indexes) migrate through one connector. Import SPI + format SPI only. |
 | `build.jenesis.repository.server`   | `source/server`       | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The pull-through serve loop lives here (its HTTP fetcher is the discovered `source/proxy` module); the content-addressed store (`Publication`) sits in the store module, the Maven and Jenesis layouts and their cross-publishing are plugin modules, and the import connectors are discovered the same way - so the server names no layout and no incumbent. It also serves the export surface `GET /api/assets?repo=…&cursor=…` (the free product's first `/api`): a flat, stably-ordered, cursor-paged walk of a repository's publication pointers - each entry's path, size and SHA-256 straight from the pointer (no blob opened) and its format/coordinate from the owning layout - so a jenesis instance can be enumerated and drained by another tool (getting your data out is never the paid feature), read-authorised like the rest of the wire. Optional batch archive ingestion (`BatchIngestion`, off by default via `jenesis.repository.batch-upload`) explodes a single `PUT` carrying `X-Jenesis-Explode: zip` into one synthesized publish per entry through the same format loop - each member streamed on its format's own publish path, so the publication-screen chain applies per entry - entry-count capped, traversal-guarded, and answered with a per-entry manifest. Optional demo seeding (`DemoSeeder`, off by default via `jenesis.repository.demo`) seeds a fresh, completely empty repository with real artifacts on a post-boot background thread: it collects every format's `RepositoryFormat.demoArtifacts()` suggestions and pulls each through that format's own upstream (the normal pipeline, so a gate screens the proxy leg), refuses a non-empty space so a seeded or in-use repository is never re-seeded, and tolerates a per-artifact fetch failure. |
 | `build.jenesis.repository.ui`       | `source/ui`           | A simple, extendable web console: browse artifacts, view repositories and their config. An open console shell with a panel-extension SPI, so additional panels plug in without a fork. |
 
@@ -374,6 +376,7 @@ To migrate off an incumbent manager, two SPIs meet in the content-addressed stor
 an `ImportSource`, built by an `ImportSourceProvider` that a connector module ships and the server
 discovers with `ServiceLoader`: the built-in ones page the Nexus components REST API by continuation
 token, read the Artifactory storage listing, walk any Maven-layout tree vendor-neutrally (the `maven`
+source, below), walk any format's own published index through the format module itself (the `index`
 source, below) and drain another jenesis over `/api/assets`, and another incumbent is one more module -
 the server names none of them. The write half is a `RepositoryImporter` per format (in
 `build.jenesis.repository.format`, discovered the same way). `RepositoryImport` walks a source and
@@ -411,6 +414,23 @@ sidecars are left behind - the target regenerates and derives its own - and a UR
 at all is rejected up front as a `400` rather than failing asynchronously. The same `maven` migration is
 proven against a plain JDK `HttpServer` serving a Maven tree and against real Nexus and Artifactory
 instances over nothing but their directory listings.
+
+The same idea generalizes past Maven through the **`index`** source: package ecosystems publish
+mirror-style indexes (an OCI registry's `/v2/_catalog` and `tags/list`, PyPI's PEP 503 project list, a
+`repodata.json`), and the format modules already parse them to serve pull-through - so
+`ProxyFormat.enumerate(fetcher, upstream)` points that same reading at "list everything" instead of
+"resolve one", streaming each artifact's layout path and download URL lazily. The `index` source names a
+format up front, resolves it among the installed formats, and imports whatever the format enumerates
+through that format's own importer; a format whose ecosystem publishes no walkable index returns an empty
+enumeration (the honest answer - Conan exposes only a search API), and the job completes empty rather than
+guessing. The core's OCI format enumerates (catalog pages followed, multi-arch indexes expanded, an
+image's blobs imported before the manifest and tag that reference them); the cursor is the last consumed
+path, checkpointed in batches, and a resume re-enumerates and skips past it (a cursor the index no longer
+carries restarts the walk - imports are content-addressed and idempotent, so re-importing is safe where
+losing assets is not). **The symmetry is the point**: jenesis emits these same standard indexes to serve
+native clients, so a jenesis repository is walkable by jenesis's own `index` importer - proven by a test
+that migrates one booted instance into another through nothing but the OCI protocol - and migration *off*
+jenesis works over plain format protocols too, alongside `/api/assets`.
 
     RepositoryImport.Result result = new RepositoryImport().run(
             new NexusSource(URI.create("https://nexus.example.com"), "maven-releases", PullThroughCache.http()),
