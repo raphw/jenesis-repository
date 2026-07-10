@@ -132,4 +132,47 @@ public class ConsoleBrowserTest {
         assertThat(browser.waitFor(By.cssSelector("select.app-theme-select[data-theme-select]")).getAttribute("value"))
                 .as("the control reflects the persisted choice on load").isEqualTo("dark");
     }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // mobile friendliness (W5.60): every screen at a phone-width viewport
+    // ---------------------------------------------------------------------------------------------------------------
+
+    @Test
+    void c_no_screen_overflows_a_phone_viewport() {
+        browser.resize(360, 800);
+        try {
+            // The login page itself, unauthenticated.
+            browser.remote().manage().deleteAllCookies();
+            assertNoHorizontalOverflow("/login");
+
+            browser.login("admin", "admin");
+            for (String path : List.of("/console", "/browse")) {
+                assertNoHorizontalOverflow(path);
+                // The shell survives the narrow viewport: the brand and the theme switch are still rendered.
+                assertThat(browser.present(By.cssSelector(".app-brand"))).as("brand fits at 360px on " + path).isTrue();
+                assertThat(browser.present(By.cssSelector("select.app-theme-select")))
+                        .as("theme switch fits at 360px on " + path).isTrue();
+            }
+
+            // The browse table lives in a <figure> (the wide-table containment contract): a wide listing scrolls
+            // inside its own container, never the page.
+            browser.open("/browse");
+            browser.waitFor(By.cssSelector("figure > table.app-list"));
+        } finally {
+            browser.resize(1400, 1000);
+        }
+    }
+
+    /** Open {@code path} and assert no horizontal page overflow: the document is never wider than the viewport
+     *  (a wide table scrolls inside its own {@code <figure>} instead - the containment contract). */
+    private void assertNoHorizontalOverflow(String path) {
+        browser.open(path);
+        browser.waitFor(By.tagName("body"));
+        assertThat(browser.url()).as("%s rendered, not redirected away", path).contains(path);
+        Number scroll = (Number) browser.script("return document.documentElement.scrollWidth;");
+        Number client = (Number) browser.script("return document.documentElement.clientWidth;");
+        assertThat(scroll.longValue())
+                .as("no horizontal page overflow on %s at a phone-width viewport", path)
+                .isLessThanOrEqualTo(client.longValue());
+    }
 }

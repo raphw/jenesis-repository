@@ -40,6 +40,9 @@
     <p><small>Every published asset - path, size and SHA-256 - streamed straight from the store. The same walk the
         <code>/api/assets</code> API serves, so getting your data out is never the paid feature.</small></p>
 
+    <!--/* The wide-table containment contract (DESIGN.md): the table scrolls horizontally inside this figure on a
+         narrow viewport, never the page. */-->
+    <figure>
     <table class="app-list">
         <thead>
         <tr>
@@ -73,6 +76,7 @@
         </th:block>
         </tbody>
     </table>
+    </figure>
 
     <!--/* th:if must sit on a wrapping block: on the same element, th:replace (precedence 100) runs BEFORE
          th:if (300), so both empty states would render unconditionally. */-->

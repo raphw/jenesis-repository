@@ -107,8 +107,12 @@ deployment setting.
   uniform size.
 - **Hidden-but-announced** — `.app-sr-only` for text that exists only for assistive technology (the header of an
   icon-only actions column, an input's label where the design shows a placeholder).
-- **Responsive** — the shell nav wraps on narrow viewports (`.app-nav`); wide tables live in a `<figure>` so Pico
-  scrolls them horizontally instead of breaking the page layout.
+- **Responsive** — the shell nav wraps on narrow viewports (`.app-nav`); wide tables live in a `<figure>`, which
+  `app.css` gives `overflow-x: auto` (the vendored Pico v2 dropped v1's rule) so they scroll horizontally inside
+  their own container and never overflow the page. At phone width (≤ 480px) the card meta grid (`.app-card__meta`)
+  stacks its label/value columns so long values (paths, checksums) get the full line. On a touch device
+  (`pointer: coarse` — keyed on the pointer, not the viewport, because a landscape tablet is still touch-driven)
+  the compact inline controls (`.app-tree-toggle`, `.app-theme-select`) grow to an adequate touch target.
 
 ## 5. How the enterprise console extends this base
 
