@@ -262,7 +262,8 @@ Modules
         azure/                Azure Blob backend
       importer/               import connectors (the read half of a migration)
         spi/                  the ImportSource SPI
-        nexus/ artifactory/   the built-in connectors
+        nexus/ artifactory/   the built-in vendor connectors
+        maven/ jenesis/       the vendor-neutral Maven tree walk and the jenesis-to-jenesis connector
       server/                 the dual-layout repository server (RepositoryApplication)
       ui/                     a simple, extendable web console (browse, repo config)
     test/                     tests, mirroring source/ (server/, store/s3, store/azure)
@@ -286,6 +287,7 @@ plug in through the console's extension points without forking the core.
 | `build.jenesis.repository.importer.nexus`    | `source/importer/nexus`        | The Sonatype Nexus 3 connector: `provides` an `ImportSourceProvider` that pages the components REST API by continuation token (format reported per asset, so mixed repositories migrate in one pass). Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.artifactory` | `source/importer/artifactory` | The JFrog Artifactory connector: `provides` an `ImportSourceProvider` that reads the storage listing (a repository has one package type, supplied up front). Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.jenesis` | `source/importer/jenesis` | The jenesis-to-jenesis connector - the read half of the exit story, symmetric with Nexus/Artifactory: `provides` an `ImportSourceProvider` that walks another instance's `GET /api/assets` enumeration by its opaque cursor (format reported per asset), so a jenesis repository migrates into another jenesis with no lock-in. Import SPI + format SPI only. |
+| `build.jenesis.repository.importer.maven` | `source/importer/maven` | The vendor-neutral Maven connector: `provides` an `ImportSourceProvider` that walks *any* repository serving the Maven layout over plain HTTP - no vendor API. A recursive directory-listing walk where the server exposes an autoindex; where listing is disabled, the published Nexus repository index (a pure-JDK reader of the legacy chunk format) supplies the coordinates, each refreshed through its `maven-metadata.xml` for versions the index lags behind. Covers Nexus, Artifactory, plain httpd/nginx, static buckets - anything serving the Maven layout with a browsable listing or a published index (registry formats still need their vendor API or format protocol). Import SPI + format SPI + `java.xml` only. |
 | `build.jenesis.repository.server`   | `source/server`       | The dispatcher, format-neutral: it `uses RepositoryFormat`, loads every format via `ServiceLoader`, scopes the store, and enforces auth - with no knowledge of any layout, so it serves a fully capable repository even with no format on the module path (every request 404s until one is). The pull-through serve loop lives here (its HTTP fetcher is the discovered `source/proxy` module); the content-addressed store (`Publication`) sits in the store module, the Maven and Jenesis layouts and their cross-publishing are plugin modules, and the import connectors are discovered the same way - so the server names no layout and no incumbent. It also serves the export surface `GET /api/assets?repo=…&cursor=…` (the free product's first `/api`): a flat, stably-ordered, cursor-paged walk of a repository's publication pointers - each entry's path, size and SHA-256 straight from the pointer (no blob opened) and its format/coordinate from the owning layout - so a jenesis instance can be enumerated and drained by another tool (getting your data out is never the paid feature), read-authorised like the rest of the wire. Optional batch archive ingestion (`BatchIngestion`, off by default via `jenesis.repository.batch-upload`) explodes a single `PUT` carrying `X-Jenesis-Explode: zip` into one synthesized publish per entry through the same format loop - each member streamed on its format's own publish path, so the publication-screen chain applies per entry - entry-count capped, traversal-guarded, and answered with a per-entry manifest. Optional demo seeding (`DemoSeeder`, off by default via `jenesis.repository.demo`) seeds a fresh, completely empty repository with real artifacts on a post-boot background thread: it collects every format's `RepositoryFormat.demoArtifacts()` suggestions and pulls each through that format's own upstream (the normal pipeline, so a gate screens the proxy leg), refuses a non-empty space so a seeded or in-use repository is never re-seeded, and tolerates a per-artifact fetch failure. |
 | `build.jenesis.repository.ui`       | `source/ui`           | A simple, extendable web console: browse artifacts, view repositories and their config. An open console shell with a panel-extension SPI, so additional panels plug in without a fork. |
 
@@ -371,8 +373,9 @@ Importing from another repository
 To migrate off an incumbent manager, two SPIs meet in the content-addressed store. The read half is
 an `ImportSource`, built by an `ImportSourceProvider` that a connector module ships and the server
 discovers with `ServiceLoader`: the built-in ones page the Nexus components REST API by continuation
-token and read the Artifactory storage listing, and another incumbent is one more module - the server
-names none of them. The write half is a `RepositoryImporter` per format (in
+token, read the Artifactory storage listing, walk any Maven-layout tree vendor-neutrally (the `maven`
+source, below) and drain another jenesis over `/api/assets`, and another incumbent is one more module -
+the server names none of them. The write half is a `RepositoryImporter` per format (in
 `build.jenesis.repository.format`, discovered the same way). `RepositoryImport` walks a source and
 routes each asset to the importer that handles its format, writing it through the format's own publish
 path so the imported repository serves its own indexes rather than copying the source's (a source
@@ -390,6 +393,24 @@ where it stopped (coarser than the paged Nexus walk, but the imports are content
 a re-run is safe regardless). So the same `artifactory` migration works unchanged against both a Pro and a
 free Artifactory (the fallback is tested against a real `artifactory-oss` instance), and only a non-Pro error
 surfaces.
+
+When the incumbent is none of those - a plain httpd/nginx autoindex, an S3 static bucket, or anything else
+serving the Maven layout with a browsable listing or a published index - the vendor-neutral **`maven`**
+source migrates it with no API at all. Its strategies stack by availability: it walks the server's directory listing recursively (deterministic
+depth-first order, a `tree:` checkpoint per completed subtree, so an interrupted walk resumes without
+re-listing what it finished; a Nexus repository root that answers a landing page instead of a listing is
+followed one hop to the HTML index the page itself advertises, and an index row linking its file at a
+canonical download URL under another root is walked as that file - both read off the pages, never assumed
+at a vendor path); where listing is disabled it falls back to the Nexus repository index many
+servers publish (`.index/nexus-maven-repository-index.gz`, streamed record by record with a pure-JDK reader
+of the legacy chunk format) and refreshes every coordinate through its `maven-metadata.xml`, importing a
+version the index lags behind as its pom plus the primary artifact the pom's packaging names (classifier
+sidecars are unknowable without a listing - honestly scoped, as is the walk itself: registry formats such as
+npm or pypi still need their vendor API or format protocol). A source's `maven-metadata.xml` and checksum
+sidecars are left behind - the target regenerates and derives its own - and a URL whose host does not answer
+at all is rejected up front as a `400` rather than failing asynchronously. The same `maven` migration is
+proven against a plain JDK `HttpServer` serving a Maven tree and against real Nexus and Artifactory
+instances over nothing but their directory listings.
 
     RepositoryImport.Result result = new RepositoryImport().run(
             new NexusSource(URI.create("https://nexus.example.com"), "maven-releases", PullThroughCache.http()),

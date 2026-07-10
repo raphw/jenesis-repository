@@ -2,6 +2,7 @@ package build.jenesis.repository.test;
 
 import build.jenesis.repository.proxy.HttpFetcher;
 import build.jenesis.repository.importer.artifactory.ArtifactorySource;
+import build.jenesis.repository.importer.maven.MavenSource;
 import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.store.ArtifactStore;
@@ -24,7 +25,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -40,7 +45,9 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
  * behind Pro (a {@code 400}), so the walk falls back to the OSS-available per-folder Folder Info crawl - this test is
  * the end-to-end proof that the fallback is seamless. The migrated store is served by a real
  * {@link RepositoryApplication} and the artifacts pulled back over HTTP (the jar byte for byte, its pom, and the
- * cross-published {@code /module/} view). Tagged {@code artifactory}; self-skips when docker or mvn is absent.
+ * cross-published {@code /module/} view). The same seeded repository is then walked again with the vendor-neutral
+ * {@link MavenSource} over the HTML directory index Artifactory serves - no vendor API at all - proving the generic
+ * tree walk against the real thing. Tagged {@code artifactory}; self-skips when docker or mvn is absent.
  *
  * <p>The image is pinned to an OSS release; the raised {@code nofile} ulimit is mandatory - Artifactory 6.x refuses to
  * boot on the default 1024.
@@ -69,6 +76,7 @@ public class ArtifactoryOssImportTest {
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
+    private String upstream;
     private byte[] jar;
     private RepositoryImport.Result result;
 
@@ -81,7 +89,7 @@ public class ArtifactoryOssImportTest {
         // boot a real Artifactory (OSS edition) and wait for it to come up.
         container = expect(exec(300, null, "docker", "run", "-d", "--ulimit", "nofile=32768:32768",
                 "-p", "0:8081", IMAGE), "docker run");
-        String upstream = "http://localhost:" + mappedPort(container, "8081") + "/artifactory";
+        upstream = "http://localhost:" + mappedPort(container, "8081") + "/artifactory";
         awaitReady(upstream + "/api/system/ping");
 
         // seed the default local repo with the real Maven client.
@@ -133,6 +141,29 @@ public class ArtifactoryOssImportTest {
                 + "/" + ARTIFACT + "-" + VERSION + ".pom"), StandardCharsets.UTF_8)).contains("modelVersion");
         assertThat(get("/module/" + MODULE + "/" + VERSION + "/" + MODULE + ".jar"))
                 .as("the modular jar cross-published into the module layout").isEqualTo(jar);
+    }
+
+    @Test
+    public void the_same_repo_is_walked_vendor_neutrally_over_the_directory_listing() throws Exception {
+        // The generic Maven source needs no vendor API - and no Pro edition: it walks the HTML directory index
+        // Artifactory serves on the repository's browse URL - the vendor-neutral proof against the real thing.
+        List<String> paths = new ArrayList<>();
+        Map<String, byte[]> downloaded = new HashMap<>();
+        new MavenSource(URI.create(upstream), REPO, new HttpFetcher())
+                .withCredentials("admin", "password")
+                .forEach((format, path, content) -> {
+                    assertThat(format).isEqualTo("maven");
+                    paths.add(path);
+                    if (path.endsWith(".jar")) {
+                        try (InputStream in = content.open()) {
+                            downloaded.put(path, in.readAllBytes());
+                        }
+                    }
+                }, cursor -> { });
+        String prefix = GROUP.replace('.', '/') + "/" + ARTIFACT + "/" + VERSION + "/" + ARTIFACT + "-" + VERSION;
+        assertThat(paths).contains(prefix + ".jar", prefix + ".pom");
+        assertThat(downloaded.get(prefix + ".jar"))
+                .as("the jar walked from the Artifactory directory listing, byte for byte").isEqualTo(jar);
     }
 
     private static String settings() {

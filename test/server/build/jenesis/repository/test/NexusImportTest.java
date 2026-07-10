@@ -1,6 +1,7 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.proxy.HttpFetcher;
+import build.jenesis.repository.importer.maven.MavenSource;
 import build.jenesis.repository.importer.nexus.NexusSource;
 import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
@@ -24,6 +25,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -38,8 +43,9 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
  * with the real {@code mvn} client (so the components the importer reads are exactly what Maven produces), then walks
  * the live Components REST API with {@link RepositoryImport}, migrating into a filesystem store. The migrated store is
  * served by a real {@link RepositoryApplication} and the artifacts are pulled back over HTTP - the jar (byte for byte),
- * its pom, and the cross-published {@code /module/} view. Tagged {@code nexus}; self-skips when docker or mvn is
- * absent.
+ * its pom, and the cross-published {@code /module/} view. The same seeded repository is then walked again with the
+ * vendor-neutral {@link MavenSource} over the HTML directory index Nexus serves - no vendor API - proving the generic
+ * tree walk against the real thing. Tagged {@code nexus}; self-skips when docker or mvn is absent.
  *
  * <p>The image is pinned to a pre-Community-Edition OSS release (3.70.x): from 3.79 the default {@code sonatype/nexus3}
  * is the Community Edition, which gates writes behind an onboarding/activation step and so cannot be seeded headlessly.
@@ -63,6 +69,8 @@ public class NexusImportTest {
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
+    private String nexus;
+    private String password;
     private byte[] jar;
     private RepositoryImport.Result result;
 
@@ -74,9 +82,9 @@ public class NexusImportTest {
 
         // boot a real Nexus (OSS edition) and wait for it to come up.
         container = expect(exec(300, null, "docker", "run", "-d", "-p", "0:8081", IMAGE), "docker run");
-        String nexus = "http://localhost:" + mappedPort(container, "8081");
+        nexus = "http://localhost:" + mappedPort(container, "8081");
         awaitReady(nexus + "/service/rest/v1/status");
-        String password = expect(exec(30, null, "docker", "exec", container, "cat", "/nexus-data/admin.password"),
+        password = expect(exec(30, null, "docker", "exec", container, "cat", "/nexus-data/admin.password"),
                 "read admin password");
 
         // seed it with the real Maven client: deploy a modular jar into the default maven-releases repo.
@@ -127,6 +135,29 @@ public class NexusImportTest {
                 + "/" + ARTIFACT + "-" + VERSION + ".pom"), StandardCharsets.UTF_8)).contains("modelVersion");
         assertThat(get("/module/" + MODULE + "/" + VERSION + "/" + MODULE + ".jar"))
                 .as("the modular jar cross-published into the module layout").isEqualTo(jar);
+    }
+
+    @Test
+    public void the_same_repo_is_walked_vendor_neutrally_over_the_directory_listing() throws Exception {
+        // The generic Maven source needs no vendor API: it walks the HTML directory index Nexus serves on the
+        // repository's browse URL - the vendor-neutral proof against the real thing.
+        List<String> paths = new ArrayList<>();
+        Map<String, byte[]> downloaded = new HashMap<>();
+        new MavenSource(URI.create(nexus + "/repository"), "maven-releases", new HttpFetcher())
+                .withCredentials("admin", password)
+                .forEach((format, path, content) -> {
+                    assertThat(format).isEqualTo("maven");
+                    paths.add(path);
+                    if (path.endsWith(".jar")) {
+                        try (InputStream in = content.open()) {
+                            downloaded.put(path, in.readAllBytes());
+                        }
+                    }
+                }, cursor -> { });
+        String prefix = GROUP.replace('.', '/') + "/" + ARTIFACT + "/" + VERSION + "/" + ARTIFACT + "-" + VERSION;
+        assertThat(paths).contains(prefix + ".jar", prefix + ".pom");
+        assertThat(downloaded.get(prefix + ".jar"))
+                .as("the jar walked from the Nexus directory listing, byte for byte").isEqualTo(jar);
     }
 
     private static String settings(String password) {
