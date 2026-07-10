@@ -2,6 +2,7 @@ package build.jenesis.repository.ui.browser.test;
 
 import module java.base;
 import org.openqa.selenium.By;
+import org.openqa.selenium.Dimension;
 import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebElement;
@@ -137,6 +138,11 @@ final class ConsoleBrowser {
     /** Run JavaScript in the page and return its result (the driver is a {@code JavascriptExecutor}). */
     Object script(String javascript, Object... arguments) {
         return driver.executeScript(javascript, arguments);
+    }
+
+    /** Resize the browser window - for the narrow-viewport walkthrough. */
+    void resize(int width, int height) {
+        driver.manage().window().setSize(new Dimension(width, height));
     }
 
     boolean present(By by) {

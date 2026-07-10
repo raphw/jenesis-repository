@@ -379,3 +379,36 @@
     padding-bottom: var(--app-space-1);
     font-size: var(--app-font-size-sm);
 }
+
+/* ---- Responsive: narrow viewports and touch ------------------------------------------------------------------ */
+/* A wide table scrolls horizontally inside its own <figure>, never the page. DESIGN.md documents this as the
+   containment contract ("wide tables live in a <figure>"), which was Pico v1 behaviour - the vendored Pico v2
+   styles figure without overflow, so the shared base supplies the rule both consoles rely on. */
+figure {
+    overflow-x: auto;
+}
+
+/* At phone width the two-column meta grid (label | value) stacks, so a long value (path, checksum) gets the
+   full line instead of a sliver beside its label. */
+@media (max-width: 480px) {
+    .app-card__meta {
+        grid-template-columns: 1fr;
+        gap: var(--app-space-1);
+    }
+    .app-card__meta dt:not(:first-child) {
+        margin-top: var(--app-space-2);
+    }
+}
+
+/* On a touch device the compact inline controls grow to an adequate touch target - keyed on the pointer, not
+   the viewport width, because a tablet in landscape is still touch-driven. */
+@media (pointer: coarse) {
+    .app-tree-toggle {
+        width: 2.25rem;
+        height: 2.25rem;
+    }
+    .app-theme-select {
+        padding-top: var(--app-space-2);
+        padding-bottom: var(--app-space-2);
+    }
+}
