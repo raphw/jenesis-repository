@@ -5,6 +5,7 @@ import build.jenesis.repository.store.ArtifactStore;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
+import java.util.ServiceLoader;
 
 /**
  * A repository protocol over the shared {@link ArtifactStore}: it claims a set of request paths and serves and
@@ -50,5 +51,18 @@ public interface RepositoryFormat {
      */
     default List<String> demoArtifacts() {
         return List.of();
+    }
+
+    /** The installed format of the given {@link #name() name}, discovered via {@link ServiceLoader} from this SPI
+     *  module - the sanctioned lookup for a neutral consumer (an importer walking a format's upstream index, say)
+     *  that must find one format by name without carrying its own {@code uses} clause. Empty when no module on the
+     *  path provides it. */
+    static Optional<RepositoryFormat> installed(String name) {
+        for (RepositoryFormat format : ServiceLoader.load(RepositoryFormat.class)) {
+            if (format.name().equals(name)) {
+                return Optional.of(format);
+            }
+        }
+        return Optional.empty();
     }
 }

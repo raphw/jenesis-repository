@@ -9,7 +9,8 @@ import module java.base;
  * {@link build.jenesis.repository.format.RepositoryImporter} that handles its format. An implementation ships as its
  * own module that provides an {@link ImportSourceProvider}; the server discovers them with
  * {@link java.util.ServiceLoader}, so supporting another incumbent is a matter of adding a module, with the server
- * none the wiser. Nexus, Artifactory, the vendor-neutral Maven tree walk and jenesis itself are the built-in ones.
+ * none the wiser. Nexus, Artifactory, the vendor-neutral Maven tree walk, the format-native index walk and jenesis
+ * itself are the built-in ones.
  * Every implementation streams through the same {@link build.jenesis.repository.format.ProxyFormat.Fetcher} the proxy
  * uses, so an import is tested without the network.
  */

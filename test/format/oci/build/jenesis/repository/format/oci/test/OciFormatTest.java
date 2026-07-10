@@ -1,5 +1,6 @@
 package build.jenesis.repository.format.oci.test;
 
+import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.oci.OciFormat;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
@@ -8,14 +9,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The OCI / Docker registry format driven through {@link OciFormat#handle}: the {@code /v2/} probe advertises the API
@@ -178,5 +186,157 @@ class OciFormatTest {
         FakeExchange unknown = new FakeExchange("GET", "/v2/app/unknown");
         format.handle(unknown, store);
         assertThat(unknown.status()).isEqualTo(404);
+    }
+
+    private void push(String name, String reference, byte[] manifest) throws IOException {
+        FakeExchange put = new FakeExchange("PUT", "/v2/" + name + "/manifests/" + reference, manifest,
+                Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
+        format.handle(put, store);
+        assertThat(put.status()).isEqualTo(201);
+    }
+
+    private void pushBlob(String name, byte[] blob) throws IOException {
+        FakeExchange post = new FakeExchange("POST", "/v2/" + name + "/blobs/uploads/", blob,
+                Map.of("digest", "sha256:" + sha256(blob)), Map.of());
+        format.handle(post, store);
+        assertThat(post.status()).isEqualTo(201);
+    }
+
+    /** A fetcher answering from {@link OciFormat#handle} itself, so the walk consumes exactly what the format
+     *  serves - the producer and the consumer of the registry index proven against each other, no server. */
+    private ProxyFormat.Fetcher registry() {
+        return (url, requestHeaders) -> {
+            Map<String, String> query = new LinkedHashMap<>();
+            if (url.getQuery() != null) {
+                for (String pair : url.getQuery().split("&")) {
+                    int equals = pair.indexOf('=');
+                    query.put(URLDecoder.decode(pair.substring(0, equals), StandardCharsets.UTF_8),
+                            URLDecoder.decode(pair.substring(equals + 1), StandardCharsets.UTF_8));
+                }
+            }
+            FakeExchange exchange = new FakeExchange("GET", url.getPath(), new byte[0], query, Map.of());
+            format.handle(exchange, store);
+            return Optional.of(new ProxyFormat.Fetched(
+                    exchange.status(), exchange.responseBytes(), exchange.responseHeaders()));
+        };
+    }
+
+    @Test
+    void the_catalog_lists_images_and_pages() throws IOException {
+        push("app", "1.0", "{}".getBytes(StandardCharsets.UTF_8));
+        push("library/nested", "2.0", "{}".getBytes(StandardCharsets.UTF_8));
+
+        FakeExchange all = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(all, store);
+        assertThat(all.status()).isEqualTo(200);
+        assertThat(all.responseHeader("Content-Type")).isEqualTo("application/json");
+        assertThat(all.responseText()).isEqualTo("{\"repositories\":[\"app\",\"library/nested\"]}");
+        assertThat(all.responseHeader("Link")).isNull();
+
+        FakeExchange first = new FakeExchange("GET", "/v2/_catalog", new byte[0], Map.of("n", "1"), Map.of());
+        format.handle(first, store);
+        assertThat(first.responseText()).isEqualTo("{\"repositories\":[\"app\"]}");
+        assertThat(first.responseHeader("Link")).isEqualTo("</v2/_catalog?n=1&last=app>; rel=\"next\"");
+
+        FakeExchange second = new FakeExchange("GET", "/v2/_catalog", new byte[0],
+                Map.of("n", "1", "last", "app"), Map.of());
+        format.handle(second, store);
+        assertThat(second.responseText()).isEqualTo("{\"repositories\":[\"library/nested\"]}");
+        assertThat(second.responseHeader("Link")).isNull();
+
+        FakeExchange invalid = new FakeExchange("GET", "/v2/_catalog", new byte[0], Map.of("n", "abc"), Map.of());
+        format.handle(invalid, store);
+        assertThat(invalid.status()).isEqualTo(400);
+    }
+
+    @Test
+    void enumeration_walks_the_registrys_own_index_end_to_end() throws IOException {
+        byte[] config = "{\"os\":\"linux\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] layer = "layer-bytes".getBytes(StandardCharsets.UTF_8);
+        pushBlob("app", config);
+        pushBlob("app", layer);
+        byte[] manifest = ("{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\","
+                + "\"config\":{\"digest\":\"sha256:" + sha256(config) + "\"},"
+                + "\"layers\":[{\"digest\":\"sha256:" + sha256(layer) + "\"}]}").getBytes(StandardCharsets.UTF_8);
+        push("app", "1.0", manifest);
+
+        ProxyFormat.Fetcher registry = registry();
+        List<ProxyFormat.Coordinate> coordinates =
+                format.enumerate(registry, URI.create("http://registry.local")).toList();
+
+        assertThat(coordinates).extracting(ProxyFormat.Coordinate::path).containsExactly(
+                "v2/app/blobs/sha256:" + sha256(config),
+                "v2/app/blobs/sha256:" + sha256(layer),
+                "v2/app/manifests/1.0");
+        assertThat(coordinates.getLast().headers()).containsKey("Accept");
+        Map<String, byte[]> expected = new HashMap<>();
+        expected.put("v2/app/blobs/sha256:" + sha256(config), config);
+        expected.put("v2/app/blobs/sha256:" + sha256(layer), layer);
+        expected.put("v2/app/manifests/1.0", manifest);
+        for (ProxyFormat.Coordinate coordinate : coordinates) {
+            Optional<ProxyFormat.Fetched> served = registry.fetch(coordinate.url(), coordinate.headers());
+            assertThat(served).isPresent();
+            assertThat(served.get().status()).isEqualTo(200);
+            assertThat(served.get().body()).isEqualTo(expected.get(coordinate.path()));
+        }
+    }
+
+    @Test
+    void enumeration_expands_a_multi_arch_index_and_dedupes_shared_content() throws IOException {
+        byte[] layer = "shared-layer".getBytes(StandardCharsets.UTF_8);
+        pushBlob("app", layer);
+        byte[] child = ("{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\","
+                + "\"layers\":[{\"digest\":\"sha256:" + sha256(layer) + "\"}]}").getBytes(StandardCharsets.UTF_8);
+        push("app", "sha256:" + sha256(child), child);
+        byte[] index = ("{\"mediaType\":\"application/vnd.oci.image.index.v1+json\","
+                + "\"manifests\":[{\"digest\":\"sha256:" + sha256(child) + "\"}]}").getBytes(StandardCharsets.UTF_8);
+        push("app", "1.0", index);
+        push("app", "2.0", index);
+
+        List<String> paths = format.enumerate(registry(), URI.create("http://registry.local"))
+                .map(ProxyFormat.Coordinate::path)
+                .toList();
+
+        assertThat(paths).containsExactlyInAnyOrder(
+                "v2/app/blobs/sha256:" + sha256(layer),
+                "v2/app/manifests/sha256:" + sha256(child),
+                "v2/app/manifests/1.0",
+                "v2/app/manifests/2.0");
+        assertThat(paths.indexOf("v2/app/blobs/sha256:" + sha256(layer)))
+                .isLessThan(paths.indexOf("v2/app/manifests/sha256:" + sha256(child)));
+        assertThat(paths.indexOf("v2/app/manifests/sha256:" + sha256(child)))
+                .isLessThan(Math.min(paths.indexOf("v2/app/manifests/1.0"), paths.indexOf("v2/app/manifests/2.0")));
+    }
+
+    @Test
+    void enumeration_follows_catalog_pages() throws IOException {
+        Map<String, ProxyFormat.Fetched> canned = new HashMap<>();
+        canned.put("http://mirror.local/v2/_catalog", new ProxyFormat.Fetched(200,
+                "{\"repositories\":[\"app\"]}".getBytes(StandardCharsets.UTF_8),
+                Map.of("Link", "</v2/_catalog?last=app>; rel=\"next\"")));
+        canned.put("http://mirror.local/v2/_catalog?last=app", new ProxyFormat.Fetched(200,
+                "{\"repositories\":[\"beta\"]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+        canned.put("http://mirror.local/v2/app/tags/list", new ProxyFormat.Fetched(200,
+                "{\"name\":\"app\",\"tags\":[\"1.0\"]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+        canned.put("http://mirror.local/v2/beta/tags/list", new ProxyFormat.Fetched(200,
+                "{\"name\":\"beta\",\"tags\":[]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+        canned.put("http://mirror.local/v2/app/manifests/1.0", new ProxyFormat.Fetched(200,
+                "{\"layers\":[{\"digest\":\"sha256:abc\"}]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+        ProxyFormat.Fetcher fetcher = (url, headers) -> Optional.ofNullable(canned.get(url.toString()));
+
+        List<String> paths = format.enumerate(fetcher, URI.create("http://mirror.local"))
+                .map(ProxyFormat.Coordinate::path)
+                .toList();
+
+        assertThat(paths).containsExactly("v2/app/blobs/sha256:abc", "v2/app/manifests/1.0");
+    }
+
+    @Test
+    void a_catalog_less_registry_fails_enumeration_up_front() {
+        ProxyFormat.Fetcher fetcher = (url, headers) ->
+                Optional.of(new ProxyFormat.Fetched(404, new byte[0], Map.of()));
+        assertThatThrownBy(() -> format.enumerate(fetcher, URI.create("http://hub.local")))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("404");
     }
 }
