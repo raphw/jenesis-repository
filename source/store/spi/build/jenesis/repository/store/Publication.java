@@ -69,10 +69,19 @@ public final class Publication {
     }
 
     /** Point a request path at an already-stored blob - the primitive promotion and cross-publishing use to publish a
-     *  blob under another view without re-uploading it. */
+     *  blob under another view without re-uploading it. The pointer is the product's most load-bearing small object,
+     *  so a compare-and-set conflict re-reads the token and retries (the bounded idiom every other load-bearing
+     *  pointer write uses) rather than silently dropping the losing write: a concurrent republish of the same path
+     *  resolves to last-writer-wins - the same outcome the two writes would have had a moment apart - and a caller
+     *  whose link cannot land is told so instead of believing it published. */
     public void link(String requestPath, String hash) throws IOException {
-        Object token = store.readVersioned("publish" + requestPath).map(ArtifactStore.Versioned::token).orElse(null);
-        store.writeVersioned("publish" + requestPath, hash.getBytes(StandardCharsets.UTF_8), token);
+        for (int attempt = 0; attempt < 3; attempt++) {
+            Object token = store.readVersioned("publish" + requestPath).map(ArtifactStore.Versioned::token).orElse(null);
+            if (store.writeVersioned("publish" + requestPath, hash.getBytes(StandardCharsets.UTF_8), token)) {
+                return;
+            }
+        }
+        throw new IOException("could not link publish" + requestPath + " after repeated version conflicts");
     }
 
     /** The content hash a path currently points at, or empty if nothing is published there. */

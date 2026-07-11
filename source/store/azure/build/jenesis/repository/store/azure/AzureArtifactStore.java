@@ -50,7 +50,12 @@ public final class AzureArtifactStore implements ArtifactStore {
         try {
             return Boolean.TRUE.equals(container.getBlobClient(keyPrefix + key).exists());
         } catch (BlobStorageException e) {
-            return false;
+            // Only a 404 means absent; a throttle or auth failure must fail the request loudly, or a published
+            // artifact silently turns into a miss (served as 404) for as long as the backend misbehaves.
+            if (e.getStatusCode() == 404) {
+                return false;
+            }
+            throw e;
         }
     }
 
@@ -59,7 +64,10 @@ public final class AzureArtifactStore implements ArtifactStore {
         try {
             return container.getBlobClient(keyPrefix + key).getProperties().getBlobSize();
         } catch (BlobStorageException e) {
-            return -1L;
+            if (e.getStatusCode() == 404) {
+                return -1L;
+            }
+            throw new IOException("Could not size " + key, e);
         }
     }
 
@@ -91,8 +99,14 @@ public final class AzureArtifactStore implements ArtifactStore {
     @Override
     public void write(String key, InputStream in) throws IOException {
         BlockBlobClient blob = container.getBlobClient(keyPrefix + key).getBlockBlobClient();
-        try (BlobOutputStream out = blob.getBlobOutputStream(true)) {
+        // Close only after a complete transfer: BlobOutputStream commits its staged block list in close(), even
+        // when the source failed mid-stream, which would land a truncated blob at the key - breaking the SPI's
+        // atomic-write contract. An abandoned (unclosed) stream commits nothing; the service expires the staged
+        // blocks, so an aborted upload stores nothing at all.
+        BlobOutputStream out = blob.getBlobOutputStream(true);
+        try {
             in.transferTo(out);
+            out.close();
         } catch (BlobStorageException e) {
             throw new IOException("Could not write " + key, e);
         }
@@ -112,9 +126,13 @@ public final class AzureArtifactStore implements ArtifactStore {
             String key = "blobs/" + HexFormat.of().formatHex(digest.digest());
             if (!exists(key)) {
                 BlockBlobClient blob = container.getBlobClient(keyPrefix + key).getBlockBlobClient();
-                try (InputStream stored = Files.newInputStream(temporary);
-                     BlobOutputStream out = blob.getBlobOutputStream(true)) {
+                // Close only after a complete transfer (see write): a close after a failed transfer would commit
+                // a truncated blob at blobs/<hash> - permanent corruption, since the dedupe check above would
+                // then skip every future re-upload of the true content.
+                try (InputStream stored = Files.newInputStream(temporary)) {
+                    BlobOutputStream out = blob.getBlobOutputStream(true);
                     stored.transferTo(out);
+                    out.close();
                 }
             }
             return key.substring("blobs/".length());

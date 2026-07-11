@@ -21,6 +21,8 @@ import module java.base;
  */
 public final class QuotaArtifactStore implements ArtifactStore {
 
+    private static final System.Logger LOGGER = System.getLogger(QuotaArtifactStore.class.getName());
+
     private static final String BLOBS = "blobs/";
     private static final String USED = "quota/used";
 
@@ -64,10 +66,16 @@ public final class QuotaArtifactStore implements ArtifactStore {
     }
 
     /** Overwrite the usage counter with an externally computed total (a tenant-wide reconcile sums across the
-     *  tenant's repositories, where this store's own {@link #recompute} cannot reach). */
+     *  tenant's repositories, where this store's own {@link #recompute} cannot reach). Retried on a compare-and-set
+     *  conflict so a concurrent {@link #adjust} cannot silently drop the recomputed total; if contention persists the
+     *  stale counter stands until the next reconcile corrects it, which is the counter's documented drift model. */
     public void store(long total) throws IOException {
-        Object token = meter.readVersioned(USED).map(Versioned::token).orElse(null);
-        meter.writeVersioned(USED, Long.toString(total).getBytes(StandardCharsets.UTF_8), token);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            Object token = meter.readVersioned(USED).map(Versioned::token).orElse(null);
+            if (meter.writeVersioned(USED, Long.toString(total).getBytes(StandardCharsets.UTF_8), token)) {
+                return;
+            }
+        }
     }
 
     @Override
@@ -126,7 +134,9 @@ public final class QuotaArtifactStore implements ArtifactStore {
         delegate.delete(key);
     }
 
-    /** Add a signed delta to the persisted counter, retrying the compare-and-set under contention; best-effort. */
+    /** Add a signed delta to the persisted counter, retrying the compare-and-set under contention; best-effort -
+     *  but a dropped delta is logged, so a counter drifting under sustained contention is visible to the operator
+     *  before the periodic {@link #recompute reconcile} corrects it, not a silent surprise. */
     private void adjust(long delta) throws IOException {
         for (int attempt = 0; attempt < 8; attempt++) {
             Optional<Versioned> stored = meter.readVersioned(USED);
@@ -137,6 +147,9 @@ public final class QuotaArtifactStore implements ArtifactStore {
                 return;
             }
         }
+        LOGGER.log(System.Logger.Level.WARNING,
+                "quota counter update of " + delta + " bytes dropped after repeated conflicts; "
+                        + "the usage counter drifts until the next recompute");
     }
 
     private static long parse(byte[] content) {

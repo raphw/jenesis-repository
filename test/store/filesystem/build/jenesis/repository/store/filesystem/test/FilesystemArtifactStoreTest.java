@@ -14,8 +14,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -98,6 +104,104 @@ class FilesystemArtifactStoreTest {
 
         assertThat(store.list("d")).containsExactly("one", "two");
         assertThat(store.list("missing")).isEmpty();
+    }
+
+    @Test
+    void a_ranged_read_seeks_and_streams_only_the_window() throws IOException {
+        store.write("r/blob", bytes("0123456789"));
+        ByteArrayOutputStream window = new ByteArrayOutputStream();
+        class Sink extends java.io.OutputStream implements ArtifactStore.RangedSink {
+            @Override
+            public long offset() {
+                return 2;
+            }
+
+            @Override
+            public long length() {
+                return 3;
+            }
+
+            @Override
+            public java.io.OutputStream sink() {
+                return window;
+            }
+
+            @Override
+            public void write(int b) {
+                window.write(b);
+            }
+        }
+        store.read("r/blob", new Sink());
+        assertThat(window.toString(StandardCharsets.UTF_8)).isEqualTo("234");
+    }
+
+    @Test
+    void write_versioned_tokens_strictly_advance_so_a_stale_token_never_passes() throws IOException {
+        assertThat(store.writeVersioned("m/x", "0".getBytes(StandardCharsets.UTF_8), null)).isTrue();
+        Object token = store.readVersioned("m/x").orElseThrow().token();
+        for (int update = 1; update <= 100; update++) {
+            assertThat(store.writeVersioned("m/x", Integer.toString(update).getBytes(StandardCharsets.UTF_8), token))
+                    .isTrue();
+            Object next = store.readVersioned("m/x").orElseThrow().token();
+            assertThat((long) next)
+                    .as("the token advances on every update, even for updates inside one clock tick")
+                    .isGreaterThan((long) token);
+            token = next;
+        }
+    }
+
+    @Test
+    void concurrent_compare_and_set_updates_never_lose_one_another() throws Exception {
+        assertThat(store.writeVersioned("m/counter", "0".getBytes(StandardCharsets.UTF_8), null)).isTrue();
+        int writers = 4, increments = 25;
+        List<Future<?>> futures = new ArrayList<>();
+        try (ExecutorService executor = Executors.newFixedThreadPool(writers)) {
+            for (int writer = 0; writer < writers; writer++) {
+                futures.add(executor.submit(() -> {
+                    for (int i = 0; i < increments; i++) {
+                        while (true) {
+                            ArtifactStore.Versioned versioned = store.readVersioned("m/counter").orElseThrow();
+                            int current = Integer.parseInt(new String(versioned.content(), StandardCharsets.UTF_8));
+                            if (store.writeVersioned("m/counter",
+                                    Integer.toString(current + 1).getBytes(StandardCharsets.UTF_8),
+                                    versioned.token())) {
+                                break;
+                            }
+                        }
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+        }
+        assertThat(new String(store.readVersioned("m/counter").orElseThrow().content(), StandardCharsets.UTF_8))
+                .as("every compare-and-set increment landed; none was silently lost")
+                .isEqualTo(Integer.toString(writers * increments));
+    }
+
+    @Test
+    void an_aborted_write_leaves_no_partial_key_and_no_temp_file() throws IOException {
+        InputStream aborting = new InputStream() {
+            private int served;
+
+            @Override
+            public int read() throws IOException {
+                if (served++ < 3) {
+                    return 'x';
+                }
+                throw new IOException("client hung up");
+            }
+        };
+
+        assertThatThrownBy(() -> store.write("d/aborted", aborting)).isInstanceOf(IOException.class);
+
+        assertThat(store.exists("d/aborted")).as("nothing lands at the key").isFalse();
+        try (var files = Files.walk(root)) {
+            assertThat(files.filter(Files::isRegularFile))
+                    .as("the atomic write's spool file is cleaned up, not leaked").isEmpty();
+        }
     }
 
     @Test

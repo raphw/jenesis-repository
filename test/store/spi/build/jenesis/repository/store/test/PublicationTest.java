@@ -9,10 +9,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The content-addressed publication model over a real filesystem store on a {@code @TempDir}: a blob is stored once by
@@ -71,6 +76,100 @@ class PublicationTest {
         publication.link("/raw/p", two);
         assertThat(publication.blob("/raw/p")).as("the pointer now names the new blob").contains(two);
         assertThat(publication.located("/raw/p")).contains("blobs/" + two);
+    }
+
+    @Test
+    void a_link_that_loses_a_compare_and_set_retries_and_lands() throws IOException {
+        String hash = publication.storeBlob(bytes("contended"));
+        ConflictingStore contended = new ConflictingStore(store, 1);
+
+        new Publication(contended).link("/raw/contended", hash);
+
+        assertThat(contended.conflicts).as("the first compare-and-set was made to conflict").isZero();
+        assertThat(publication.blob("/raw/contended"))
+                .as("the losing write re-read the token and retried rather than silently dropping").contains(hash);
+    }
+
+    @Test
+    void a_link_that_cannot_land_surfaces_rather_than_silently_dropping() throws IOException {
+        String hash = publication.storeBlob(bytes("unlandable"));
+        Publication contended = new Publication(new ConflictingStore(store, Integer.MAX_VALUE));
+
+        assertThatThrownBy(() -> contended.link("/raw/unlandable", hash))
+                .as("persistent conflicts are an error the caller hears about, never a lost publish")
+                .isInstanceOf(IOException.class);
+        assertThat(publication.blob("/raw/unlandable")).isEmpty();
+    }
+
+    /** A store whose next {@code n} versioned writes report a benign compare-and-set conflict, then behave. */
+    private static final class ConflictingStore implements ArtifactStore {
+
+        private final ArtifactStore delegate;
+        int conflicts;
+
+        private ConflictingStore(ArtifactStore delegate, int conflicts) {
+            this.delegate = delegate;
+            this.conflicts = conflicts;
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            if (conflicts > 0) {
+                conflicts--;
+                return false;
+            }
+            return delegate.writeVersioned(key, content, expected);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
     }
 
     @Test
