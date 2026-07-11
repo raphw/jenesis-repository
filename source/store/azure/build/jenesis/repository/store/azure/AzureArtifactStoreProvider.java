@@ -7,6 +7,7 @@ import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 import com.azure.storage.blob.models.BlobStorageException;
 
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -21,6 +22,11 @@ public final class AzureArtifactStoreProvider implements ArtifactStoreProvider {
     @Override
     public String name() {
         return "azure-blob";
+    }
+
+    @Override
+    public Set<String> requiredConfig() {
+        return Set.of("JENESIS_AZURE_CONNECTION_STRING");
     }
 
     @Override

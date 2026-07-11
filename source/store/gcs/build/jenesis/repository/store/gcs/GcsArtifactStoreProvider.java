@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.net.URI;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -38,6 +39,12 @@ public final class GcsArtifactStoreProvider implements ArtifactStoreProvider {
     @Override
     public String name() {
         return "gcs";
+    }
+
+    @Override
+    public Set<String> requiredConfig() {
+        // The HMAC pair may come from the ambient AWS chain, so only the bucket is required configuration.
+        return Set.of("JENESIS_GCS_BUCKET");
     }
 
     @Override

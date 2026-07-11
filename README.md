@@ -355,6 +355,33 @@ A request rate ceiling is optional too: `-Djenesis.repository.rate-limit=600` (p
 load with `429 Too Many Requests` and a `Retry-After`. It is metered per tenant (the key's tenant, or a shared
 anonymous bucket), and the Actuator probes are never throttled.
 
+**Config-driven feature enable/disable.** One image can carry *every* discovered module and be trimmed by
+configuration instead of rebuilt - the convention is defined once in the store SPI
+(`build.jenesis.repository.store.Features`) and shared verbatim by every distribution, so a feature keeps the
+same key wherever it ships:
+
+- A **parallel** SPI implementation (a format, an import source) toggles by its provider name:
+  `jenesis.repository.<feature>=true|false`. Nothing set means **enabled**; only an explicit `false` disables,
+  and a disabled implementation simply is not activated at `ServiceLoader` discovery - it degrades exactly like
+  a missing module (`jenesis.repository.maven=false` removes the Maven layout; its importer skips too).
+- An **exclusive** SPI selects its implementation by name: `jenesis.repository.store=filesystem|s3|gcs|azure-blob`
+  (default `filesystem`, the most universally applicable backend), `jenesis.repository.fetcher`,
+  `jenesis.repository.tenants`, `jenesis.repository.rate-limiter`, `jenesis.repository.token-exchange`,
+  `jenesis.repository.key-usage` - unset picks the first enabled implementation in discovery order, and a
+  first-wins implementation is also skippable by its own toggle (`jenesis.repository.oidc=false` turns the token
+  exchange off).
+- An implementation's own settings keep their documented keys (`JENESIS_AWS_BUCKET`, `jenesis.<feature>.<property>`).
+- **Required-config self-disable:** a provider declares the keys it cannot run without (`requiredConfig()`, default
+  empty - a credential, a bucket); a feature whose required keys are unset disables itself and logs one line naming
+  them and the `jenesis.repository.<feature>=false` switch that silences it. The selected *store* backend is the
+  deliberate exception: it fails loudly instead, because silently falling back to another store would persist
+  against the wrong backend.
+
+The Spring shell hands its `Environment` to the convention at boot, so relaxed binding makes every key settable
+as a Docker environment variable - `JENESIS_REPOSITORY_MAVEN=false`, `JENESIS_REPOSITORY_STORE=s3` - and an image
+is configured purely with `docker run -e`; outside a shell the same keys answer from system properties and the
+environment.
+
 A Jenesis build points at it with the existing knobs - no new client:
 
     -Djenesis.module.uri=https://repo.example.com/repository/ -Djenesis.module.token=jenk_<tenant>.<secret>

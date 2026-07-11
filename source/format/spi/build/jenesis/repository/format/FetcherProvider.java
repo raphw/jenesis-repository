@@ -1,7 +1,10 @@
 package build.jenesis.repository.format;
 
+import build.jenesis.repository.store.Features;
+
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -21,10 +24,23 @@ public interface FetcherProvider {
     /** Build the fetcher if the configuration enables it, reading settings through {@code config}; empty when off. */
     Optional<ProxyFormat.Fetcher> create(UnaryOperator<String> config);
 
-    /** The first enabled fetcher discovered via {@link ServiceLoader}, or {@link ProxyFormat.Fetcher#NONE} when no
-     *  module is installed. */
+    /** The config keys this fetcher cannot run without; empty (the default) for one that needs nothing. A provider
+     *  whose required keys are unset {@link Features#active self-disables} at discovery. */
+    default Set<String> requiredConfig() {
+        return Set.of();
+    }
+
+    /** The first enabled fetcher discovered via {@link ServiceLoader} (an exclusive SPI: an explicit
+     *  {@code jenesis.repository.fetcher=<name>} selects one by name, a {@code jenesis.repository.<name>=false}
+     *  skips one, {@link Features}), or {@link ProxyFormat.Fetcher#NONE} when none answers. */
     static ProxyFormat.Fetcher resolve(UnaryOperator<String> config) {
+        Optional<String> selection = Features.selection("fetcher");
         for (FetcherProvider provider : ServiceLoader.load(FetcherProvider.class)) {
+            if (selection.isPresent()
+                    ? !provider.name().equalsIgnoreCase(selection.get())
+                    : !Features.active(provider.name(), provider.requiredConfig())) {
+                continue;
+            }
             Optional<ProxyFormat.Fetcher> fetcher = provider.create(config);
             if (fetcher.isPresent()) {
                 return fetcher.get();
