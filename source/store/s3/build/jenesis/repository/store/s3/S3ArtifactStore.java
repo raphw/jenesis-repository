@@ -49,7 +49,12 @@ public final class S3ArtifactStore implements ArtifactStore {
             s3.headObject(b -> b.bucket(bucket).key(keyPrefix + key));
             return true;
         } catch (S3Exception e) {
-            return false;
+            // Only a 404 means absent; a throttle or auth failure must fail the request loudly, or a published
+            // artifact silently turns into a miss (served as 404) for as long as the backend misbehaves.
+            if (e.statusCode() == 404) {
+                return false;
+            }
+            throw e;
         }
     }
 
@@ -58,7 +63,10 @@ public final class S3ArtifactStore implements ArtifactStore {
         try {
             return s3.headObject(b -> b.bucket(bucket).key(keyPrefix + key)).contentLength();
         } catch (S3Exception e) {
-            return -1L;
+            if (e.statusCode() == 404) {
+                return -1L;
+            }
+            throw new IOException("Could not size " + key, e);
         }
     }
 
