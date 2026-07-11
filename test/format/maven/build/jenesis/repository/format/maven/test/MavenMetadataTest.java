@@ -76,6 +76,16 @@ class MavenMetadataTest {
         assertThat(metadata.serve("/maven/org/example/lib/1.0/lib-1.0.jar")).isEmpty();
     }
 
+    @Test
+    void a_non_ascii_digit_version_does_not_crash_metadata_generation() throws IOException {
+        // A version folder of Arabic-Indic digits is a numeric-looking token to Character.isDigit but not to
+        // BigInteger; before the ASCII-only fix, comparing it threw NumberFormatException out of serve() (HTTP 500).
+        publish(List.of("1.0", "١"));
+        String xml = new String(metadata.serve("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+        assertThat(xml).contains("<version>1.0</version>").contains("<version>١</version>");
+    }
+
     private static boolean order(String xml, String... versions) {
         int previous = -1;
         for (String version : versions) {

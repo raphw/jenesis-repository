@@ -74,7 +74,14 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     }
 
     private void blob(String digest, ArtifactStore store, FormatExchange exchange) throws IOException {
-        String key = "blobs/" + hex(digest);
+        String hex = hex(digest);
+        if (!isDigestHex(hex)) {
+            // A blob is addressed by its sha256 digest; a reference that is not 64 lowercase hex chars cannot name a
+            // blob, and refusing it here stops a '..'-laced digest aiming the blobs/<hex> key at another key space.
+            exchange.respond(404);
+            return;
+        }
+        String key = "blobs/" + hex;
         if (!store.exists(key)) {
             exchange.respond(404);
             return;
@@ -199,9 +206,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             store.write("oci/types/" + hex, new ByteArrayInputStream(
                     (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
             if (!reference.startsWith("sha256:")) {
-                String key = "oci/" + name + "/tags/" + reference;
-                Object token = store.readVersioned(key).map(ArtifactStore.Versioned::token).orElse(null);
-                store.writeVersioned(key, ("sha256:" + hex).getBytes(StandardCharsets.UTF_8), token);
+                linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
             }
             exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
             exchange.setResponseHeader("Location", "/v2/" + name + "/manifests/sha256:" + hex);
@@ -218,6 +223,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
                 return;
             }
             hex = hex(new String(pointer.get().content(), StandardCharsets.UTF_8).trim());
+        }
+        if (!isDigestHex(hex)) {
+            exchange.respond(404);
+            return;
         }
         String key = "blobs/" + hex;
         if (!store.exists(key)) {
@@ -370,9 +379,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         store.write("oci/types/" + hex, new ByteArrayInputStream(
                 (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
         if (!reference.startsWith("sha256:")) {
-            String key = "oci/" + name + "/tags/" + reference;
-            Object token = store.readVersioned(key).map(ArtifactStore.Versioned::token).orElse(null);
-            store.writeVersioned(key, ("sha256:" + hex).getBytes(StandardCharsets.UTF_8), token);
+            linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
         }
         handle(exchange, store);
         return true;
@@ -620,6 +627,37 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     private static String hex(String digest) {
         int colon = digest.indexOf(':');
         return colon < 0 ? digest : digest.substring(colon + 1);
+    }
+
+    /** Whether {@code hex} is exactly a 64-character lowercase sha256 hex string - the only shape that can name a
+     *  {@code blobs/<hex>} object, so a reference that is not (a tag typo, a {@code ..}-laced digest) is refused
+     *  before it becomes a store key rather than resolving to a neighbouring key space. */
+    private static boolean isDigestHex(String hex) {
+        if (hex.length() != 64) {
+            return false;
+        }
+        for (int index = 0; index < 64; index++) {
+            char character = hex.charAt(index);
+            if ((character < '0' || character > '9') && (character < 'a' || character > 'f')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Point a tag at a digest with the bounded compare-and-set retry every load-bearing pointer write uses (the
+     *  {@code Publication.link} idiom): a concurrent re-tag of the same tag resolves last-writer-wins rather than one
+     *  push silently dropping the other's update while still answering {@code 201}, and a write that cannot land after
+     *  repeated conflicts surfaces as an {@link IOException} instead of a false success. */
+    static void linkTag(ArtifactStore store, String key, String digest) throws IOException {
+        byte[] value = digest.getBytes(StandardCharsets.UTF_8);
+        for (int attempt = 0; attempt < 3; attempt++) {
+            Object token = store.readVersioned(key).map(ArtifactStore.Versioned::token).orElse(null);
+            if (store.writeVersioned(key, value, token)) {
+                return;
+            }
+        }
+        throw new IOException("could not link " + key + " after repeated version conflicts");
     }
 
     private static String sha256(byte[] content) {
