@@ -382,6 +382,25 @@ as a Docker environment variable - `JENESIS_REPOSITORY_MAVEN=false`, `JENESIS_RE
 is configured purely with `docker run -e`; outside a shell the same keys answer from system properties and the
 environment.
 
+**The all-in-one image.** That one image exists: `source/bundle` (`build.jenesis.repository.bundle`) is a
+launchable carrier module whose `requires` closure is every free SPI implementation - all four layouts, all four
+store backends, all five import connectors, the HTTP fetcher, the OIDC token exchange, the rate limiter, the
+usage tracker and the web console - so the build's `bundle` packaging emits the complete product as one zip and
+
+    docker build -t jenesis-repository:free .
+
+turns it into the all-in-one image. It boots the repository server on port 8080
+(`build.jenesis.repository.bundle.AllInOne`, reading the bundle's `allinone.properties` - with the server and the
+console both on one module path, naming the config file keeps two root `application.properties` unambiguous), with
+everything on and nothing consulted until configured: the store defaults to `filesystem` under `/data` (mount a
+volume), cloud backends and the token exchange self-disable until their keys arrive, and every capability is
+trimmed with `docker run -e JENESIS_REPOSITORY_<FEATURE>=false` / selected with
+`JENESIS_REPOSITORY_<SPI>=<feature>` - never rebuilt. The same image runs the web console as a second container
+(`docker run -e MAINCLASS=build.jenesis.repository.bundle.Console -e PORT=8081` against the same store). The
+`test/bundle` suite boots this exact composition through the same launcher and proves the trim over HTTP - a
+disabled layout's path unclaims, a disabled or mis-selected fetcher answers the documented `501` - with the same
+key spellings the enterprise all-in-one image honours.
+
 A Jenesis build points at it with the existing knobs - no new client:
 
     -Djenesis.module.uri=https://repo.example.com/repository/ -Djenesis.module.token=jenk_<tenant>.<secret>
