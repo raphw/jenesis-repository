@@ -14,7 +14,7 @@ env:
 # A single build runs the whole project in one `java build/jenesis/Project.java`
 # invocation, so the expensive tool integration tests are gated with JUnit tags
 # rather than split into separate (re-compiling) jobs. Each such test carries a
-# @Tag ("docker", "helm", "proxy", "maven", "nexus", "artifactory", "s3", "azure"); on a pull request the step below
+# @Tag ("docker", "helm", "proxy", "maven", "nexus", "artifactory", "s3", "gcs", "azure"); on a pull request the step below
 # diffs the changed paths and, for every area left untouched, adds that tag to a single
 # --include-tag negation expression (jenesis.test.tag), so the run skips exactly
 # those suites while still executing every other test. A push to main always runs
@@ -75,6 +75,8 @@ jobs:
           if match '^source/importer/(spi|artifactory|maven)/' || match '/ArtifactoryOssImportTest\.java'; then inc_artifactory=true; fi
           inc_s3=false
           if match '^source/store/s3/' || match '^test/store/s3/'; then inc_s3=true; fi
+          inc_gcs=false
+          if match '^source/store/gcs/' || match '^test/store/gcs/'; then inc_gcs=true; fi
           inc_azure=false
           if match '^source/store/azure/' || match '^test/store/azure/'; then inc_azure=true; fi
           exclude=()
@@ -84,6 +86,7 @@ jobs:
           $inc_nexus || exclude+=(nexus)
           $inc_artifactory || exclude+=(artifactory)
           $inc_s3    || exclude+=(s3)
+          $inc_gcs   || exclude+=(gcs)
           $inc_azure || exclude+=(azure)
           if [ ${#exclude[@]} -gt 0 ]; then
             joined="$(IFS='|'; printf '%s' "${exclude[*]}")"
