@@ -68,8 +68,8 @@ public final class NexusSource implements ImportSource {
                 for (JsonNode asset : item.path("assets")) {
                     String path = asset.path("path").asString(null);
                     String downloadUrl = asset.path("downloadUrl").asString(null);
-                    if (path == null || downloadUrl == null) {
-                        continue;
+                    if (path == null || downloadUrl == null || !ImportSource.safePath(path)) {
+                        continue;   // an incomplete entry, or a traversal-laced path no store write should see
                     }
                     consumer.accept(format, path, () -> open(URI.create(downloadUrl)));
                 }
@@ -80,7 +80,12 @@ public final class NexusSource implements ImportSource {
     }
 
     private InputStream open(URI url) throws IOException {
-        Map<String, String> headers = authorization == null ? Map.of() : Map.of("Authorization", authorization);
+        // The download URL comes off the listing, so the credentials travel only to the Nexus they belong to: a
+        // cross-origin URL (a compromised or misconfigured instance) downloads unauthenticated instead of leaking
+        // the operator's basic credentials to a third host - and a 401 then fails the import loudly.
+        Map<String, String> headers = authorization == null || !sameOrigin(url)
+                ? Map.of()
+                : Map.of("Authorization", authorization);
         ProxyFormat.Download download = fetcher.download(url, headers)
                 .orElseThrow(() -> new IOException("No response from " + url));
         if (download.status() != 200) {
@@ -88,6 +93,11 @@ public final class NexusSource implements ImportSource {
             throw new IOException("Download failed (" + download.status() + ") for " + url);
         }
         return download.body();
+    }
+
+    private boolean sameOrigin(URI url) {
+        return Objects.equals(base.getScheme(), url.getScheme())
+                && Objects.equals(base.getRawAuthority(), url.getRawAuthority());
     }
 
     private ProxyFormat.Fetched get(URI url) throws IOException {

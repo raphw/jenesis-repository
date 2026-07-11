@@ -288,6 +288,42 @@ class MavenSourceTest {
     }
 
     @Test
+    void a_decompression_bomb_index_field_fails_the_walk_instead_of_ballooning_into_the_heap() {
+        // The per-field length prefix bounds only the COMPRESSED bytes; a field gzipping tens of megabytes into a
+        // few kilobytes must be refused at the decompression cap, not inflated into memory.
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
+        responses.put(root, status(403));
+        responses.put(root + ".index/nexus-maven-repository-index.properties", ok("nexus.index.id=repo\n"));
+        responses.put(root + ".index/nexus-maven-repository-index.gz", new ProxyFormat.Fetched(200, index(List.of(
+                record("u", "org.acme|lib|1.0|NA|NA", "i", "x".repeat(17 * 1024 * 1024)))), Map.of()));
+        MavenSource source = new MavenSource(URI.create("https://mirror.example/repo"), ".", new FakeFetcher(responses));
+
+        assertThatThrownBy(() -> source.forEach((format, path, content) -> { }, cursor -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("corrupted");
+    }
+
+    @Test
+    void a_garbled_index_cursor_replays_the_walk_instead_of_throwing() throws IOException {
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
+        responses.put(root, status(403));
+        responses.put(root + ".index/nexus-maven-repository-index.properties", ok("nexus.index.id=repo\n"));
+        responses.put(root + ".index/nexus-maven-repository-index.gz", new ProxyFormat.Fetched(200, index(List.of(
+                record("u", "g|a|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"))), Map.of()));
+        responses.put(root + "g/a/maven-metadata.xml", status(404));
+
+        List<String> paths = new ArrayList<>();
+        new MavenSource(URI.create("https://mirror.example/repo"), ".", new FakeFetcher(responses))
+                .from("index:not-a-number")
+                .forEach((format, path, content) -> paths.add(path), cursor -> { });
+
+        assertThat(paths).as("the malformed cursor degrades to a full, idempotent replay")
+                .containsExactly("g/a/1.0/a-1.0.jar", "g/a/1.0/a-1.0.pom");
+    }
+
+    @Test
     void a_source_with_neither_listing_nor_index_fails_with_an_actionable_message() {
         Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
         responses.put(ROOT, status(404));

@@ -177,7 +177,7 @@ public final class MavenSource implements ImportSource {
     private void walkIndex(Asset consumer, Checkpoint checkpoint, URI root) throws IOException {
         boolean refreshing = cursor != null && cursor.startsWith(META);
         long resumeRecords = cursor != null && cursor.startsWith(INDEX)
-                ? Long.parseLong(cursor.substring(INDEX.length()))
+                ? records(cursor.substring(INDEX.length()))
                 : 0;
         String resumeCoordinate = refreshing ? cursor.substring(META.length()) : null;
         SortedMap<String, Set<String>> indexed = new TreeMap<>();
@@ -250,6 +250,16 @@ public final class MavenSource implements ImportSource {
 
     private void emit(Asset consumer, URI root, String path) throws IOException {
         consumer.accept(FORMAT, path, () -> open(URI.create(root + path)));
+    }
+
+    /** An {@code index:} cursor's record count; a garbled cursor replays the stream from the start rather than
+     *  throwing out of the walk - an import is idempotent, so re-importing is safe where failing is not. */
+    private static long records(String cursor) {
+        try {
+            return Long.parseLong(cursor);
+        } catch (NumberFormatException malformed) {
+            return 0;
+        }
     }
 
     /** The walk's root: the base URL with the repository appended as a path ({@code .} or blank when the URL already

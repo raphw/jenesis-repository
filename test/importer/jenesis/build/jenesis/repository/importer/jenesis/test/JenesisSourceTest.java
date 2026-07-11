@@ -104,6 +104,22 @@ class JenesisSourceTest {
     }
 
     @Test
+    void a_traversal_laced_asset_path_is_skipped() throws IOException {
+        String page = "{\"assets\":[{\"path\":\"/maven/../../auth/keys\",\"format\":\"maven\"},"
+                + "{\"path\":\"/maven/org/example/ok.jar\",\"format\":\"maven\"}],\"cursor\":null}";
+        FakeFetcher fetcher = new FakeFetcher(Map.of(
+                listUrl, ok(page),
+                "https://src.example/repository/maven/org/example/ok.jar",
+                new ProxyFormat.Fetched(200, new byte[]{1}, Map.of())));
+
+        List<String> paths = new ArrayList<>();
+        new JenesisSource(base, repository, fetcher)
+                .forEach((format, path, content) -> paths.add(path), cursor -> { });
+
+        assertThat(paths).as("the hostile path never reaches the consumer").containsExactly("org/example/ok.jar");
+    }
+
+    @Test
     void a_failed_listing_is_an_io_exception() {
         FakeFetcher fetcher = new FakeFetcher(Map.of(
                 listUrl, new ProxyFormat.Fetched(500, new byte[0], Map.of())));

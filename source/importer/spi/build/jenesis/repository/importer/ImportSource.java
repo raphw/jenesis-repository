@@ -23,6 +23,23 @@ public interface ImportSource {
      *  {@code null} at the end. */
     void forEach(Asset consumer, Checkpoint checkpoint) throws IOException;
 
+    /** Whether a listing-derived path is safe to report as an asset's repository-relative path: relative, with no
+     *  empty, {@code .} or {@code ..} segment and no backslash. The path a source reports becomes a store write on
+     *  the import's write half, and a foreign listing is only semi-trusted (an asset's path can derive from a name
+     *  someone published to the incumbent) - so a source skips an asset whose path fails this instead of letting a
+     *  traversal-laced name aim the write outside the import's scope. */
+    static boolean safePath(String path) {
+        if (path == null || path.isEmpty() || path.indexOf('\\') >= 0) {
+            return false;
+        }
+        for (String segment : path.split("/", -1)) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** One asset of the source: the ecosystem {@code format}, the {@code path} within the repository, and a handle
      *  that downloads its bytes. The content is read lazily, so an asset whose format no importer handles is never
      *  downloaded - the orchestrator skips it without spending the bandwidth. */
