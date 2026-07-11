@@ -339,7 +339,10 @@ public final class MavenMetadata {
 
     private static boolean isNumeric(String token) {
         for (int index = 0; index < token.length(); index++) {
-            if (!Character.isDigit(token.charAt(index))) {
+            char character = token.charAt(index);
+            // ASCII digits only: a numeric token is parsed with new BigInteger, which rejects the non-ASCII digits
+            // Character.isDigit would accept (an Arabic-Indic version folder would then throw a 500 out of serve).
+            if (character < '0' || character > '9') {
                 return false;
             }
         }

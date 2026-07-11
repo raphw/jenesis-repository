@@ -47,7 +47,13 @@ public final class RevalidatingFetcher implements ProxyFormat.Fetcher {
             if ((etag != null || lastModified != null) && response.body().length <= MAX_BODY) {
                 store(url, new Cached(response.body(), response.headers(), etag, lastModified));
             } else {
-                cache.remove(url);
+                // Drop any prior entry, subtracting its bytes from the running total: a bare cache.remove would leak
+                // the accounting so `bytes` drifts permanently high and the eviction loop later evicts every fresh
+                // entry, silently degrading revalidation to a pass-through.
+                Cached previous = cache.remove(url);
+                if (previous != null) {
+                    bytes.addAndGet(-previous.body().length);
+                }
             }
         }
         return fetched;

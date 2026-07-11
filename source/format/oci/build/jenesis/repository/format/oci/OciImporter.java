@@ -49,9 +49,7 @@ public final class OciImporter implements RepositoryImporter {
         }
         store.write("oci/types/" + hex, new ByteArrayInputStream(mediaType(content).getBytes(StandardCharsets.UTF_8)));
         if (!reference.startsWith("sha256:")) {
-            String key = "oci/" + name + "/tags/" + reference;
-            Object token = store.readVersioned(key).map(ArtifactStore.Versioned::token).orElse(null);
-            store.writeVersioned(key, ("sha256:" + hex).getBytes(StandardCharsets.UTF_8), token);
+            OciFormat.linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
         }
     }
 
