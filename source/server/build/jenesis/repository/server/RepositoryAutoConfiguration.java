@@ -6,6 +6,7 @@ import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.importer.ImportSourceProvider;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.store.Features;
 import build.jenesis.repository.store.QuotaArtifactStore;
 import build.jenesis.repository.store.Tenants;
 import build.jenesis.repository.store.TenantsProvider;
@@ -44,6 +45,13 @@ import java.util.ServiceLoader;
 @EnableConfigurationProperties(RepositoryProperties.class)
 public class RepositoryAutoConfiguration {
 
+    public RepositoryAutoConfiguration(Environment environment) {
+        // Hand the Spring Environment to the config-driven SPI enable/disable convention before any bean below
+        // discovers providers, so every jenesis.repository.* toggle - including its JENESIS_REPOSITORY_* environment
+        // spelling through relaxed binding - gates ServiceLoader discovery deployment-wide.
+        Features.configure(environment::getProperty);
+    }
+
     @Bean
     @ConditionalOnMissingBean
     public ArtifactStore artifactStore(RepositoryProperties properties, Environment environment) {
@@ -69,8 +77,14 @@ public class RepositoryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(name = "formats")
     public List<RepositoryFormat> formats() {
+        // A parallel SPI: every discovered format is active unless configured off by name
+        // (jenesis.repository.<format>=false), so the one image carries every format and a deployment trims by config.
         List<RepositoryFormat> formats = new ArrayList<>();
-        ServiceLoader.load(RepositoryFormat.class).forEach(formats::add);
+        ServiceLoader.load(RepositoryFormat.class).forEach(format -> {
+            if (Features.active(format.name(), format.requiredConfig())) {
+                formats.add(format);
+            }
+        });
         return formats;
     }
 
@@ -78,7 +92,11 @@ public class RepositoryAutoConfiguration {
     @ConditionalOnMissingBean(name = "importSourceProviders")
     public List<ImportSourceProvider> importSourceProviders() {
         List<ImportSourceProvider> providers = new ArrayList<>();
-        ServiceLoader.load(ImportSourceProvider.class).forEach(providers::add);
+        ServiceLoader.load(ImportSourceProvider.class).forEach(provider -> {
+            if (Features.active(provider.name(), provider.requiredConfig())) {
+                providers.add(provider);
+            }
+        });
         return providers;
     }
 

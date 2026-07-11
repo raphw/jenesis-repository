@@ -4,7 +4,9 @@
  * {@link build.jenesis.repository.store.ArtifactStoreProvider#resolve}) so the store primitives are exercised without
  * the server or any network: the content-addressed {@link build.jenesis.repository.store.Publication} pointer model, the
  * {@link build.jenesis.repository.store.QuotaArtifactStore} byte-ceiling decorator, the provider's ServiceLoader
- * resolution with its filesystem fallback, the {@link build.jenesis.repository.store.Tenants} directory seam
+ * resolution with its filesystem fallback, the config-driven SPI enable/disable convention
+ * ({@link build.jenesis.repository.store.Features} - toggle semantics, required-config self-disable, and the store
+ * backend's fail-loud exception to it), the {@link build.jenesis.repository.store.Tenants} directory seam
  * falling back to the fixed single tenant, and the two publication hook classes - the ordered
  * {@link build.jenesis.repository.store.PublishInterceptor} screens (verdict routing and the withhold read side)
  * and the contained after-commit {@link build.jenesis.repository.store.PublicationObserver} observers.
@@ -38,4 +40,6 @@ open module build.jenesis.repository.store.test {
     requires build.jenesis.repository.store.filesystem;
     requires org.junit.jupiter;
     requires org.assertj.core;
+    provides build.jenesis.repository.store.ArtifactStoreProvider
+            with build.jenesis.repository.store.test.NeedyArtifactStoreProvider;
 }

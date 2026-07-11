@@ -1,11 +1,13 @@
 package build.jenesis.repository.format;
 
 import build.jenesis.repository.store.ArtifactStore;
+import build.jenesis.repository.store.Features;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.Set;
 
 /**
  * A repository protocol over the shared {@link ArtifactStore}: it claims a set of request paths and serves and
@@ -53,14 +55,21 @@ public interface RepositoryFormat {
         return List.of();
     }
 
+    /** The config keys this format cannot run without; empty (the default) for every self-contained format. A
+     *  format whose required keys are unset {@link Features#active self-disables} at discovery. */
+    default Set<String> requiredConfig() {
+        return Set.of();
+    }
+
     /** The installed format of the given {@link #name() name}, discovered via {@link ServiceLoader} from this SPI
      *  module - the sanctioned lookup for a neutral consumer (an importer walking a format's upstream index, say)
      *  that must find one format by name without carrying its own {@code uses} clause. Empty when no module on the
-     *  path provides it. */
+     *  path provides it, or when the format is configured off ({@code jenesis.repository.<name>=false},
+     *  {@link Features}) - a disabled format degrades exactly like a missing module. */
     static Optional<RepositoryFormat> installed(String name) {
         for (RepositoryFormat format : ServiceLoader.load(RepositoryFormat.class)) {
             if (format.name().equals(name)) {
-                return Optional.of(format);
+                return Features.active(format.name(), format.requiredConfig()) ? Optional.of(format) : Optional.empty();
             }
         }
         return Optional.empty();

@@ -4,6 +4,7 @@ import module java.base;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.store.ArtifactStore;
+import build.jenesis.repository.store.Features;
 
 /**
  * Drives a migration off an incumbent repository manager: it enumerates an {@link ImportSource} and routes each
@@ -39,14 +40,18 @@ public final class RepositoryImport {
         AtomicInteger skipped = new AtomicInteger();
         Set<String> skippedFormats = new LinkedHashSet<>();
         source.forEach((format, path, content) -> {
-            for (RepositoryImporter importer : importers) {
-                if (importer.handles(format)) {
-                    try (InputStream in = content.open()) {
-                        importer.importArtifact(path, in, store);
+            // A format configured off (jenesis.repository.<format>=false) imports nothing either - its assets
+            // count as skipped, exactly as if its importer module were absent.
+            if (Features.enabled(format)) {
+                for (RepositoryImporter importer : importers) {
+                    if (importer.handles(format)) {
+                        try (InputStream in = content.open()) {
+                            importer.importArtifact(path, in, store);
+                        }
+                        imported.incrementAndGet();
+                        listener.imported(path);
+                        return;
                     }
-                    imported.incrementAndGet();
-                    listener.imported(path);
-                    return;
                 }
             }
             skipped.incrementAndGet();

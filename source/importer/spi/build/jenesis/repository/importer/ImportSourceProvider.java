@@ -2,6 +2,8 @@ package build.jenesis.repository.importer;
 
 import build.jenesis.repository.format.ProxyFormat;
 
+import java.util.Set;
+
 /**
  * Discovers and builds an {@link ImportSource} for a named incumbent. A source implementation ships as its own module
  * that provides one of these; the server loads every provider with {@link java.util.ServiceLoader} and, for a
@@ -30,6 +32,13 @@ public interface ImportSourceProvider {
     /** Whether this provider builds sources for the given source name. */
     default boolean handles(String source) {
         return name().equals(source);
+    }
+
+    /** The config keys this source cannot run without; empty (the default) for one that takes everything from the
+     *  {@link ImportRequest}. A provider whose required keys are unset self-disables at discovery
+     *  ({@code build.jenesis.repository.store.Features}). */
+    default Set<String> requiredConfig() {
+        return Set.of();
     }
 
     /** Build the source from the request, streaming through {@code fetcher}, or null when the request is missing

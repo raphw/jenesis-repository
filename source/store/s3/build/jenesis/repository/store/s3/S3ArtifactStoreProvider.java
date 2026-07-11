@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.net.URI;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -32,6 +33,13 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
     @Override
     public String name() {
         return "s3";
+    }
+
+    @Override
+    public Set<String> requiredConfig() {
+        // The credentials may come from the ambient AWS chain (environment, profile, instance role), so only the
+        // bucket is required configuration.
+        return Set.of("JENESIS_AWS_BUCKET");
     }
 
     @Override
