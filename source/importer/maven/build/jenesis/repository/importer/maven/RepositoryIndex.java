@@ -63,10 +63,23 @@ final class RepositoryIndex implements Closeable {
                 throw new EOFException("Truncated index field '" + name + "'");
             }
             record.put(name, (flag & FLAG_COMPRESSED) != 0
-                    ? new String(new GZIPInputStream(new ByteArrayInputStream(value)).readAllBytes(), StandardCharsets.UTF_8)
+                    ? decompress(name, value)
                     : new String(value, StandardCharsets.UTF_8));
         }
         return record;
+    }
+
+    /** Inflate a per-field GZIP value, capped at the same length a stored field may carry - the length prefix bounds
+     *  only the compressed bytes, so without the cap a decompression-bomb field would balloon into the heap. */
+    private static String decompress(String name, byte[] value) throws IOException {
+        try (InputStream inflated = new GZIPInputStream(new ByteArrayInputStream(value))) {
+            byte[] expanded = inflated.readNBytes(MAX_FIELD_LENGTH + 1);
+            if (expanded.length > MAX_FIELD_LENGTH) {
+                throw new IOException("Implausible decompressed index field length for '" + name
+                        + "' - the stream is corrupted");
+            }
+            return new String(expanded, StandardCharsets.UTF_8);
+        }
     }
 
     @Override

@@ -71,8 +71,12 @@ public final class JenesisSource implements ImportSource {
                     continue;
                 }
                 String format = asset.path("format").asString(null);
+                String layout = layoutPath(format, path);
+                if (!ImportSource.safePath(layout)) {
+                    continue;   // a traversal-laced listing path no store write should see
+                }
                 URI download = URI.create(prefix + "/repository" + path);
-                consumer.accept(format, layoutPath(format, path), () -> open(download));
+                consumer.accept(format, layout, () -> open(download));
             }
             token = body.path("cursor").asString(null);
             checkpoint.reached(token);
