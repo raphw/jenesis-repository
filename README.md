@@ -51,8 +51,8 @@ a deployment simply runs whichever plug-ins are on its module path:
    ecosystem. The Maven layout, the Jenesis module layout, OCI/Docker and a raw/generic
    layout ship as modules; another ecosystem (npm, PyPI, NuGet, ...) is one more.
  - **Storage backends** (`ArtifactStoreProvider`, returning an `ArtifactStore`) -
-   filesystem, S3 / GCS / MinIO and Azure Blob ship in the core; a new backend is a
-   single provider.
+   filesystem, S3 / MinIO, Google Cloud Storage and Azure Blob ship in the core; a
+   new backend is a single provider.
  - **Importers** (`RepositoryImporter`) - migrate one ecosystem off an incumbent
    manager (see *Importing from another repository*, below).
  - **Import sources** (`ImportSourceProvider`) - connect to an incumbent manager and
@@ -259,7 +259,8 @@ Modules
       store/                  storage backends
         spi/                  the ArtifactStore SPI + content-addressed Publication
         filesystem/           the default filesystem backend
-        s3/                   S3-compatible backend (AWS S3, GCS, MinIO)
+        s3/                   S3-compatible backend (AWS S3, MinIO)
+        gcs/                  Google Cloud Storage backend (XML API, HMAC keys)
         azure/                Azure Blob backend
       importer/               import connectors (the read half of a migration)
         spi/                  the ImportSource SPI
@@ -267,7 +268,7 @@ Modules
         maven/ jenesis/       the vendor-neutral Maven tree walk and the jenesis-to-jenesis connector
       server/                 the dual-layout repository server (RepositoryApplication)
       ui/                     a simple, extendable web console (browse, repo config)
-    test/                     tests, mirroring source/ (server/, store/s3, store/azure)
+    test/                     tests, mirroring source/ (server/, store/s3, store/gcs, store/azure)
 
 The console is an open shell with a **panel-registration SPI**, so additional panels
 plug in through the console's extension points without forking the core.
@@ -276,7 +277,8 @@ plug in through the console's extension points without forking the core.
 |--------|--------|------------|
 | `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete` and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through - including its gated `publish(descriptor, stream)`, which stores the blob, runs the ordered `ServiceLoader`-discovered `PublishInterceptor` chain over the neutral `ArtifactDescriptor`, routes the pointer by the strongest disposition (accept / quarantine / reject), and only then notifies the `PublicationObserver` after-commit hooks (contained, accepted publishes only); its serving lookup (`located`) asks the same screens whether a path is withheld - the quarantine read side. `java.base` only, so a format plugin builds on it without pulling in the server. |
 | `build.jenesis.repository.store.filesystem` | `source/store/filesystem` | The default filesystem backend: blobs under a mounted root (`JENESIS_STORE_ROOT`), the provider `ArtifactStoreProvider.resolve` falls back to when no other backend is named. `provides` its `ArtifactStoreProvider`, discovered with `ServiceLoader`; the store SPI + `java.base` only. |
-| `build.jenesis.repository.store.s3`       | `source/store/s3`         | S3-compatible backend (AWS SDK v2). Selected with `jenesis.repository.store=s3` and `JENESIS_AWS_BUCKET`; also GCS / MinIO via `JENESIS_AWS_ENDPOINT`. Credentials come from the standard AWS chain (environment, profile, instance role), or from `JENESIS_AWS_ACCESS_KEY_ID` + `JENESIS_AWS_SECRET_ACCESS_KEY` when both are set (the path a self-hosted MinIO / Ceph takes). The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
+| `build.jenesis.repository.store.s3`       | `source/store/s3`         | S3-compatible backend (AWS SDK v2). Selected with `jenesis.repository.store=s3` and `JENESIS_AWS_BUCKET`; also MinIO / Ceph via `JENESIS_AWS_ENDPOINT`. Credentials come from the standard AWS chain (environment, profile, instance role), or from `JENESIS_AWS_ACCESS_KEY_ID` + `JENESIS_AWS_SECRET_ACCESS_KEY` when both are set (the path a self-hosted MinIO / Ceph takes). The version token is the object ETag, so `writeVersioned` is a true cross-node compare-and-set over S3's `If-None-Match` / `If-Match` conditional writes (no lock service). |
+| `build.jenesis.repository.store.gcs`      | `source/store/gcs`        | Google Cloud Storage backend over GCS's S3-compatible XML API, reusing the same modular AWS SDK v2 client - no Google SDK in the closure (the native `google-cloud-storage` client's dependency graph carries jars without a stable module name). Selected with `jenesis.repository.store=gcs` and `JENESIS_GCS_BUCKET`, authenticated with an HMAC key pair `JENESIS_GCS_ACCESS_KEY_ID` + `JENESIS_GCS_SECRET_ACCESS_KEY` (a secret; Cloud Storage > Settings > Interoperability); optional `JENESIS_GCS_ENDPOINT` / `JENESIS_GCS_REGION`. GCS honours `If-Match` only on reads, so the version token is the object *generation* and `writeVersioned` is a cross-node compare-and-set over GCS's `x-goog-if-generation-match` precondition; uploads disable aws-chunked signing and trailing checksums, which GCS does not decode. |
 | `build.jenesis.repository.store.azure`    | `source/store/azure`      | Azure Blob backend (azure-storage-blob SDK). Selected with `jenesis.repository.store=azure-blob`; `JENESIS_AZURE_CONNECTION_STRING` (+ optional `JENESIS_AZURE_CONTAINER`). The version token is the blob ETag, so `writeVersioned` is a cross-node compare-and-set over Azure's `If-None-Match` / `If-Match` conditional writes. |
 | `build.jenesis.repository.format`   | `source/format/spi`          | The `RepositoryFormat` SPI + the framework-neutral `FormatExchange`. A layout is a module that depends only on this and `provides RepositoryFormat`; the dispatcher discovers them with `ServiceLoader`, so formats plug in without the core knowing them. `java.base` + the store SPI only. |
 | `build.jenesis.repository.format.java`     | `source/format/java`         | The shared Java repository-layout primitives the Maven and Jenesis layouts build on: reading a jar's module name and parsing a Maven request path (`JavaLayout`). It also carries the cross-publish bridge (`ModuleView`) - exported *only* to those two modules, so cross-publishing stays off the public SPI. |
