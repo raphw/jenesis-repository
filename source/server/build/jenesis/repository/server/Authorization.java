@@ -716,14 +716,20 @@ public final class Authorization {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    /** The lowercase hex SHA-256 of a key, the only form of it that is ever persisted. */
-    public static String hash(String key) {
+    // Hashing runs on every authorized request (authorize/provisioned hash the key), so the digest is reused per
+    // thread rather than paying a JCA provider lookup (getInstance) on each call; digest(byte[]) resets the instance
+    // after use, so a reused one is safe. Mirrors the per-thread digest the dependents index already keeps.
+    private static final ThreadLocal<MessageDigest> SHA_256 = ThreadLocal.withInitial(() -> {
         try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(key.getBytes(StandardCharsets.UTF_8)));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    });
+
+    /** The lowercase hex SHA-256 of a key, the only form of it that is ever persisted. */
+    public static String hash(String key) {
+        return HexFormat.of().formatHex(SHA_256.get().digest(key.getBytes(StandardCharsets.UTF_8)));
     }
 
     private void require() {
