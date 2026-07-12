@@ -15,8 +15,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * Sheds excess load before the request reaches the repository: each request is metered against its tenant's rate
  * ceiling (the per-tenant {@link Authorization#rateLimit} when set, otherwise the deployment default), and one that
  * exhausts the tenant's {@link RateLimiter} bucket is answered {@code 429 Too Many Requests} with a {@code
- * Retry-After}. The tenant is read from the {@code Jenesis-Repository-Key} header; a keyless request meters against
- * a shared {@code anonymous} bucket on the default. The Actuator endpoints are never limited, so liveness and
+ * Retry-After}. The tenant is read from the {@code Jenesis-Repository-Key} header, but only when the key is
+ * {@link Authorization#wellFormed well-formed} (a valid checksum); a keyless or forged key meters against a shared
+ * {@code anonymous} bucket on the default - so a flood of distinct forged keys cannot mint an unbounded number of
+ * per-key buckets (a memory-exhaustion vector) nor evade the ceiling by cycling keys, since the pre-auth filter
+ * cannot afford a store lookup to tell a real key from a fabricated one. The Actuator endpoints are never limited, so liveness and
  * scrape probes are unaffected. The effective ceiling is cached briefly per tenant so the limiter, not a store
  * read, is on the hot path. A ceiling of zero (nothing configured) is unlimited - the filter is then a no-op.
  */
@@ -57,7 +60,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
-        String tenant = Authorization.tenantOf(request.getHeader("Jenesis-Repository-Key"));
+        String presented = request.getHeader("Jenesis-Repository-Key");
+        String tenant = Authorization.wellFormed(presented) ? Authorization.tenantOf(presented) : null;
         String bucket = tenant == null ? "anonymous" : tenant;
         if (!limiter.allow(bucket, ceiling(bucket, tenant))) {
             rejected.incrementAndGet();

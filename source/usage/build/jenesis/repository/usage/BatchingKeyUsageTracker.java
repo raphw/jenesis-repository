@@ -144,6 +144,25 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker {
                 flush(entry.getKey(), entry.getValue(), today);
             }
         }
+        // Drop a fully-flushed credential not seen today: its delta is already persisted, so a later hit rebuilds a
+        // fresh Pending (flushed=0) and flushes the new delta correctly. Without this the maps grow one entry per
+        // (tenant, credential-hash) ever seen - a credential-rotating or anonymous-authorized tenant leaks memory and
+        // slows each drain (it scans the whole map). The sibling download tracker bounds itself the same way.
+        pending.entrySet().removeIf(entry -> {
+            Pending value = entry.getValue();
+            if (value.count == value.flushed && !today.equals(writtenDay.get(entry.getKey()))) {
+                writtenDay.remove(entry.getKey());
+                return true;
+            }
+            return false;
+        });
+    }
+
+    /** The number of per-credential accumulators currently held: fully-flushed idle entries are dropped each drain,
+     *  so this is bounded by the credentials seen in the current day (plus any carrying an unflushed delta), not every
+     *  credential ever seen - a health/scale read can assert the map does not grow across day boundaries. */
+    public int tracked() {
+        return pending.size();
     }
 
     private void flush(String key, Pending entry, LocalDate day) {
