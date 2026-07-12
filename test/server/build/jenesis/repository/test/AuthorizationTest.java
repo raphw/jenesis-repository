@@ -7,11 +7,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,10 +34,11 @@ class AuthorizationTest {
     Path root;
 
     private Authorization authorization;
+    private ArtifactStore store;
 
     @BeforeEach
     void setUp() {
-        ArtifactStore store = ArtifactStoreProvider.resolve(
+        store = ArtifactStoreProvider.resolve(
                 "filesystem", key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
         authorization = Authorization.enforcing(store);
     }
@@ -360,5 +367,119 @@ class AuthorizationTest {
 
         authorization.setRateLimit("acme", 0);
         assertThat(authorization.rateLimit("acme")).as("zero clears it").isZero();
+    }
+
+    @Test
+    void a_concurrent_use_flush_is_merged_not_silently_overwritten() throws IOException {
+        String key = Authorization.mint("acme");
+        String hash = Authorization.hash(key);
+        RacingStore racing = new RacingStore(store, "auth/acme/" + hash + "/metadata");
+        Authorization raced = Authorization.enforcing(racing);
+        raced.provision("acme", hash, "k", null);
+
+        // recordUsed accumulates useCount and runs off the request path on the usage tracker's worker, so while this
+        // flush's read-modify-write is in flight another replica commits a competing increment and an operator fences
+        // the same credential to a network - invalidating this flush's version token. Correctness rests on the
+        // compare-and-set retry re-reading and re-applying: a blind overwrite would drop the competing count and
+        // revert the just-set allowlist, handing a stolen key back its network and losing the metering the flush exists
+        // to record. (A blind write never touches the versioned path at all, so the race would go unseen - the retry
+        // count below asserts the compare-and-set is actually exercised.)
+        raced.recordUsed("acme", hash, Instant.parse("2026-06-30T08:00:00Z"), "10.0.0.9", 5);
+
+        assertThat(racing.writeAttempts).as("the conflict was seen and retried, not dropped").isGreaterThanOrEqualTo(2);
+        Authorization.Credential credential = Authorization.enforcing(store).credential("acme", hash).orElseThrow();
+        assertThat(credential.useCount()).as("the competing +3 and this flush's +5 both landed").isEqualTo(8);
+        assertThat(credential.allowedAddresses()).as("the racing allowlist survived the flush").isEqualTo("10.0.0.0/8");
+        assertThat(credential.lastUsedAddress()).isEqualTo("10.0.0.9");
+    }
+
+    /** A store decorator whose first compare-and-set write to the credential's metadata simulates another node
+     *  committing a competing use increment and an operator's IP-allowlist first (so this flush's token is now stale)
+     *  and then reports the conflict, exercising {@link Authorization#recordUsed}'s compare-and-set retry; every other
+     *  call, and every later write, delegates unchanged. */
+    private static final class RacingStore implements ArtifactStore {
+
+        private final ArtifactStore delegate;
+        private final String racedKey;
+        private boolean raced;
+        int writeAttempts;
+
+        private RacingStore(ArtifactStore delegate, String racedKey) {
+            this.delegate = delegate;
+            this.racedKey = racedKey;
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            if (key.equals(racedKey)) {
+                writeAttempts++;
+                if (!raced) {
+                    raced = true;
+                    Optional<Versioned> current = delegate.readVersioned(key);
+                    Properties competing = new Properties();
+                    if (current.isPresent()) {
+                        competing.load(new ByteArrayInputStream(current.get().content()));
+                    }
+                    competing.setProperty("useCount",
+                            Long.toString(Long.parseLong(competing.getProperty("useCount", "0")) + 3));
+                    competing.setProperty("allowed-ips", "10.0.0.0/8");
+                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                    competing.store(bytes, null);
+                    delegate.writeVersioned(key, bytes.toByteArray(), current.map(Versioned::token).orElse(null));
+                    return false;                                   // this flush sees the conflict and must retry
+                }
+            }
+            return delegate.writeVersioned(key, content, expected);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
     }
 }

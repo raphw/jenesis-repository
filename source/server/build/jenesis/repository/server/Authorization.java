@@ -603,22 +603,44 @@ public final class Authorization {
 
     /** Stamp a credential's last use - the time, the source {@code address} (kept when {@code null}) and a count
      *  raised by {@code increment} - for the off-request usage tracker, which batches so the store sees at most one
-     *  write per credential per day. A revoked credential (no metadata) is silently skipped. */
+     *  write per credential per day. A revoked credential (no metadata) is silently skipped.
+     *
+     *  <p>Unlike the other metadata writers this one <em>accumulates</em> {@code useCount} and runs on the usage
+     *  tracker's background worker, so it compare-and-sets the metadata document rather than a blind
+     *  load-mutate-write: a concurrent flush on another replica, or a racing admin edit (an operator setting an
+     *  expiry or a source-IP allowlist on the same credential), would otherwise last-writer-win - silently dropping
+     *  a count increment, or reverting the just-set expiry/allowlist that this automated flush read before it. On a
+     *  conflict the loop re-reads the latest metadata and re-applies the delta, so both survive; a persistently
+     *  contended counter forfeits this one increment (informational, re-accumulated on the next flush) rather than
+     *  looping forever. */
     public void recordUsed(String tenant, String hash, Instant when, String address, long increment)
             throws IOException {
         require();
-        Properties metadata = read(metadataPath(tenant, hash));
-        if (metadata == null) {
-            return;
+        String path = metadataPath(tenant, hash);
+        for (int attempt = 0; attempt < USE_COUNT_RETRIES; attempt++) {
+            Optional<ArtifactStore.Versioned> current = store.readVersioned(path);
+            if (current.isEmpty()) {
+                return;                                             // a revoked credential (no metadata) is skipped
+            }
+            Properties metadata = new Properties();
+            metadata.load(new ByteArrayInputStream(current.get().content()));
+            metadata.setProperty("lastUsed", when.toString());
+            if (address != null) {
+                metadata.setProperty("lastUsedAddress", address);
+            }
+            metadata.setProperty("useCount",
+                    Long.toString(Long.parseLong(metadata.getProperty("useCount", "0")) + increment));
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            metadata.store(bytes, null);
+            if (store.writeVersioned(path, bytes.toByteArray(), current.get().token())) {
+                return;
+            }
         }
-        metadata.setProperty("lastUsed", when.toString());
-        if (address != null) {
-            metadata.setProperty("lastUsedAddress", address);
-        }
-        metadata.setProperty("useCount",
-                Long.toString(Long.parseLong(metadata.getProperty("useCount", "0")) + increment));
-        write(metadataPath(tenant, hash), metadata);
     }
+
+    /** Bounded compare-and-set attempts for the accumulating {@link #recordUsed} counter before it forfeits the
+     *  increment - the usage count is informational and the tracker re-accumulates, so a contended write never spins. */
+    private static final int USE_COUNT_RETRIES = 5;
 
     /** Revoke a credential by hash: delete its grants and metadata, so the next request is forbidden. */
     public void revoke(String tenant, String hash) throws IOException {
