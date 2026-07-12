@@ -77,4 +77,21 @@ class KeyUsageTrackerTest {
         }
         assertThat(tracker.dropped()).as("offers past the 100k bound are dropped").isGreaterThan(0);
     }
+
+    @Test
+    void the_pending_map_is_bounded_by_the_current_day_not_every_credential_ever_seen() {
+        BatchingKeyUsageTracker tracker = new BatchingKeyUsageTracker(authorization, true);
+        Instant dayOne = Instant.parse("2026-06-30T08:00:00Z");
+        for (int index = 0; index < 50; index++) {
+            tracker.drain(List.of(new BatchingKeyUsageTracker.Hit("acme", "hash-" + index, "10.0.0.1")), dayOne);
+        }
+        assertThat(tracker.tracked()).as("the day's distinct credentials are held").isEqualTo(50);
+
+        tracker.drain(List.of(new BatchingKeyUsageTracker.Hit("acme", "fresh", "10.0.0.2")),
+                dayOne.plus(Duration.ofDays(1)));
+        assertThat(tracker.tracked())
+                .as("the previous day's fully-flushed idle credentials are dropped, so the map does not grow "
+                        + "with every credential ever seen (a credential-rotating tenant would otherwise leak memory)")
+                .isEqualTo(1);
+    }
 }

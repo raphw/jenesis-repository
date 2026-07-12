@@ -171,6 +171,17 @@ class OidcExchangeTest {
                 .as("a long-expired token is rejected").isNull();
     }
 
+    @Test
+    void a_signed_token_with_no_audience_claim_is_rejected_cleanly_not_a_server_error() throws IOException {
+        // A validly-signed token may omit aud entirely (many OPs mint tokens without it); an audience-pinned trust
+        // must not match it, and must not throw either - Jwt.getAudience() is then null and the audience check runs
+        // outside the decode try/catch, so an NPE would 500 the exchange and skip every later trust.
+        String noAud = base64("{\"iss\":\"" + issuer + "\",\"sub\":\"repo:acme/app:ci\",\"exp\":"
+                + Instant.now().plusSeconds(300).getEpochSecond() + "}");
+        assertThat(exchange.exchange("acme", rs256(header("RS256", "k1"), noAud, keyPair.getPrivate())))
+                .as("a token missing aud matches no audience-pinned trust and mints nothing, without a 500").isNull();
+    }
+
     private String header(String algorithm, String kid) {
         return base64("{\"alg\":\"" + algorithm + "\",\"kid\":\"" + kid + "\",\"typ\":\"JWT\"}");
     }

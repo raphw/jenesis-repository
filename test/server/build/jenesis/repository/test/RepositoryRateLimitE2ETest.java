@@ -3,8 +3,10 @@ package build.jenesis.repository.test;
 import build.jenesis.repository.server.RepositoryApplication;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.net.URI;
@@ -22,6 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * reaches the repository.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+// The tests share one booted server and so one in-memory anonymous bucket; order by name so the burst test meters a
+// fresh bucket before the forged-key test drains it (the forged-key test still sees a 429 whatever the start state).
+@TestMethodOrder(MethodOrderer.MethodName.class)
 public class RepositoryRateLimitE2ETest {
 
     @TempDir
@@ -60,5 +65,21 @@ public class RepositoryRateLimitE2ETest {
         assertThat(statuses[0]).as("the first request is within the burst").isNotEqualTo(429);
         assertThat(Arrays.stream(statuses).anyMatch(status -> status == 429))
                 .as("the ceiling throttles the excess").isTrue();
+    }
+
+    @Test
+    public void a_flood_of_distinct_forged_keys_shares_the_anonymous_ceiling_not_a_fresh_bucket_each() throws Exception {
+        int[] statuses = new int[12];
+        for (int request = 0; request < statuses.length; request++) {
+            statuses[request] = client.send(
+                    HttpRequest.newBuilder(URI.create(base + "maven/org/x/y/1/y-1.jar"))
+                            .header("Jenesis-Repository-Key", "jenk_forged" + request + ".AAAA").GET().build(),
+                    HttpResponse.BodyHandlers.discarding()).statusCode();
+        }
+        assertThat(Arrays.stream(statuses).anyMatch(status -> status == 429))
+                .as("each forged key is not well-formed, so they all meter against the shared anonymous bucket and "
+                        + "hit the ceiling rather than each minting its own fresh full bucket - an unbounded-map DoS "
+                        + "and a rate-limit bypass")
+                .isTrue();
     }
 }
