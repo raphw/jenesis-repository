@@ -232,4 +232,127 @@ class ArtifactorySourceTest {
         assertThatThrownBy(() -> source.forEach((assetFormat, path, content) -> { }, cursor -> { }))
                 .isInstanceOf(IOException.class);
     }
+
+    @Test
+    void the_deep_file_list_is_streamed_never_held_whole_in_memory() throws IOException {
+        // The deep File List is one JSON document over EVERY file in the repository - here a synthetic listing far
+        // larger than the test could hold whole, generated on the fly one padded entry at a time. That the walk emits
+        // every file while the listing is drained in small bounded reads - never a single slurp - is the streaming
+        // guarantee (a readTree over a materialised String would hold the whole catalogue, and a node graph of it, at
+        // once). The assets are never opened, so no artifact body is fetched to prove the point.
+        int files = 30_000;
+        GeneratedDeepList listing = new GeneratedDeepList(files);
+        StreamingFetcher fetcher = new StreamingFetcher(listUrl, listing);
+
+        List<String> paths = new ArrayList<>();
+        List<String> cursors = new ArrayList<>();
+        new ArtifactorySource(base, repository, format, fetcher)
+                .forEach((assetFormat, path, content) -> paths.add(path), cursors::add);
+
+        assertThat(paths).as("every file is emitted from the streamed listing").hasSize(files);
+        assertThat(paths.get(0)).isEqualTo("org/example/lib-0.jar");
+        assertThat(paths.get(files - 1)).isEqualTo("org/example/lib-" + (files - 1) + ".jar");
+        assertThat(cursors).as("a single-response listing has one terminal checkpoint").containsExactly((String) null);
+        assertThat(listing.total()).as("a multi-megabyte listing was streamed through")
+                .isGreaterThan(8L * 1024 * 1024);
+        assertThat(listing.largestRead()).as("no single read ever pulled the listing whole into one buffer")
+                .isLessThanOrEqualTo(64 * 1024);
+    }
+
+    /** A {@link ProxyFormat.Fetcher} that streams one canned listing URL through a caller-supplied {@link InputStream}
+     *  (the download stays lazy, never buffered whole) and refuses every other URL - so a test drives the streaming
+     *  deep-list walk without a network and without any asset ever being downloaded. */
+    private static final class StreamingFetcher implements ProxyFormat.Fetcher {
+
+        private final String listing;
+        private final InputStream body;
+
+        private StreamingFetcher(String listing, InputStream body) {
+            this.listing = listing;
+            this.body = body;
+        }
+
+        @Override
+        public java.util.Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> headers) {
+            return java.util.Optional.empty();   // the streaming deep-list path never calls fetch
+        }
+
+        @Override
+        public java.util.Optional<ProxyFormat.Download> download(URI url, Map<String, String> headers) {
+            return url.toString().equals(listing)
+                    ? java.util.Optional.of(new ProxyFormat.Download(200, body, Map.of()))
+                    : java.util.Optional.empty();
+        }
+    }
+
+    /** Generates a large Artifactory deep File List lazily, one padded file entry at a time, recording the bytes served
+     *  and the largest single read - so feeding it demonstrates the source drains a large listing in bounded chunks
+     *  rather than materialising it. */
+    private static final class GeneratedDeepList extends InputStream {
+
+        private static final String PAD = "x".repeat(1024);   // pad each entry so the listing is large by byte volume
+
+        private final int files;
+        private int emitted = -1;                 // -1 header; 0..files-1 entries; files tail; done
+        private byte[] segment = new byte[0];
+        private int pos;
+        private long total;
+        private int largestRead;
+
+        private GeneratedDeepList(int files) {
+            this.files = files;
+        }
+
+        long total() {
+            return total;
+        }
+
+        int largestRead() {
+            return largestRead;
+        }
+
+        private boolean advance() {
+            while (pos >= segment.length) {
+                if (emitted == -1) {
+                    segment = "{\"files\":[".getBytes(StandardCharsets.UTF_8);
+                    emitted = 0;
+                } else if (emitted < files) {
+                    String entry = (emitted == 0 ? "" : ",")
+                            + "{\"uri\":\"/org/example/lib-" + emitted + ".jar\",\"folder\":false,\"pad\":\""
+                            + PAD + "\"}";
+                    segment = entry.getBytes(StandardCharsets.UTF_8);
+                    emitted++;
+                } else if (emitted == files) {
+                    segment = "]}".getBytes(StandardCharsets.UTF_8);
+                    emitted++;
+                } else {
+                    return false;                 // exhausted
+                }
+                pos = 0;
+            }
+            return true;
+        }
+
+        @Override
+        public int read() {
+            if (!advance()) {
+                return -1;
+            }
+            total++;
+            return segment[pos++] & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            if (!advance()) {
+                return -1;
+            }
+            int read = Math.min(length, segment.length - pos);
+            System.arraycopy(segment, pos, buffer, offset, read);
+            pos += read;
+            total += read;
+            largestRead = Math.max(largestRead, read);
+            return read;
+        }
+    }
 }

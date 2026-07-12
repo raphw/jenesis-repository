@@ -64,7 +64,7 @@ public final class JenesisSource implements ImportSource {
             if (page.status() != 200) {
                 throw new IOException("jenesis listing failed (" + page.status() + ") for " + url);
             }
-            JsonNode body = JSON.readTree(new String(page.body(), StandardCharsets.UTF_8));
+            JsonNode body = JSON.readTree(page.body());   // parse straight off the bytes, no intermediate String copy
             for (JsonNode asset : body.path("assets")) {
                 String path = asset.path("path").asString(null);
                 if (path == null) {

@@ -62,7 +62,7 @@ public final class NexusSource implements ImportSource {
             if (page.status() != 200) {
                 throw new IOException("Nexus listing failed (" + page.status() + ") for " + url);
             }
-            JsonNode body = JSON.readTree(new String(page.body(), StandardCharsets.UTF_8));
+            JsonNode body = JSON.readTree(page.body());   // parse straight off the bytes, no intermediate String copy
             for (JsonNode item : body.path("items")) {
                 String format = item.path("format").asString(null);
                 for (JsonNode asset : item.path("assets")) {
