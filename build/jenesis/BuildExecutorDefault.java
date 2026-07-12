@@ -111,8 +111,16 @@ class BuildExecutorDefault implements BuildExecutor {
                 Path previous = target.resolve(BuildExecutorModule.encode(identity)),
                         checksum = previous.resolve("checksum"),
                         output = previous.resolve("output");
+                Path outputProperties = checksum.resolve("output.properties");
+                // A step commits by moving `next` into `previous` and only then writing checksum/output.properties -
+                // a non-atomic commit, so a crash in that window (or after the reuse branch empties checksum/ but
+                // before it repopulates it) leaves `previous` present with the sidecar absent. Reading it unguarded
+                // threw NoSuchFileException on every later run - and the failed step never removes `previous` - so the
+                // build stayed wedged until a manual delete. Treat a missing sidecar as no recorded output: the step
+                // then recomputes and the move re-lays a whole `previous`, self-healing the half-committed step.
                 boolean exists = Files.exists(previous);
-                Map<Path, byte[]> current = exists ? HashFunction.read(checksum.resolve("output.properties")) : Map.of();
+                Map<Path, byte[]> current = exists && Files.exists(outputProperties)
+                        ? HashFunction.read(outputProperties) : Map.of();
                 byte[] currentStepHash = stepHash.hash(step);
                 Path stepFile = checksum.resolve("step.properties");
                 boolean consistent;
