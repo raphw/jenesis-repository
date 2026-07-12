@@ -160,12 +160,19 @@ public final class ServletFormatExchange implements FormatExchange {
         return false;
     }
 
-    private static String etag(byte[] content) {
+    // Every buffered 200 (an index/metadata page a client polls) hashes its bytes for the ETag; the digest is reused
+    // per thread instead of a JCA provider lookup (getInstance) per serve - digest(byte[]) resets it after use, so a
+    // reused instance is safe.
+    private static final ThreadLocal<MessageDigest> SHA_256 = ThreadLocal.withInitial(() -> {
         try {
-            return '"' + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content)) + '"';
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    });
+
+    private static String etag(byte[] content) {
+        return '"' + HexFormat.of().formatHex(SHA_256.get().digest(content)) + '"';
     }
 
     private static final long[] UNSATISFIABLE = new long[0];

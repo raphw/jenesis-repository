@@ -69,12 +69,11 @@ public final class ImportJobs {
 
     /** The persisted state of a job as raw JSON bytes, or empty if there is no such job. */
     public Optional<byte[]> status(ArtifactStore store, String jobId) throws IOException {
-        if (!store.exists("imports/" + jobId)) {
-            return Optional.empty();
-        }
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        store.read("imports/" + jobId, out);
-        return Optional.of(out.toByteArray());
+        // One store round trip: readVersioned answers presence (empty when absent) and the small job-state bytes
+        // together, rather than an exists() probe then a read() (two round trips on the endpoint a migration polls),
+        // and hands the bytes back without a ByteArrayOutputStream copy - the same write-then-readVersioned pattern
+        // the credential store uses.
+        return store.readVersioned("imports/" + jobId).map(ArtifactStore.Versioned::content);
     }
 
     /** A job's state parsed for a status response or to seed a resume. */
@@ -83,7 +82,7 @@ public final class ImportJobs {
         if (bytes.isEmpty()) {
             return Optional.empty();
         }
-        JsonNode state = JSON.readTree(new String(bytes.get(), StandardCharsets.UTF_8));
+        JsonNode state = JSON.readTree(bytes.get());
         List<String> formats = new ArrayList<>();
         for (JsonNode format : state.path("skippedFormats")) {
             formats.add(format.asString(null));
@@ -103,7 +102,7 @@ public final class ImportJobs {
         job.put("cursor", cursor);
         job.put("asset", asset);
         job.put("error", error);
-        store.write("imports/" + jobId, new ByteArrayInputStream(JSON.writeValueAsString(job).getBytes(StandardCharsets.UTF_8)));
+        store.write("imports/" + jobId, new ByteArrayInputStream(JSON.writeValueAsBytes(job)));
     }
 
     /** A parsed view of a job's persisted state; {@code asset} is the source path of the most recently imported
