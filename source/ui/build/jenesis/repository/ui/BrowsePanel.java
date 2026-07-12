@@ -3,6 +3,7 @@ package build.jenesis.repository.ui;
 import build.jenesis.repository.store.ArtifactStore;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -30,13 +31,20 @@ public final class BrowsePanel implements Panel {
         StringBuilder html = new StringBuilder();
         html.append("<p>Browse the repository's published artifacts as a breadcrumbed, navigable tree.</p>");
         html.append("<p><a href=\"/browse\" role=\"button\" class=\"secondary\">Open the repository browser &rarr;</a></p>");
-        List<String> published = store.list("publish");
-        if (published.isEmpty()) {
+        // The reserved publish/quarantine review subtree is not a browsable namespace (a GET withholds it and the
+        // /assets export never walks it), so it is not offered as a quick link - matching BrowseController's browse.
+        List<String> namespaces = new ArrayList<>();
+        for (String name : store.list("publish")) {
+            if (!name.equals("quarantine")) {
+                namespaces.add(name);
+            }
+        }
+        if (namespaces.isEmpty()) {
             html.append("<p>The repository is empty. Publish an artifact to see it here.</p>");
             return html.toString();
         }
         html.append("<p>Published namespaces:</p><ul>");
-        for (String name : published) {
+        for (String name : namespaces) {
             html.append("<li><a href=\"/browse?path=").append(urlEscape(name)).append("\">")
                     .append(escape(name)).append("</a></li>");
         }

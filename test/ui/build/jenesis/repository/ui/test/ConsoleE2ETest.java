@@ -38,6 +38,7 @@ public class ConsoleE2ETest {
     private HttpClient client;
     private String base;
     private String blobHash;
+    private String quarantineHash;
 
     @BeforeAll
     public void boot() throws Exception {
@@ -49,6 +50,10 @@ public class ConsoleE2ETest {
         Publication publication = new Publication(backend);
         blobHash = publication.storeBlob(new ByteArrayInputStream(new byte[]{1, 2, 3}));
         publication.link("/maven/org/example/demo/1/demo-1.jar", blobHash);
+        // A gate-held artifact lands under publish/quarantine/... - withheld from a GET and skipped by the export; it
+        // is set up here so the browse-hides-quarantine test has a real held artifact to prove is not disclosed.
+        quarantineHash = publication.storeBlob(new ByteArrayInputStream(new byte[]{9, 9, 9, 9}));
+        publication.link("/quarantine/maven/org/secret/held/1/held-1.jar", quarantineHash);
 
         running = Application.start(0);
         client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
@@ -188,6 +193,26 @@ public class ConsoleE2ETest {
         HttpResponse<String> page = authGet("/browse?path=../blobs");
         assertThat(page.statusCode()).isEqualTo(200);
         assertThat(page.body()).doesNotContain(blobHash);
+    }
+
+    @Test
+    public void the_browse_hides_the_quarantine_review_subtree_a_get_does_not_serve() throws Exception {
+        // A gate-held artifact lives at publish/quarantine/...; a plain GET 404s it and the /assets export never walks
+        // it, so the interactive browse must not surface it either. The root listing shows no quarantine folder, the
+        // browse panel offers no quarantine quick link, and a crafted ?path=quarantine/... cannot navigate in - so the
+        // browse never discloses the paths or sizes of withheld artifacts (which a GET would not).
+        HttpResponse<String> root = authGet("/browse");
+        assertThat(root.statusCode()).isEqualTo(200);
+        assertThat(root.body()).doesNotContain("/browse?path=quarantine").doesNotContain("quarantine/");
+        // The panel's published-namespace quick links exclude the review subtree too.
+        assertThat(authGet("/console").body()).doesNotContain("/browse?path=quarantine");
+        // A crafted navigation into the subtree drops the leading "quarantine" segment (browsing the empty live path
+        // instead), so the held artifact's leaf, path and size are never rendered.
+        HttpResponse<String> into = authGet("/browse?path=quarantine/maven/org/secret/held/1");
+        assertThat(into.statusCode()).isEqualTo(200);
+        assertThat(into.body()).doesNotContain("held-1.jar").doesNotContain(quarantineHash);
+        // And the export still omits it, unchanged - the browse now matches that contract.
+        assertThat(authGet("/assets").body()).doesNotContain("held-1.jar").doesNotContain(quarantineHash);
     }
 
     @Test
