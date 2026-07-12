@@ -17,6 +17,23 @@ import org.xml.sax.SAXException;
  */
 final class MavenXml {
 
+    /** A configured, hardened {@link DocumentBuilderFactory} per thread. {@code newInstance()} does a JAXP provider
+     *  service lookup - too costly to repeat for every {@code maven-metadata.xml} and pom the index-fallback refresh
+     *  parses (one per coordinate, one per version) - and a factory is not safe to share across threads, so each thread
+     *  reuses its own and mints a fresh {@code DocumentBuilder} per parse. */
+    private static final ThreadLocal<DocumentBuilderFactory> FACTORY = ThreadLocal.withInitial(() -> {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            return factory;
+        } catch (ParserConfigurationException impossible) {
+            throw new IllegalStateException("A hardened XML parser is unavailable", impossible);
+        }
+    });
+
     private MavenXml() {
     }
 
@@ -69,12 +86,7 @@ final class MavenXml {
 
     private static Element parse(byte[] document) {
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-            return factory.newDocumentBuilder().parse(new ByteArrayInputStream(document)).getDocumentElement();
+            return FACTORY.get().newDocumentBuilder().parse(new ByteArrayInputStream(document)).getDocumentElement();
         } catch (ParserConfigurationException | SAXException | IOException unparseable) {
             return null;
         }

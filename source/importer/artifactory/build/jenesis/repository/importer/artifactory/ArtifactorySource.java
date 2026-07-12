@@ -3,6 +3,8 @@ package build.jenesis.repository.importer.artifactory;
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.importer.ImportSource;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -64,40 +66,89 @@ public final class ArtifactorySource implements ImportSource {
         String root = base.toString();
         String prefix = root.endsWith("/") ? root : root + "/";
         URI listing = URI.create(prefix + "api/storage/" + encode(repository) + "?list&deep=1&listFolders=0");
-        ProxyFormat.Fetched page = get(listing);
-        if (page.status() == 200) {
-            JsonNode body = JSON.readTree(new String(page.body(), StandardCharsets.UTF_8));
-            for (JsonNode file : body.path("files")) {
-                if (file.path("folder").asBoolean(false)) {
-                    continue;
-                }
-                String uri = file.path("uri").asString(null);
-                if (uri == null) {
-                    continue;
-                }
-                String path = uri.startsWith("/") ? uri.substring(1) : uri;
-                if (!ImportSource.safePath(path)) {
-                    continue;   // a traversal-laced listing path no store write should see
-                }
-                URI download = URI.create(prefix + encode(repository) + "/" + encode(path));
-                consumer.accept(format, path, () -> open(download));
+        // The deep File List is one JSON document over EVERY file in the repository - potentially enormous - so it is
+        // streamed and pull-parsed, each file emitted as the parser reaches it, rather than buffered whole as a
+        // byte[]/String/JsonNode tree of the entire catalogue (the Folder Info fallback below stays a per-folder fetch,
+        // each a bounded page). The download stays open across the emitted assets' own lazy downloads, exactly as the
+        // Maven index walk streams its index while assets download.
+        try (ProxyFormat.Download page = fetcher.download(listing, headers())
+                .orElseThrow(() -> new IOException("No response from " + listing))) {
+            if (page.status() == 200) {
+                streamDeepList(consumer, prefix, page.body());
+                // the deep listing is a single response, so there is no mid-walk resume point (the cursor is ignored).
+                checkpoint.reached(null);
+            } else if (proGated(page)) {
+                // A free (OSS) Artifactory gates the deep File List API behind Pro; the per-folder Folder Info API is
+                // available, so walk it recursively for the same files - N requests instead of one.
+                crawlRepository(consumer, checkpoint, prefix);
+            } else {
+                throw new IOException("Artifactory listing failed (" + page.status() + ") for " + listing);
             }
-            // the deep listing is a single response, so there is no mid-walk resume point (the cursor is ignored).
-            checkpoint.reached(null);
-        } else if (proGated(page)) {
-            // A free (OSS) Artifactory gates the deep File List API behind Pro; the per-folder Folder Info API is
-            // available, so walk it recursively for the same files - N requests instead of one.
-            crawlRepository(consumer, checkpoint, prefix);
-        } else {
-            throw new IOException("Artifactory listing failed (" + page.status() + ") for " + listing);
+        }
+    }
+
+    /** Pull-parse the deep File List's {@code files} array, emitting each non-folder file as it is read. The walk is
+     *  scoped to that one array (every other top-level field's subtree is skipped) and holds only the current token, so
+     *  the whole-repository listing is consumed in the parser's bounded read buffer, never a materialised tree of it. */
+    private void streamDeepList(Asset consumer, String prefix, InputStream body) throws IOException {
+        try (JsonParser parser = JSON.createParser(body)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return;                                          // not the expected storage-listing object
+            }
+            while (parser.nextToken() == JsonToken.PROPERTY_NAME) {
+                boolean files = "files".equals(parser.currentName());
+                parser.nextToken();                              // advance onto the field's value
+                if (files && parser.currentToken() == JsonToken.START_ARRAY) {
+                    streamFiles(consumer, prefix, parser);
+                } else {
+                    parser.skipChildren();                       // scalar (no-op) or an unrelated subtree
+                }
+            }
+        }
+    }
+
+    private void streamFiles(Asset consumer, String prefix, JsonParser parser) throws IOException {
+        JsonToken token;
+        while ((token = parser.nextToken()) != null && token != JsonToken.END_ARRAY) {
+            if (token != JsonToken.START_OBJECT) {
+                parser.skipChildren();                           // a non-object array element is not a file entry
+                continue;
+            }
+            String uri = null;
+            boolean folder = false;
+            while (parser.nextToken() == JsonToken.PROPERTY_NAME) {
+                String field = parser.currentName();
+                parser.nextToken();                              // advance onto the field's value
+                if ("uri".equals(field) && parser.currentToken() == JsonToken.VALUE_STRING) {
+                    uri = parser.getString();
+                } else if ("folder".equals(field)
+                        && (parser.currentToken() == JsonToken.VALUE_TRUE || parser.currentToken() == JsonToken.VALUE_FALSE)) {
+                    folder = parser.currentToken() == JsonToken.VALUE_TRUE;
+                } else {
+                    parser.skipChildren();
+                }
+            }
+            if (folder || uri == null) {
+                continue;
+            }
+            String path = uri.startsWith("/") ? uri.substring(1) : uri;
+            if (!ImportSource.safePath(path)) {
+                continue;                                        // a traversal-laced listing path no store write should see
+            }
+            URI download = URI.create(prefix + encode(repository) + "/" + encode(path));
+            consumer.accept(format, path, () -> open(download));
         }
     }
 
     /** True when the deep File List API is refused specifically because it is an Artifactory Pro feature (a free
-     *  instance answers {@code 400} with that message), as opposed to a genuine error that should surface. */
-    private static boolean proGated(ProxyFormat.Fetched page) {
-        return page.status() == 400
-                && new String(page.body(), StandardCharsets.UTF_8).contains("available only in Artifactory Pro");
+     *  instance answers {@code 400} with that message), as opposed to a genuine error that should surface. The error
+     *  body is a tiny JSON object, so it is read bounded off the download stream. */
+    private static boolean proGated(ProxyFormat.Download page) throws IOException {
+        if (page.status() != 400) {
+            return false;
+        }
+        byte[] body = page.body().readNBytes(64 * 1024);
+        return new String(body, StandardCharsets.UTF_8).contains("available only in Artifactory Pro");
     }
 
     /** Walk the repository over the OSS-available Folder Info API, importing each top-level entry's subtree in turn and
@@ -184,8 +235,7 @@ public final class ArtifactorySource implements ImportSource {
     }
 
     private InputStream open(URI url) throws IOException {
-        Map<String, String> headers = authorization == null ? Map.of() : Map.of("Authorization", authorization);
-        ProxyFormat.Download download = fetcher.download(url, headers)
+        ProxyFormat.Download download = fetcher.download(url, headers())
                 .orElseThrow(() -> new IOException("No response from " + url));
         if (download.status() != 200) {
             download.close();
@@ -195,7 +245,10 @@ public final class ArtifactorySource implements ImportSource {
     }
 
     private ProxyFormat.Fetched get(URI url) throws IOException {
-        Map<String, String> headers = authorization == null ? Map.of() : Map.of("Authorization", authorization);
-        return fetcher.fetch(url, headers).orElseThrow(() -> new IOException("No response from " + url));
+        return fetcher.fetch(url, headers()).orElseThrow(() -> new IOException("No response from " + url));
+    }
+
+    private Map<String, String> headers() {
+        return authorization == null ? Map.of() : Map.of("Authorization", authorization);
     }
 }
