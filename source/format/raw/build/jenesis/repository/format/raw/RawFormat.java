@@ -22,6 +22,10 @@ import javax.xml.stream.XMLStreamWriter;
  */
 public final class RawFormat implements RepositoryFormat, ProxyFormat {
 
+    // Reused across listings rather than rebuilt per request: newInstance() runs the full JAXP provider lookup, and the
+    // factory is safe to share for creating writers once configured.
+    private static final XMLOutputFactory XML_OUTPUT = XMLOutputFactory.newInstance();
+
     @Override
     public String name() {
         return "raw";
@@ -105,7 +109,7 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
-            XMLStreamWriter writer = XMLOutputFactory.newInstance().createXMLStreamWriter(out, "UTF-8");
+            XMLStreamWriter writer = XML_OUTPUT.createXMLStreamWriter(out, "UTF-8");
             writer.writeDTD("<!DOCTYPE html>");
             writer.writeStartElement("html");
             writer.writeStartElement("body");

@@ -27,6 +27,10 @@ import javax.xml.stream.XMLStreamWriter;
  */
 public final class MavenMetadata {
 
+    // Reused across renders rather than rebuilt per metadata: newInstance() runs the full JAXP provider lookup, and the
+    // factory is safe to share for creating writers once configured (only the per-render writer is not shared).
+    private static final XMLOutputFactory XML_OUTPUT = XMLOutputFactory.newInstance();
+
     /** The bare setting key (under {@code jenesis.repository.}) that opts a deployment into computing the served
      *  artifact-level {@code maven-metadata.xml} rather than serving the stored bytes verbatim - default off, read
      *  off the exchange so the free format needs no settings dependency. */
@@ -232,7 +236,7 @@ public final class MavenMetadata {
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
-            XMLStreamWriter writer = XMLOutputFactory.newInstance().createXMLStreamWriter(out, "UTF-8");
+            XMLStreamWriter writer = XML_OUTPUT.createXMLStreamWriter(out, "UTF-8");
             writer.writeStartDocument("UTF-8", "1.0");
             writer.writeStartElement("metadata");
             element(writer, "groupId", groupId);
