@@ -31,13 +31,19 @@ import java.util.Optional;
  * <p>This lives in the free base so both consoles share one browse. It is deny-by-default authenticated (a GET
  * caught by {@code anyRequest().authenticated()}), and the {@code path} query parameter is traversal-guarded - any
  * {@code .}/{@code ..}/empty segment is dropped - so a request can never escape the {@code publish/} subtree to read
- * {@code blobs/} or a sibling's data.
+ * {@code blobs/} or a sibling's data. The reserved {@code publish/quarantine/} review subtree - artifacts the gate is
+ * withholding, which a plain {@code GET} 404s and the {@code /assets} export never walks - is likewise excluded from
+ * both the root listing and navigation, so the browse discloses exactly what a {@code GET} would.
  */
 @Controller
 public class BrowseController {
 
     /** The store subtree the browse is rooted at: the formats' published request-path pointer tree. */
     private static final String ROOT = "publish";
+
+    /** The reserved top-level subtree under {@code publish/} that holds artifacts the gate is withholding: a GET does
+     *  not serve them and the {@code /assets} export never walks them, so the interactive browse hides it too. */
+    private static final String QUARANTINE = "quarantine";
 
     private final ArtifactStore store;
     private final Publication publication;
@@ -152,6 +158,12 @@ public class BrowseController {
         int depth = path.isEmpty() ? 1 : path.split("/").length + 1;
         List<Map<String, Object>> entries = new ArrayList<>();
         for (String name : store.list(prefix)) {
+            if (path.isEmpty() && name.equals(QUARANTINE)) {
+                // The withheld-artifact review subtree is not part of the served namespace: it never appears in the
+                // root folder listing (sanitize also refuses to navigate into it), so a browse discloses only the paths
+                // and sizes a GET would - the same confinement the /assets export's walk applies.
+                continue;
+            }
             String childPath = path.isEmpty() ? name : path + "/" + name;
             boolean folder = !store.list(ROOT + "/" + childPath).isEmpty();
             Map<String, Object> entry = new LinkedHashMap<>();
@@ -218,6 +230,12 @@ public class BrowseController {
         StringBuilder safe = new StringBuilder();
         for (String segment : path.split("/")) {
             if (segment.isEmpty() || segment.equals(".") || segment.equals("..") || segment.indexOf('\\') >= 0) {
+                continue;
+            }
+            if (safe.length() == 0 && segment.equals(QUARANTINE)) {
+                // A leading "quarantine" segment would navigate into the withheld-artifact review subtree, whose paths
+                // and sizes a GET does not serve; drop it (a deeper "quarantine" is a legitimate artifact-path segment
+                // and is kept), so a crafted ?path=quarantine/... cannot enumerate held artifacts.
                 continue;
             }
             if (safe.length() > 0) {
