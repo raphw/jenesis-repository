@@ -139,7 +139,7 @@ public final class MavenSource implements ImportSource {
                 checkpoint.reached(TREE + directory);   // the subtree is fully consumed - a resume skips past it
             } else if (imported(entry.name())) {
                 String file = path + entry.name();
-                if (resume == null || !walkedBefore(file, resume)) {
+                if ((resume == null || !walkedBefore(file, resume)) && ImportSource.safePath(file)) {
                     consumer.accept(FORMAT, file, () -> open(entry.target()));
                 }
             }
@@ -236,6 +236,9 @@ public final class MavenSource implements ImportSource {
                 continue;
             }
             String prefix = coordinate + "/" + version + "/" + artifact + "-" + version;
+            if (!ImportSource.safePath(prefix + ".pom")) {
+                continue;   // a coordinate/version that would not form a safe layout path no store write should see
+            }
             ProxyFormat.Fetched pom = get(URI.create(root + prefix + ".pom"));
             if (pom.status() != 200) {
                 continue;   // the metadata names a version the repository no longer serves
@@ -249,6 +252,10 @@ public final class MavenSource implements ImportSource {
     }
 
     private void emit(Asset consumer, URI root, String path) throws IOException {
+        if (!ImportSource.safePath(path)) {
+            return;   // belt-and-suspenders: the report boundary the SPI and every peer source guard, so the walk's
+                      // per-segment listing/index checks are backed by the one canonical guard even if one is relaxed
+        }
         consumer.accept(FORMAT, path, () -> open(URI.create(root + path)));
     }
 

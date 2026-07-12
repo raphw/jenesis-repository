@@ -73,6 +73,22 @@ class IndexSourceTest {
     }
 
     @Test
+    void a_traversal_laced_index_path_is_skipped() throws IOException {
+        FakeFetcher fetcher = reachable()
+                .on("http://source.local/index", 200, ("../../etc/passwd http://files.local/evil.bin\n"
+                        + "beta/b.bin http://files.local/b.bin\n").getBytes(StandardCharsets.UTF_8))
+                .on("http://files.local/b.bin", 200, "second".getBytes(StandardCharsets.UTF_8));
+        List<String> paths = new ArrayList<>();
+        source(fetcher, null).forEach((format, path, content) -> {
+            paths.add(path);
+            content.open().close();
+        }, cursor -> { });
+        assertThat(paths).as("the traversal-laced enumerated path never reaches a store write")
+                .containsExactly("beta/b.bin");
+        assertThat(fetcher.urls).as("and its bytes are never fetched").doesNotContain("http://files.local/evil.bin");
+    }
+
+    @Test
     void checkpoints_batch_the_last_consumed_path() throws IOException {
         StringBuilder index = new StringBuilder();
         for (int i = 0; i < 130; i++) {
