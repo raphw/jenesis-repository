@@ -1,5 +1,10 @@
 package build.jenesis.repository.usage;
 
+import build.jenesis.repository.observation.Health;
+import build.jenesis.repository.observation.HealthCheck;
+import build.jenesis.repository.observation.Metric;
+import build.jenesis.repository.observation.ObservabilitySource;
+import build.jenesis.repository.observation.TaskStatus;
 import build.jenesis.repository.server.Authorization;
 import build.jenesis.repository.server.KeyUsageTracker;
 
@@ -28,8 +33,16 @@ import java.util.concurrent.atomic.AtomicLong;
  * at most one write per credential per day). The flush adds the delta since the last flush, so no hit within a process
  * lifetime is lost; a crash forfeits only the unflushed tail, which an informational counter can bear. {@link #drain}
  * is public so it can be driven synchronously, without the thread. A {@link #record} is a no-op when tracking is off.
+ *
+ * <p>An enabled tracker is its own {@link ObservabilitySource}: it reports its bounded queue depth ({@code
+ * jenesis.usage.queue}, used vs the fixed capacity - the saturation that turns into drops), the per-credential
+ * accumulators it holds ({@code jenesis.usage.tracked}), the hits it has dropped under back-pressure ({@code
+ * jenesis.usage.dropped}), a {@code jenesis.usage.worker} health check (DOWN when the worker died with tracking on)
+ * and a {@code jenesis.usage.flush} task status stamped with the last drain. A <em>disabled</em> tracker (tracking
+ * switched off) reports nothing at all, consistent with the "a disabled plugin is not listed" rule; the same
+ * distinction the health surface already draws between "installed but off" and a dead worker.
  */
-public final class BatchingKeyUsageTracker implements KeyUsageTracker {
+public final class BatchingKeyUsageTracker implements KeyUsageTracker, ObservabilitySource {
 
     /** A use worth recording: the tenant the key carries, the key's SHA-256 hash and the request's source address. */
     public record Hit(String tenant, String hash, String address) {
@@ -42,13 +55,18 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker {
         private Instant when;
     }
 
+    /** The bounded queue depth: past it a hit is dropped rather than blocking a request, and this is the ceiling the
+     *  {@code jenesis.usage.queue} used-vs-available metric measures against. */
+    private static final int QUEUE_CAPACITY = 100_000;
+
     private final Authorization authorization;
     private final boolean enabled;
-    private final BlockingQueue<Hit> queue = new LinkedBlockingQueue<>(100_000);
+    private final BlockingQueue<Hit> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final Map<String, Pending> pending = new ConcurrentHashMap<>();
     private final Map<String, LocalDate> writtenDay = new ConcurrentHashMap<>();
     private final AtomicLong dropped = new AtomicLong();
     private volatile boolean running;
+    private volatile Instant lastDrain;
     private Thread thread;
 
     public BatchingKeyUsageTracker(Authorization authorization, boolean enabled) {
@@ -156,6 +174,7 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker {
             }
             return false;
         });
+        lastDrain = now;
     }
 
     /** The number of per-credential accumulators currently held: fully-flushed idle entries are dropped each drain,
@@ -163,6 +182,52 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker {
      *  credential ever seen - a health/scale read can assert the map does not grow across day boundaries. */
     public int tracked() {
         return pending.size();
+    }
+
+    @Override
+    public List<Metric> metrics() {
+        if (!enabled) {
+            return List.of();
+        }
+        return List.of(
+                Metric.bounded("jenesis.usage.queue",
+                        "Credential-use hits buffered off the request path waiting for the worker to drain them, "
+                                + "against the fixed queue bound past which a hit is dropped rather than blocking a request.",
+                        queue.size(), QUEUE_CAPACITY, "hits"),
+                Metric.gauge("jenesis.usage.tracked",
+                        "Per-credential accumulators currently held - bounded by the credentials seen in the current "
+                                + "UTC day (plus any carrying an unflushed delta), not every credential ever seen.",
+                        tracked(), ""),
+                Metric.counter("jenesis.usage.dropped",
+                        "Credential-use hits dropped because the in-memory queue was saturated - back-pressure, not "
+                                + "an outage; usage is an informational signal, never an audit log.",
+                        dropped(), "hits"));
+    }
+
+    @Override
+    public List<HealthCheck> healthChecks() {
+        if (!enabled) {
+            return List.of();
+        }
+        String description = "Credential-usage worker thread is started and draining hits off the request path.";
+        return List.of(alive()
+                ? HealthCheck.up("jenesis.usage.worker", description)
+                : HealthCheck.of("jenesis.usage.worker", description, Health.DOWN,
+                        "usage tracking is switched on but its worker thread is not running"));
+    }
+
+    @Override
+    public List<TaskStatus> taskStatuses() {
+        if (!enabled) {
+            return List.of();
+        }
+        boolean alive = alive();
+        return List.of(TaskStatus.ran("jenesis.usage.flush",
+                "Background worker draining buffered credential-use hits and flushing each credential's running "
+                        + "count and last address through the authorization store at most once per UTC day.",
+                alive ? TaskStatus.State.RUNNING : TaskStatus.State.FAILED, lastDrain, null,
+                alive ? "draining the usage queue and flushing each credential at most once per UTC day"
+                        : "worker thread is not running"));
     }
 
     private void flush(String key, Pending entry, LocalDate day) {
