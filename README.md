@@ -267,11 +267,14 @@ Modules
         nexus/ artifactory/   the built-in vendor connectors
         maven/ jenesis/       the vendor-neutral Maven tree walk and the jenesis-to-jenesis connector
       server/                 the dual-layout repository server (RepositoryApplication)
-      ui/                     a simple, extendable web console (browse, repo config)
+      ui/                     a simple, extendable web console (browse, SPI catalog)
     test/                     tests, mirroring source/ (server/, store/s3, store/gcs, store/azure)
 
 The console is an open shell with a **panel-registration SPI**, so additional panels
-plug in through the console's extension points without forking the core.
+plug in through the console's extension points without forking the core. The bundled panels are
+the artifact **browse** and an **SPI catalog** - a read-only view of the whole plug-in surface
+grouped by SPI, discovered from the module graph's `provides` declarations (the free counterpart of
+the enterprise console's SPI catalogue and its `/api/admin/spi` admin API).
 
 | Module | Folder | What it is |
 |--------|--------|------------|
