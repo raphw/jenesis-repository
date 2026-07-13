@@ -1,7 +1,11 @@
 package build.jenesis.repository.ratelimit;
 
+import build.jenesis.repository.observation.HealthCheck;
+import build.jenesis.repository.observation.Metric;
+import build.jenesis.repository.observation.ObservabilitySource;
 import build.jenesis.repository.server.RateLimiter;
 
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
@@ -15,8 +19,14 @@ import java.util.function.LongSupplier;
  * The limiter is per process - in a replicated deployment each node limits independently, so the effective ceiling
  * is the configured rate times the node count. That is the usual, cheap trade for not putting a coordination
  * service on the hot path; a single front door (or a small node count) keeps it close to the configured number.
+ *
+ * <p>It is its own {@link ObservabilitySource}: the live limiter the distribution holds reports {@code
+ * jenesis.ratelimit.buckets} - the number of keys it is currently tracking, one bucket each - as a gauge, so an
+ * operator watches the very memory-exhaustion vector the shared {@code anonymous} bucket is there to bound, plus a
+ * {@code jenesis.ratelimit.limiter} health check that the limiter is installed and metering. There is no background
+ * task (buckets refill lazily on the request path), so {@link #taskStatuses()} stays empty.
  */
-public final class TokenBucketRateLimiter implements RateLimiter {
+public final class TokenBucketRateLimiter implements RateLimiter, ObservabilitySource {
 
     private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
     private final LongSupplier clock;
@@ -40,6 +50,20 @@ public final class TokenBucketRateLimiter implements RateLimiter {
             return true;
         }
         return buckets.computeIfAbsent(key, ignored -> new Bucket()).tryAcquire(permitsPerMinute, clock.getAsLong());
+    }
+
+    @Override
+    public List<Metric> metrics() {
+        return List.of(Metric.gauge("jenesis.ratelimit.buckets",
+                "Rate-limit buckets currently tracked, one per active key - an unbounded climb is the "
+                        + "memory-exhaustion vector the shared anonymous bucket is there to bound.",
+                buckets.size(), ""));
+    }
+
+    @Override
+    public List<HealthCheck> healthChecks() {
+        return List.of(HealthCheck.up("jenesis.ratelimit.limiter",
+                "In-memory token-bucket rate limiter is installed and metering requests."));
     }
 
     private static final class Bucket {
