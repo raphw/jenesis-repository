@@ -7,6 +7,7 @@ import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.importer.ImportSourceProvider;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.QuotaExceededException;
+import build.jenesis.repository.store.ReadOnlyException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -204,6 +205,10 @@ public class RepositoryController {
                              HttpServletRequest request,
                              HttpServletResponse response)
             throws IOException {
+        if (readOnly()) {
+            respond(response, 403, "this instance is in read-only mode: import is refused");
+            return;
+        }
         if (fetcher == ProxyFormat.Fetcher.NONE) {
             respond(response, 501, "no upstream fetcher module is installed on this deployment");
             return;
@@ -331,11 +336,39 @@ public class RepositoryController {
         }
     }
 
+    /**
+     * Advertises the deployment-wide capabilities a client or console reads to adapt its behaviour - today the
+     * read-only flag (so a console shows a banner and hides write affordances, and a mirror client knows writes are
+     * refused) and whether the wire is credential-gated. Read like every other {@code /api} surface; a distribution
+     * with more capabilities extends the map without a client change.
+     */
+    @GetMapping("/api/capabilities")
+    public void capabilities(HttpServletResponse response) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("readOnly", readOnly());
+        body.put("auth", Boolean.parseBoolean(settings.apply("auth")));
+        response.setHeader("Content-Type", "application/json");
+        respond(response, 200, JSON.writeValueAsString(body));
+    }
+
+    /** The deployment-wide read-only flag, read off the same {@code jenesis.repository.*} settings the formats read a
+     *  toggle from, so no extra dependency is threaded in; unset means read-write. */
+    private boolean readOnly() {
+        return Boolean.parseBoolean(settings.apply("read-only"));
+    }
+
     /** A write refused by the storage quota maps to {@code 507 Insufficient Storage} - the limit was hit before any
      *  bytes were stored, so this is a clean rejection the client can surface. */
     @ExceptionHandler(QuotaExceededException.class)
     public void quotaExceeded(QuotaExceededException exception, HttpServletResponse response) throws IOException {
         respond(response, 507, exception.getMessage());
+    }
+
+    /** A write refused because the deployment is read-only maps to {@code 403 Forbidden} - the store choke point
+     *  rejected the mutation before any bytes were stored, whatever endpoint or internal path attempted it. */
+    @ExceptionHandler(ReadOnlyException.class)
+    public void readOnly(ReadOnlyException exception, HttpServletResponse response) throws IOException {
+        respond(response, 403, exception.getMessage());
     }
 
     private static void respond(HttpServletResponse response, int status, String body) throws IOException {

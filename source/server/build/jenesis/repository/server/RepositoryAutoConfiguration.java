@@ -8,6 +8,7 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Features;
 import build.jenesis.repository.store.QuotaArtifactStore;
+import build.jenesis.repository.store.ReadOnlyArtifactStore;
 import build.jenesis.repository.store.Tenants;
 import build.jenesis.repository.store.TenantsProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -57,7 +58,10 @@ public class RepositoryAutoConfiguration {
     public ArtifactStore artifactStore(RepositoryProperties properties, Environment environment) {
         ArtifactStore store = ArtifactStoreProvider.resolve(properties.getStore(), environment::getProperty);
         long quota = properties.quotaBytes();
-        return quota > 0 ? new QuotaArtifactStore(store, quota) : store;
+        ArtifactStore quotaed = quota > 0 ? new QuotaArtifactStore(store, quota) : store;
+        // Read-only is the outermost wrapper, so every write - through the quota meter or straight to the backend, at
+        // an HTTP endpoint or an internal path - is refused at this one choke point before it reaches the delegate.
+        return properties.isReadOnly() ? new ReadOnlyArtifactStore(quotaed) : quotaed;
     }
 
     @Bean
@@ -176,7 +180,10 @@ public class RepositoryAutoConfiguration {
         // default. It targets the configured fixed-tenant space (root.scope(tenant).scope(repository)), the same
         // space FixedTenantRouting resolves reads to.
         ArtifactStore scoped = store.scope(properties.getTenant()).scope(properties.getRepository());
-        return new DemoSeeding(properties.isDemo(), new DemoSeeder(formats, fetcher), scoped, () -> {
+        // A read-only deployment runs no background job that mutates the store - the seed writes, so it is disabled
+        // here rather than left to fail against the read-only store choke point on its worker thread.
+        return new DemoSeeding(properties.isDemo() && !properties.isReadOnly(),
+                new DemoSeeder(formats, fetcher), scoped, () -> {
         });
     }
 

@@ -33,6 +33,9 @@
 </header>
 <main id="main" class="container">
     <header th:replace="~{base :: pageHeaderCrumbs('Browse', ${crumbs})}"></header>
+    <th:block th:if="${readOnly}">
+        <p th:replace="~{base :: alert('This instance is in read-only mode - every write is refused.', 'warn')}"></p>
+    </th:block>
 
     <p>
         <a th:href="@{/assets}" role="button" class="secondary" download="assets.ndjson">Download asset listing (NDJSON) &darr;</a>

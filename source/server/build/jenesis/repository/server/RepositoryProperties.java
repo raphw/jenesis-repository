@@ -43,6 +43,8 @@ public class RepositoryProperties {
 
     private boolean demo = false;
 
+    private boolean readOnly = false;
+
     public String getStore() {
         return store;
     }
@@ -167,5 +169,18 @@ public class RepositoryProperties {
 
     public void setDemo(boolean demo) {
         this.demo = demo;
+    }
+
+    /** Whether the deployment runs read-only: every write - a hosted publish, staging deploy, promotion, import and
+     *  every mutating admin action, plus internal writes (write-through proxy caching, import replay, a background
+     *  sweep) - is refused at the {@link build.jenesis.repository.store.ReadOnlyArtifactStore} store choke point, while
+     *  browse, download, search and all read APIs work normally. Off by default; a demo or a public read-only mirror
+     *  turns it on. The env spelling is {@code JENESIS_REPOSITORY_READ_ONLY}. */
+    public boolean isReadOnly() {
+        return readOnly;
+    }
+
+    public void setReadOnly(boolean readOnly) {
+        this.readOnly = readOnly;
     }
 }
