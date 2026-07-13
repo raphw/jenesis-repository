@@ -2,6 +2,9 @@ package build.jenesis.repository.proxy;
 
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
+import build.jenesis.repository.observation.HealthCheck;
+import build.jenesis.repository.observation.Metric;
+import build.jenesis.repository.observation.ObservabilitySource;
 
 /**
  * A {@link ProxyFormat.Fetcher} decorator that remembers an upstream {@code 404} for a short window, so the flood of
@@ -13,8 +16,16 @@ import build.jenesis.repository.format.ProxyFormat;
  * time-to-live, so a genuinely published artifact is seen within that window. It decorates both {@link #fetch} and
  * {@link #download} - Maven proxies through {@code download}, npm and the rest through {@code fetch} - keyed by URL
  * and safe for concurrent use, with a bounded map swept of expired entries when it fills.
+ *
+ * <p>It is its own {@link ObservabilitySource}: the live fetcher the distribution holds reports {@code
+ * jenesis.proxy.negativecache.entries} - the upstream misses currently remembered, as a <em>bounded</em> gauge
+ * against the map bound past which a fresh miss triggers an eviction sweep, so the overview shows <em>data used vs
+ * available</em> and how close the cache is to that bound (the same memory-exhaustion vector a shared bucket would
+ * cap) without pre-computing a percentage - plus a {@code jenesis.proxy.negativecache} health check that the cache
+ * is installed and remembering misses. There is no background task (expired entries are swept lazily on the record
+ * path), so {@link #taskStatuses()} stays empty.
  */
-public final class NegativeCachingFetcher implements ProxyFormat.Fetcher {
+public final class NegativeCachingFetcher implements ProxyFormat.Fetcher, ObservabilitySource {
 
     private static final int MAX_ENTRIES = 16_384;
 
@@ -56,6 +67,23 @@ public final class NegativeCachingFetcher implements ProxyFormat.Fetcher {
             record(url);
         }
         return download;
+    }
+
+    @Override
+    public List<Metric> metrics() {
+        return List.of(Metric.bounded("jenesis.proxy.negativecache.entries",
+                "Upstream 404s currently remembered, so a build tool's re-probes for a missing artifact are answered "
+                        + "from memory rather than re-hitting the upstream, against the bounded map size past which a "
+                        + "fresh miss first sweeps expired entries - a used-vs-available signal on the very "
+                        + "memory-exhaustion vector the bound is there to cap.",
+                misses.size(), MAX_ENTRIES, ""));
+    }
+
+    @Override
+    public List<HealthCheck> healthChecks() {
+        return List.of(HealthCheck.up("jenesis.proxy.negativecache",
+                "The negative cache is installed and remembering upstream misses so repeated probes are answered "
+                        + "from memory."));
     }
 
     private boolean cached(URI url) {
