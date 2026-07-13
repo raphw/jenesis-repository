@@ -65,7 +65,8 @@
  */
 module build.jenesis.repository.usage {
     requires build.jenesis.repository.server;
-    exports build.jenesis.repository.usage to build.jenesis.repository.test;
+    requires build.jenesis.repository.observation;
+    exports build.jenesis.repository.usage to build.jenesis.repository.test, build.jenesis.repository.usage.test;
     provides build.jenesis.repository.server.KeyUsageTrackerProvider
             with build.jenesis.repository.usage.BatchingKeyUsageTrackerProvider;
 }
