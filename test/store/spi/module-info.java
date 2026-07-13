@@ -3,7 +3,9 @@
  * {@link build.jenesis.repository.store.filesystem.FilesystemArtifactStore} rooted at a JUnit {@code @TempDir} (through
  * {@link build.jenesis.repository.store.ArtifactStoreProvider#resolve}) so the store primitives are exercised without
  * the server or any network: the content-addressed {@link build.jenesis.repository.store.Publication} pointer model, the
- * {@link build.jenesis.repository.store.QuotaArtifactStore} byte-ceiling decorator, the provider's ServiceLoader
+ * {@link build.jenesis.repository.store.QuotaArtifactStore} byte-ceiling decorator (including its
+ * {@link build.jenesis.repository.observation.ObservabilitySource} adoption - the {@code jenesis.quota.used}
+ * used-vs-available metric and {@code jenesis.quota.capacity} health check, silent while unlimited), the provider's ServiceLoader
  * resolution with its filesystem fallback, the config-driven SPI enable/disable convention
  * ({@link build.jenesis.repository.store.Features} - toggle semantics, required-config self-disable, and the store
  * backend's fail-loud exception to it), the {@link build.jenesis.repository.store.Tenants} directory seam
@@ -38,6 +40,7 @@
 open module build.jenesis.repository.store.test {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
+    requires build.jenesis.repository.observation;
     requires org.junit.jupiter;
     requires org.assertj.core;
     provides build.jenesis.repository.store.ArtifactStoreProvider

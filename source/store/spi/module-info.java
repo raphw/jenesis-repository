@@ -1,6 +1,8 @@
 /**
  * The artifact-store SPI and the format-neutral content-addressed store ({@code Publication}) built on it.
- * No dependencies beyond java.base, so a format plugin builds on the store and its {@code Publication} without
+ * Its only dependency beyond java.base is the equally minimal, registry-free
+ * {@code build.jenesis.repository.observation} SPI (so a capped store can report its {@code jenesis.quota.*}
+ * used-vs-available signals), so a format plugin builds on the store and its {@code Publication} without
  * pulling in the server. A backend ships as its own module that {@code provides} an {@code ArtifactStoreProvider},
  * discovered on the module path with {@code ServiceLoader}: the default filesystem backend, plus the optional s3,
  * gcs and azure backends when on the graph. The {@code Tenants} directory of the shared
@@ -13,6 +15,7 @@
  * @jenesis.release 25
  */
 module build.jenesis.repository.store {
+    requires build.jenesis.repository.observation;
     exports build.jenesis.repository.store;
     uses build.jenesis.repository.store.ArtifactStoreProvider;
     uses build.jenesis.repository.store.PublicationObserver;
