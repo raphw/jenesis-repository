@@ -65,7 +65,8 @@
  */
 module build.jenesis.repository.ratelimit {
     requires build.jenesis.repository.server;
-    exports build.jenesis.repository.ratelimit to build.jenesis.repository.test;
+    requires build.jenesis.repository.observation;
+    exports build.jenesis.repository.ratelimit to build.jenesis.repository.test, build.jenesis.repository.ratelimit.test;
     provides build.jenesis.repository.server.RateLimiterProvider
             with build.jenesis.repository.ratelimit.TokenBucketRateLimiterProvider;
 }
