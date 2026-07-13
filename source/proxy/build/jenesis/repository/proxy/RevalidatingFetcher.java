@@ -2,6 +2,9 @@ package build.jenesis.repository.proxy;
 
 import module java.base;
 import build.jenesis.repository.format.ProxyFormat;
+import build.jenesis.repository.observation.HealthCheck;
+import build.jenesis.repository.observation.Metric;
+import build.jenesis.repository.observation.ObservabilitySource;
 
 /**
  * A {@link ProxyFormat.Fetcher} decorator that revalidates a proxied mutable index against the upstream rather than
@@ -13,8 +16,17 @@ import build.jenesis.repository.format.ProxyFormat;
  * metadata document, a version list) is revalidated; an immutable artifact is fetched through {@link #download} once
  * and then served from the local store, so {@code download} passes straight through and is never re-fetched. Keyed by
  * URL, bounded, and safe for concurrent use.
+ *
+ * <p>It is its own {@link ObservabilitySource}: the live fetcher the distribution holds reports {@code
+ * jenesis.proxy.revalidation.bytes} - the cached index body bytes held, as a <em>bounded</em> gauge against the byte
+ * ceiling past which the oldest entries are evicted, so the overview shows <em>data used vs available</em> and how
+ * close the cache is to that ceiling without pre-computing a percentage - alongside {@code
+ * jenesis.proxy.revalidation.entries} (the indexes currently remembered, bounded by the byte ceiling rather than a
+ * fixed count) and a {@code jenesis.proxy.revalidation} health check that the cache is installed and saving
+ * transfers. There is no background task (eviction happens lazily on the store path), so {@link #taskStatuses()}
+ * stays empty.
  */
-public final class RevalidatingFetcher implements ProxyFormat.Fetcher {
+public final class RevalidatingFetcher implements ProxyFormat.Fetcher, ObservabilitySource {
 
     private static final long MAX_TOTAL = 64L * 1024 * 1024;
     private static final int MAX_BODY = 8 * 1024 * 1024;
@@ -62,6 +74,28 @@ public final class RevalidatingFetcher implements ProxyFormat.Fetcher {
     @Override
     public Optional<ProxyFormat.Download> download(URI url, Map<String, String> requestHeaders) throws IOException {
         return delegate.download(url, requestHeaders);
+    }
+
+    @Override
+    public List<Metric> metrics() {
+        return List.of(
+                Metric.bounded("jenesis.proxy.revalidation.bytes",
+                        "Cached proxied-index body bytes held for conditional revalidation, against the byte ceiling "
+                                + "past which the oldest entries are evicted - a used-vs-available signal whose usage() "
+                                + "fraction shows how close the cache is to thrashing back toward a full re-download.",
+                        bytes.get(), MAX_TOTAL, "bytes"),
+                Metric.gauge("jenesis.proxy.revalidation.entries",
+                        "Proxied mutable indexes currently remembered with their ETag/Last-Modified validator, so a "
+                                + "re-fetch is a conditional request whose 304 saves the transfer; bounded by the byte "
+                                + "ceiling, not a fixed entry count.",
+                        cache.size(), ""));
+    }
+
+    @Override
+    public List<HealthCheck> healthChecks() {
+        return List.of(HealthCheck.up("jenesis.proxy.revalidation",
+                "The revalidation cache is installed and saving index transfers by revalidating remembered bodies "
+                        + "against the upstream."));
     }
 
     private static Map<String, String> conditional(Map<String, String> requestHeaders, Cached cached) {
