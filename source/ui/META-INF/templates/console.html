@@ -26,6 +26,9 @@
 </header>
 <main id="main" class="container">
     <header th:replace="~{base :: pageHeader('Repository console')}"></header>
+    <th:block th:if="${readOnly}">
+        <p th:replace="~{base :: alert('This instance is in read-only mode - every write is refused.', 'warn')}"></p>
+    </th:block>
     <!--/* th:if must sit on a wrapping block: on the same element, th:replace (precedence 100) runs BEFORE
          th:if (300), so the empty state would render unconditionally. */-->
     <th:block th:if="${panels.isEmpty()}">

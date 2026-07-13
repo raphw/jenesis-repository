@@ -358,6 +358,14 @@ A request rate ceiling is optional too: `-Djenesis.repository.rate-limit=600` (p
 load with `429 Too Many Requests` and a `Retry-After`. It is metered per tenant (the key's tenant, or a shared
 anonymous bucket), and the Actuator probes are never throttled.
 
+**Read-only mode** for a browsable-but-immutable demo or a public mirror: `-Djenesis.repository.read-only=true`
+(env `JENESIS_REPOSITORY_READ_ONLY`, default off) refuses *every* write - a hosted publish, an import, every
+mutating admin action - with `403`, while browse, download, search and all read APIs work normally. It is enforced
+at one low-level choke point, a `ReadOnlyArtifactStore` wrapping the store SPI, so internal writes (write-through
+proxy caching, import replay) are refused too, and the write-producing background jobs are disabled. The mode is
+advertised on `/api/capabilities` and shown as a console banner. Pair it with a firewalled writer that updates the
+shared store while public read-only pods serve reads from it.
+
 **Config-driven feature enable/disable.** One image can carry *every* discovered module and be trimmed by
 configuration instead of rebuilt - the convention is defined once in the store SPI
 (`build.jenesis.repository.store.Features`) and shared verbatim by every distribution, so a feature keeps the
