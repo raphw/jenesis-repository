@@ -156,6 +156,36 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+        Path dir = resolve(prefix);
+        if (limit <= 0 || !Files.isDirectory(dir)) {
+            return;
+        }
+        // A directory listing is unordered and a filesystem has no start-at seek, so select the page in one
+        // bounded scan: keep the limit smallest names past startAfter in a capped TreeSet - O(limit) memory
+        // however many millions of entries the directory holds, where sorting list() would buffer them all.
+        TreeSet<String> smallest = new TreeSet<>();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(dir)) {
+            for (Path path : entries) {
+                String name = path.getFileName().toString();
+                // The same in-flight .upload*.tmp filter as list(), so a concurrent atomic write never pages out.
+                if (name.startsWith(".upload") && name.endsWith(".tmp") || name.compareTo(startAfter) <= 0) {
+                    continue;
+                }
+                if (smallest.size() < limit) {
+                    smallest.add(name);
+                } else if (name.compareTo(smallest.last()) < 0) {
+                    smallest.add(name);
+                    smallest.pollLast();
+                }
+            }
+        } catch (IOException _) {
+            return; // mirror list(): a vanished or unreadable container pages as empty
+        }
+        smallest.forEach(consumer);
+    }
+
+    @Override
     public Optional<Versioned> readVersioned(String key) throws IOException {
         Path path = resolve(key);
         if (!Files.isRegularFile(path)) {

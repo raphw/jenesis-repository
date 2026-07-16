@@ -2,6 +2,7 @@ package build.jenesis.repository.store.azure;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
+import com.azure.core.http.rest.PagedResponse;
 import com.azure.core.util.BinaryData;
 import com.azure.core.util.Context;
 import com.azure.storage.blob.BlobContainerClient;
@@ -168,6 +169,75 @@ public final class AzureArtifactStore implements ArtifactStore {
             }
         }
         return new ArrayList<>(names);
+    }
+
+    @Override
+    public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+        if (limit <= 0) {
+            return;
+        }
+        String base = keyPrefix + (prefix.isEmpty() ? "" : prefix + "/");
+        // Azure's List Blobs offers no arbitrary start-at key (its marker is an opaque continuation token), but
+        // the hierarchical listing pages lazily over contiguous key-range slices - so skip to the boundary and
+        // stop at the limit; memory stays one page however large the child set, and only the skip is
+        // O(position), the honest best the service gives. The SDK hands each page's blobs and prefixes as two
+        // separate lists, so merge them back into key order first. That order puts a container's prefix entry
+        // at `name + "/"`, AFTER a sibling whose name extends this one past a character below '/' (`app.txt`
+        // the blob precedes `app/` the prefix, yet the child `app` pages first) - so every name parks and the
+        // smallest parked one releases only once no smaller-named child can still arrive (held()). A released
+        // name at or below startAfter is dropped rather than emitted.
+        TreeSet<String> pending = new TreeSet<>();
+        int emitted = 0;
+        String last = null;
+        for (PagedResponse<BlobItem> page : container.listBlobsByHierarchy(base).iterableByPage()) {
+            List<String> ordered = new ArrayList<>();
+            for (BlobItem item : page.getValue()) {
+                String relative = item.getName().substring(base.length());
+                if (Boolean.TRUE.equals(item.isPrefix()) && !relative.endsWith("/")) {
+                    relative = relative + "/";
+                }
+                if (!relative.isEmpty() && !relative.equals("/")) {
+                    ordered.add(relative);
+                }
+            }
+            Collections.sort(ordered);
+            for (String relative : ordered) {
+                while (!pending.isEmpty() && !held(pending.first(), relative)) {
+                    String name = pending.pollFirst();
+                    if (name.compareTo(startAfter) > 0) {
+                        consumer.accept(name);
+                        last = name;
+                        if (++emitted == limit) {
+                            return;
+                        }
+                    }
+                }
+                String name = relative.endsWith("/") ? relative.substring(0, relative.length() - 1) : relative;
+                if (!name.equals(last)) {
+                    pending.add(name); // a blob and a same-named container page as one child
+                }
+            }
+        }
+        for (String name : pending) {
+            if (name.compareTo(startAfter) > 0) {
+                consumer.accept(name);
+                if (++emitted == limit) {
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Whether {@code name} may not be paged out yet at stream position {@code relative}: a proper prefix of it
+     *  whose next character sorts below {@code '/'} could still arrive as a hierarchy prefix (its container key
+     *  {@code prefix + "/"} sorts at or past the position), and that shorter child name must page first. */
+    private static boolean held(String name, String relative) {
+        for (int index = 1; index < name.length(); index++) {
+            if (name.charAt(index) < '/' && relative.compareTo(name.substring(0, index) + "/") <= 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

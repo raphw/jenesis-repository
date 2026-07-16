@@ -72,6 +72,34 @@ public interface ArtifactStore {
     /** The immediate child names under a key prefix (for the console browse and metadata maintenance). */
     List<String> list(String prefix);
 
+    /**
+     * Stream up to {@code limit} immediate child names under {@code prefix} to {@code consumer}, in lexicographic
+     * order, starting strictly after {@code startAfter} (the empty string starts from the beginning). This is the
+     * ordered-paging primitive the shared artifact walk enumerates through: repeated pages, each resuming after the
+     * last name of the one before, traverse an arbitrarily large child set - the flat, millions-entry {@code blobs/}
+     * namespace - without ever materialising it as one {@code List} the way {@link #list} does. The default sorts
+     * {@link #list} and filters, which is correct on every backend; a backend overrides it to page natively (an
+     * object store's start-after pagination, the filesystem's bounded directory scan) so a resume deep inside a
+     * huge child set is a seek, not a re-list.
+     */
+    default void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+        if (limit <= 0) {
+            return;
+        }
+        List<String> children = new ArrayList<>(list(prefix));
+        Collections.sort(children);
+        int emitted = 0;
+        for (String child : children) {
+            if (child.compareTo(startAfter) <= 0) {
+                continue;
+            }
+            if (emitted++ == limit) {
+                break;
+            }
+            consumer.accept(child);
+        }
+    }
+
     /** A small object plus an opaque version token, for compare-and-set writes. */
     record Versioned(byte[] content, Object token) {
     }

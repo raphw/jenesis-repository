@@ -157,6 +157,35 @@ public class GcsArtifactStoreTest {
         List<String> children = store.list("paged");
         assertThat(children).hasSize(count);
         assertThat(children).contains("0000", "0999", "1000");
+
+        // page() rides the same paginator natively: the full traversal crosses the page boundary too, and a
+        // start-after resume is a server-side seek that returns exactly the names past the boundary, in order.
+        List<String> paged = new ArrayList<>();
+        store.page("paged", "", count, paged::add);
+        assertThat(paged).hasSize(count);
+        assertThat(paged).isSorted();
+        List<String> resumed = new ArrayList<>();
+        store.page("paged", "0499", 3, resumed::add);
+        assertThat(resumed).containsExactly("0500", "0501", "0502");
+    }
+
+    @Test
+    public void page_streams_ordered_children_strictly_after_the_boundary() throws IOException {
+        store.writeVersioned("walkpage/apple", new byte[]{1}, null);
+        store.writeVersioned("walkpage/banana/nested", new byte[]{1}, null);
+        store.writeVersioned("walkpage/banana.txt", new byte[]{1}, null);
+        store.writeVersioned("walkpage/cherry", new byte[]{1}, null);
+        List<String> all = new ArrayList<>();
+        store.page("walkpage", "", 10, all::add);
+        assertThat(all).as("objects and grouped prefixes merge back into one lexicographic stream")
+                .containsExactly("apple", "banana", "banana.txt", "cherry");
+        List<String> after = new ArrayList<>();
+        store.page("walkpage", "banana", 10, after::add);
+        assertThat(after).as("the boundary name is excluded even where a same-named container leaves a grouped"
+                + " prefix past the server-side start-after").containsExactly("banana.txt", "cherry");
+        List<String> capped = new ArrayList<>();
+        store.page("walkpage", "", 2, capped::add);
+        assertThat(capped).containsExactly("apple", "banana");
     }
 
     /** Mirrors the server's range sink: forwards only a window of the bytes written, and is a {@link

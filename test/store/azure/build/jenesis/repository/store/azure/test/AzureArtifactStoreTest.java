@@ -173,6 +173,35 @@ public class AzureArtifactStoreTest {
         List<String> children = store.list("paged");
         assertThat(children).hasSize(count);
         assertThat(children).contains("0000", "0999", "1000");
+
+        // page() streams the same hierarchical listing lazily (Azure has no arbitrary start-at key, so the
+        // resume skips to the boundary and stops at the limit): still ordered, still complete, one page in memory.
+        List<String> paged = new ArrayList<>();
+        store.page("paged", "", count, paged::add);
+        assertThat(paged).hasSize(count);
+        assertThat(paged).isSorted();
+        List<String> resumed = new ArrayList<>();
+        store.page("paged", "0499", 3, resumed::add);
+        assertThat(resumed).containsExactly("0500", "0501", "0502");
+    }
+
+    @Test
+    public void page_streams_ordered_children_strictly_after_the_boundary() throws IOException {
+        store.writeVersioned("walkpage/apple", new byte[]{1}, null);
+        store.writeVersioned("walkpage/banana/nested", new byte[]{1}, null);
+        store.writeVersioned("walkpage/banana.txt", new byte[]{1}, null);
+        store.writeVersioned("walkpage/cherry", new byte[]{1}, null);
+        List<String> all = new ArrayList<>();
+        store.page("walkpage", "", 10, all::add);
+        assertThat(all).as("leaves and container prefixes stream in one lexicographic order")
+                .containsExactly("apple", "banana", "banana.txt", "cherry");
+        List<String> after = new ArrayList<>();
+        store.page("walkpage", "banana", 10, after::add);
+        assertThat(after).as("the boundary name itself is excluded, container or leaf")
+                .containsExactly("banana.txt", "cherry");
+        List<String> capped = new ArrayList<>();
+        store.page("walkpage", "", 2, capped::add);
+        assertThat(capped).containsExactly("apple", "banana");
     }
 
     /** Mirrors the server's range sink: forwards only a window of the bytes written, and is a {@link
