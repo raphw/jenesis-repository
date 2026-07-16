@@ -9,7 +9,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -18,7 +24,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * The quota decorator meters only content blobs against a byte ceiling, tracks usage through writes and deletes,
  * dedupes a re-written blob, refuses a new blob once the scope is at the limit while letting a write begun under it
  * complete, meters the content-addressed streaming write the same way, treats a non-positive limit as unlimited, and
- * reseeds from the live blobs with recompute.
+ * reseeds from the live blobs with recompute - which pages the flat {@code blobs/} namespace in bounded strides
+ * instead of materialising it as one list.
  */
 class QuotaArtifactStoreTest {
 
@@ -125,5 +132,86 @@ class QuotaArtifactStoreTest {
         assertThat(store.used()).as("counter not yet seeded").isZero();
         assertThat(store.recompute()).isEqualTo(500);
         assertThat(store.used()).isEqualTo(500);
+    }
+
+    @Test
+    void recompute_pages_the_blob_namespace_and_never_lists_it() throws IOException {
+        ArtifactStore raw = delegate();
+        for (int i = 0; i < 2001; i++) {
+            raw.write("blobs/" + String.format("%04d", i), bytes(1));
+        }
+        raw.write("blobs/zzz-empty", bytes(0));
+        List<Integer> pages = new ArrayList<>();
+        QuotaArtifactStore store = new QuotaArtifactStore(new PagingDelegate(raw, pages), 3000);
+        assertThat(store.recompute()).as("every live blob summed across page boundaries").isEqualTo(2001);
+        assertThat(store.used()).isEqualTo(2001);
+        assertThat(pages).as("bounded pages, resumed across the namespace").hasSize(3).containsOnly(1000);
+    }
+
+    /** Forwards to a real store but fails {@link ArtifactStore#list} outright, so the recompute provably streams
+     *  through the ordered {@link ArtifactStore#page} primitive - a millions-entry {@code blobs/} never materialises
+     *  as one list - while the recorded page limits pin that every page stays bounded. */
+    private record PagingDelegate(ArtifactStore delegate, List<Integer> pages) implements ArtifactStore {
+
+        @Override
+        public List<String> list(String prefix) {
+            throw new AssertionError("recompute must page through '" + prefix + "', never list it");
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            pages.add(limit);
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
     }
 }

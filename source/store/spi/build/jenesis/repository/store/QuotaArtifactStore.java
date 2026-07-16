@@ -39,6 +39,7 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
 
     private static final String BLOBS = "blobs/";
     private static final String USED = "quota/used";
+    private static final int PAGE = 1000;
 
     private final ArtifactStore delegate;
     private final ArtifactStore meter;
@@ -110,15 +111,26 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         }
     }
 
-    /** Sum the live blobs directly under the wrapped scope and store the total as the authoritative counter. Use
-     *  this only when the meter is the scope that holds the blobs (the default, single-scope wrapping). */
+    /** Sum the live blobs directly under the wrapped scope and store the total as the authoritative counter,
+     *  paging through the flat {@code blobs/} namespace via {@link #page} so a millions-entry scope never
+     *  materialises as one list. Use this only when the meter is the scope that holds the blobs (the default,
+     *  single-scope wrapping). */
     public long recompute() throws IOException {
         long total = 0L;
-        for (String name : delegate.list("blobs")) {
-            long size = delegate.size(BLOBS + name);
-            if (size > 0) {
-                total += size;
+        String after = "";
+        while (true) {
+            List<String> names = new ArrayList<>();
+            delegate.page("blobs", after, PAGE, names::add);
+            for (String name : names) {
+                long size = delegate.size(BLOBS + name);
+                if (size > 0) {
+                    total += size;
+                }
             }
+            if (names.size() < PAGE) {
+                break;
+            }
+            after = names.getLast();
         }
         store(total);
         return total;
