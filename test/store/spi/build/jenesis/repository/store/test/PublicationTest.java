@@ -186,4 +186,19 @@ class PublicationTest {
         assertThat(publication.blob("/raw/r")).as("the pointer still exists").contains(hash);
         assertThat(publication.located("/raw/r")).as("but the blob it referenced is gone").isEmpty();
     }
+
+    @Test
+    void linking_a_blob_clears_a_garbage_collectors_condemned_marker() throws IOException {
+        // Identical content dedupes to one blob, so a "new" publish may link a blob a collector already judged
+        // unreferenced; the link clears the condemned marker on the write path, before the collecting sweep's
+        // final marker re-read - the dedup re-publish guard of the condemn-then-collect contract.
+        String hash = publication.storeBlob(bytes("payload"));
+        store.writeVersioned("gc/condemned/" + hash,
+                "pass=1\nsince=2026-07-16T00:00:00Z".getBytes(StandardCharsets.UTF_8), null);
+
+        publication.link("/raw/back", hash);
+        assertThat(store.exists("gc/condemned/" + hash))
+                .as("a re-linked blob is un-condemned the moment its pointer lands").isFalse();
+        assertThat(publication.located("/raw/back")).contains("blobs/" + hash);
+    }
 }

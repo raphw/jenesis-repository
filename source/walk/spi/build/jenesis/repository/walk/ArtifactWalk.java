@@ -45,6 +45,17 @@ public interface ArtifactWalk {
 
         /** Called once per key, in ascending lexicographic order within the current segment's range. */
         void visit(String key) throws IOException;
+
+        /**
+         * Called immediately before the walk durably commits {@code cursor} as processed - every checkpoint
+         * stride and at segment completion ({@code cursor} is {@code null} for a segment that held no keys) - the
+         * visitor's moment to flush its own buffered derived writes. The cursor lands only after this returns, so
+         * a consumer that flushes here is never resumed past an item whose derived write died in a buffer: a
+         * flush failure leaves the previous cursor standing, and the re-visit replays exactly what was lost. A
+         * visitor that writes through per item needs nothing; the default does nothing.
+         */
+        default void beforeCheckpoint(String cursor) throws IOException {
+        }
     }
 
     /**
