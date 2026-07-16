@@ -12,7 +12,8 @@
  * {@code ServiceLoader} and selected with {@code jenesis.repository.walk=<name>}; with none installed
  * {@code WalkProvider.resolve} is empty and every walk-riding surface degrades gracefully. {@code WalkConsumer} is
  * the walk half of the two-route derived-metadata contract (steady state = publication events; back-fill, periodic
- * refresh and self-heal = the walk), discovered the same way.
+ * refresh and self-heal = the walk), discovered the same way and driven by the shared {@code RebuildPass} - one
+ * enumeration of the pointer roots feeding every discovered consumer.
  *
  * @jenesis.release 25
  */
