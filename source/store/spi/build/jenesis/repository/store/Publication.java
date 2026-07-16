@@ -73,11 +73,20 @@ public final class Publication {
      *  so a compare-and-set conflict re-reads the token and retries (the bounded idiom every other load-bearing
      *  pointer write uses) rather than silently dropping the losing write: a concurrent republish of the same path
      *  resolves to last-writer-wins - the same outcome the two writes would have had a moment apart - and a caller
-     *  whose link cannot land is told so instead of believing it published. */
+     *  whose link cannot land is told so instead of believing it published. Once the pointer lands, any garbage
+     *  collector's {@code gc/condemned/<hash>} marker on the blob is cleared - identical content dedupes to one
+     *  blob, so a "new" publish may link a blob a collector already judged unreferenced, and clearing the marker on
+     *  the write path (every link site: publish, quarantine, promotion, cross-publish) un-condemns it before the
+     *  collecting sweep's final marker re-read. One existence probe per link, a no-op wherever collection never
+     *  condemned the blob; the marker key is the store-layout convention the {@code gc} SPI documents. */
     public void link(String requestPath, String hash) throws IOException {
         for (int attempt = 0; attempt < 3; attempt++) {
             Object token = store.readVersioned("publish" + requestPath).map(ArtifactStore.Versioned::token).orElse(null);
             if (store.writeVersioned("publish" + requestPath, hash.getBytes(StandardCharsets.UTF_8), token)) {
+                String condemned = "gc/condemned/" + hash;
+                if (store.exists(condemned)) {
+                    store.delete(condemned);
+                }
                 return;
             }
         }

@@ -72,7 +72,7 @@ public final class StoreArtifactWalk implements ArtifactWalk {
             if (claimed == null) {
                 return finish(store, scope, manifest);
             }
-            new Worker(store, scope, manifest, claimed, holder).run(visitor);
+            new Worker(store, scope, manifest, claimed, holder, visitor).run();
         }
     }
 
@@ -307,11 +307,13 @@ public final class StoreArtifactWalk implements ArtifactWalk {
         private final String from;
         private final String to;
         private final String resume;
+        private final KeyVisitor visitor;
         private Object token;
         private String cursor;
         private long count;
 
-        private Worker(ArtifactStore store, String scope, Manifest manifest, Claimed claimed, String holder) {
+        private Worker(ArtifactStore store, String scope, Manifest manifest, Claimed claimed, String holder,
+                       KeyVisitor visitor) {
             this.store = store;
             this.key = segmentKey(scope, claimed.index());
             this.generation = manifest.generation();
@@ -321,13 +323,14 @@ public final class StoreArtifactWalk implements ArtifactWalk {
             this.from = claimed.range().from();
             this.to = claimed.range().to();
             this.resume = claimed.cursor();
+            this.visitor = visitor;
             this.token = claimed.token();
             this.cursor = claimed.cursor();
         }
 
         /** Walk the range from its cursor; a lost renewal stops quietly (the new holder finishes the segment), a
          *  visitor failure propagates with the claim left to expire and resume from the last committed cursor. */
-        private void run(KeyVisitor visitor) throws IOException {
+        private void run() throws IOException {
             try {
                 node(range.root(), visitor);
             } catch (ClaimLost _) {
@@ -344,8 +347,12 @@ public final class StoreArtifactWalk implements ArtifactWalk {
             }
         }
 
-        /** Commit cursor + state; the same write renews the lease. Losing the CAS proves the claim was reclaimed. */
+        /** Commit cursor + state; the same write renews the lease. Losing the CAS proves the claim was reclaimed.
+         *  The visitor flushes first ({@link KeyVisitor#beforeCheckpoint}), so a committed cursor never lies about
+         *  a derived write still sitting in a consumer's buffer - a failed flush leaves the previous cursor
+         *  standing and the re-visit replays what the flush lost. */
         private void commit(WalkSegment.State state) throws IOException {
+            visitor.beforeCheckpoint(cursor);
             byte[] content = bytes(serialize(generation, index, range, state, holder, clock.instant().plus(ttl),
                     cursor));
             if (!store.writeVersioned(key, content, token)) {
