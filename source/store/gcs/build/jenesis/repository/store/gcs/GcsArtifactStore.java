@@ -5,6 +5,7 @@ import build.jenesis.repository.store.ArtifactStore;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -178,6 +179,82 @@ public final class GcsArtifactStore implements ArtifactStore {
             }
         }
         return new ArrayList<>(names);
+    }
+
+    @Override
+    public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+        if (limit <= 0) {
+            return;
+        }
+        String base = keyPrefix + (prefix.isEmpty() ? "" : prefix + "/");
+        // GCS's XML API honours the same list-objects-v2 start-after pagination as S3, so this mirrors the s3
+        // backend, including the name-order repair: the stream arrives in raw key order, where a container's
+        // grouped prefix at `name + "/"` sorts AFTER a sibling whose name extends this one past a character
+        // below '/' (`app.txt` the object precedes `app/` the prefix, yet the child `app` pages first) - so
+        // every name parks and the smallest parked one releases only once no smaller-named child can still
+        // arrive (held()). A released name at or below startAfter is dropped: the server-side start-after skips
+        // the boundary's own object but not a same-named container's grouped prefix, and a prefix-child of the
+        // boundary was already paged by the call that emitted the boundary itself.
+        TreeSet<String> pending = new TreeSet<>();
+        int emitted = 0;
+        String last = null;
+        for (ListObjectsV2Response page : s3.listObjectsV2Paginator(b -> {
+            b.bucket(bucket).prefix(base).delimiter("/").maxKeys(Math.min(limit + 1, 1000));
+            if (!startAfter.isEmpty()) {
+                b.startAfter(base + startAfter);
+            }
+        })) {
+            List<String> ordered = new ArrayList<>();
+            for (S3Object object : page.contents()) {
+                String relative = object.key().substring(base.length());
+                if (!relative.isEmpty() && relative.indexOf('/') < 0) {
+                    ordered.add(relative);
+                }
+            }
+            for (CommonPrefix common : page.commonPrefixes()) {
+                String relative = common.prefix().substring(base.length());
+                if (relative.length() > 1 && relative.indexOf('/') == relative.length() - 1) {
+                    ordered.add(relative);
+                }
+            }
+            Collections.sort(ordered);
+            for (String relative : ordered) {
+                while (!pending.isEmpty() && !held(pending.first(), relative)) {
+                    String name = pending.pollFirst();
+                    if (name.compareTo(startAfter) > 0) {
+                        consumer.accept(name);
+                        last = name;
+                        if (++emitted == limit) {
+                            return;
+                        }
+                    }
+                }
+                String name = relative.endsWith("/") ? relative.substring(0, relative.length() - 1) : relative;
+                if (!name.equals(last)) {
+                    pending.add(name); // a leaf and a same-named container page as one child
+                }
+            }
+        }
+        for (String name : pending) {
+            if (name.compareTo(startAfter) > 0) {
+                consumer.accept(name);
+                if (++emitted == limit) {
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Whether {@code name} may not be paged out yet at stream position {@code relative}: a proper prefix of it
+     *  whose next character sorts below {@code '/'} could still arrive as a grouped prefix (its container key
+     *  {@code prefix + "/"} sorts at or past the position), and that shorter child name must page first. */
+    private static boolean held(String name, String relative) {
+        for (int index = 1; index < name.length(); index++) {
+            if (name.charAt(index) < '/' && relative.compareTo(name.substring(0, index) + "/") <= 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

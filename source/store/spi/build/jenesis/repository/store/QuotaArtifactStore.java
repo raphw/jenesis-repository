@@ -250,6 +250,11 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
     }
 
     @Override
+    public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+        delegate.page(prefix, startAfter, limit, consumer);
+    }
+
+    @Override
     public Optional<Versioned> readVersioned(String key) throws IOException {
         return delegate.readVersioned(key);
     }
