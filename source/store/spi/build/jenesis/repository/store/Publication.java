@@ -100,10 +100,67 @@ public final class Publication {
     }
 
     /** Remove a single published pointer; the blob it referenced is left for a later garbage collection, since
-     *  another pointer may still reference it. */
+     *  another pointer may still reference it. Every discovered {@link PublicationObserver} is notified of the
+     *  removal ({@code onDeleted}, once per removed pointer) with what this site knows - the request path and the
+     *  blob hash the pointer named, read before the delete; no coordinate, since this primitive knows no layouts -
+     *  and a failing observer is logged and contained exactly as on a publish, never blocking the removal. */
     public void unpublish(String requestPath) throws IOException {
-        if (store.readVersioned("publish" + requestPath).isPresent()) {
-            store.delete("publish" + requestPath);
+        Optional<ArtifactStore.Versioned> pointer = store.readVersioned("publish" + requestPath);
+        if (pointer.isEmpty()) {
+            return;
+        }
+        store.delete("publish" + requestPath);
+        String named = new String(pointer.get().content(), StandardCharsets.UTF_8).trim();
+        ArtifactDescriptor removed = ArtifactDescriptor.at(null, requestPath);
+        notifyDeleted(hash(named) ? removed.withBlob(named, -1L) : removed);
+    }
+
+    /** Remove the pointer at {@code described.path()} exactly like {@link #unpublish(String)}, but notify the
+     *  observers with the caller's layout-enriched descriptor - ecosystem, coordinate and version filled in where
+     *  this neutral primitive cannot - completing its blob identity from the pointer when the caller left it
+     *  unset. The seam a layout-aware eviction uses so a removal event carries what the eviction already knows. */
+    public void unpublish(ArtifactDescriptor described) throws IOException {
+        Optional<ArtifactStore.Versioned> pointer = store.readVersioned("publish" + described.path());
+        if (pointer.isEmpty()) {
+            return;
+        }
+        store.delete("publish" + described.path());
+        String named = new String(pointer.get().content(), StandardCharsets.UTF_8).trim();
+        notifyDeleted(described.hash() == null && hash(named) ? described.withBlob(named, described.size()) : described);
+    }
+
+    /** Notify every observer of a serving-pointer removal this primitive did not perform - the seam a layout-aware
+     *  eviction calls once per pointer it deletes in a format's <em>own</em> namespace (a blobs-namespace key
+     *  outside {@code publish/}), so those removals are observed exactly like an {@link #unpublish}. Failures are
+     *  logged and contained like every observer notification; nothing is read or deleted here - the caller already
+     *  removed the pointer and describes it. */
+    public void deleted(ArtifactDescriptor removed) {
+        notifyDeleted(removed);
+    }
+
+    /** Whether a pointer's content is the lower-case SHA-256 hex a {@link #link} writes - the only shape carried
+     *  into a removal descriptor's blob identity, so a corrupt pointer never masquerades as a hash. */
+    private static boolean hash(String value) {
+        if (value.length() != 64) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if ((character < '0' || character > '9') && (character < 'a' || character > 'f')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void notifyDeleted(ArtifactDescriptor removed) {
+        for (PublicationObserver observer : observers) {
+            try {
+                observer.onDeleted(removed, store);
+            } catch (Exception exception) {
+                LOGGER.log(System.Logger.Level.WARNING, "publication observer "
+                        + observer.getClass().getName() + " failed for removal of " + removed.path(), exception);
+            }
         }
     }
 

@@ -10,8 +10,8 @@ import module java.base;
  * The walk half of the two-route derived-metadata contract. A plugin keeps its derived state correct by exactly two
  * routes, and a correct plugin implements <em>both</em>: <b>live events</b> ({@code PublicationObserver}'s
  * {@code onPublished} / {@code onDeleted}) for the steady state, and <b>the full walk</b> - this interface - for
- * first-activation back-fill, periodic refresh and self-heal. A scheduled walk pass drives every discovered consumer
- * from <em>one</em> enumeration, so N metadata rebuilders never mean N tree walks. The walk alone must be able to
+ * first-activation back-fill, periodic refresh and self-heal. A scheduled walk pass ({@link RebuildPass}) drives
+ * every discovered consumer from <em>one</em> enumeration, so N metadata rebuilders never mean N tree walks. The walk alone must be able to
  * fully rebuild the plugin's derived state from the durable store wherever the truth model permits; where a surface
  * genuinely cannot be re-derived (a human decision, a point-in-time observation), the plugin's documentation names
  * it and the plugin degrades gracefully rather than serving a silently-incomplete view as if it were whole.

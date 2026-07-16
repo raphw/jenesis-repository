@@ -90,6 +90,111 @@ class PublicationObserverTest {
     }
 
     @Test
+    void an_unpublish_notifies_once_per_removed_pointer_with_path_and_hash() throws IOException {
+        List<ArtifactDescriptor> removed = new ArrayList<>();
+        PublicationObserver observer = new PublicationObserver() {
+            @Override
+            public void onPublished(ArtifactDescriptor artifact, ArtifactStore store) {
+            }
+
+            @Override
+            public void onDeleted(ArtifactDescriptor artifact, ArtifactStore store) {
+                removed.add(artifact);
+            }
+        };
+        Publication publication = new Publication(store, List.of(), List.of(observer));
+        Publication.Published published = publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+        publication.publish(ArtifactDescriptor.at("raw", "/raw/b"), bytes("y"));
+
+        publication.unpublish("/raw/a");
+        publication.unpublish("/raw/never-published");
+
+        assertThat(removed).as("once per removed pointer - an absent path removes nothing and notifies nothing")
+                .hasSize(1);
+        assertThat(removed.getFirst().path()).isEqualTo("/raw/a");
+        assertThat(removed.getFirst().hash()).as("the site's descriptor richness: the hash the pointer named")
+                .isEqualTo(published.hash());
+        assertThat(removed.getFirst().coordinate()).as("the free store knows no layouts").isNull();
+        assertThat(publication.blob("/raw/b")).as("the sibling pointer is untouched").isPresent();
+    }
+
+    @Test
+    void a_layout_aware_eviction_enriches_the_removal_it_describes() throws IOException {
+        List<ArtifactDescriptor> removed = new ArrayList<>();
+        PublicationObserver observer = new PublicationObserver() {
+            @Override
+            public void onPublished(ArtifactDescriptor artifact, ArtifactStore store) {
+            }
+
+            @Override
+            public void onDeleted(ArtifactDescriptor artifact, ArtifactStore store) {
+                removed.add(artifact);
+            }
+        };
+        Publication publication = new Publication(store, List.of(), List.of(observer));
+        Publication.Published published = publication
+                .publish(ArtifactDescriptor.at("maven", "/com/acme/app/1.0/app-1.0.jar"), bytes("jar bytes"));
+
+        publication.unpublish(new ArtifactDescriptor("maven", "com.acme:app", "1.0",
+                "/com/acme/app/1.0/app-1.0.jar", null, false, null, -1L));
+        publication.deleted(new ArtifactDescriptor("npm", "lodash", "4.17.21",
+                "npm/lodash/-/lodash-4.17.21.tgz", null, false, "0".repeat(64), -1L));
+
+        assertThat(removed).hasSize(2);
+        assertThat(removed.getFirst().coordinate()).as("the eviction's layout knowledge rides the event")
+                .isEqualTo("com.acme:app");
+        assertThat(removed.getFirst().hash()).as("the blob identity is completed from the pointer")
+                .isEqualTo(published.hash());
+        assertThat(publication.blob("/com/acme/app/1.0/app-1.0.jar")).isEmpty();
+        assertThat(removed.getLast().path()).as("a blobs-namespace removal is observed exactly like an unpublish")
+                .isEqualTo("npm/lodash/-/lodash-4.17.21.tgz");
+    }
+
+    @Test
+    void a_publish_only_observer_rides_a_removal_through_the_default_no_op() throws IOException {
+        List<ArtifactDescriptor> observed = new ArrayList<>();
+        Publication publication = new Publication(store, List.of(), List.of((artifact, store) -> observed.add(artifact)));
+        publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+
+        publication.unpublish("/raw/a");
+
+        assertThat(observed).as("onDeleted defaults to a no-op, so an existing observer is untouched").hasSize(1);
+        assertThat(publication.blob("/raw/a")).isEmpty();
+    }
+
+    @Test
+    void a_failing_removal_observer_is_contained_and_the_pointer_stays_removed() throws IOException {
+        List<String> reached = new ArrayList<>();
+        PublicationObserver failing = new PublicationObserver() {
+            @Override
+            public void onPublished(ArtifactDescriptor artifact, ArtifactStore store) {
+            }
+
+            @Override
+            public void onDeleted(ArtifactDescriptor artifact, ArtifactStore store) throws IOException {
+                throw new IOException("webhook target down");
+            }
+        };
+        PublicationObserver recording = new PublicationObserver() {
+            @Override
+            public void onPublished(ArtifactDescriptor artifact, ArtifactStore store) {
+            }
+
+            @Override
+            public void onDeleted(ArtifactDescriptor artifact, ArtifactStore store) {
+                reached.add(artifact.path());
+            }
+        };
+        Publication publication = new Publication(store, List.of(), List.of(failing, recording));
+        publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+
+        publication.unpublish("/raw/a");
+
+        assertThat(publication.blob("/raw/a")).as("the failure never blocks the removal").isEmpty();
+        assertThat(reached).as("later observers still run").containsExactly("/raw/a");
+    }
+
+    @Test
     void an_observer_records_through_the_published_scope() throws IOException {
         ArtifactStore scoped = store.scope("acme").scope("main");
         PublicationObserver outbox = (artifact, target) ->
