@@ -43,11 +43,16 @@ public final class MarkSweepGarbageCollectorProvider implements GarbageCollector
         if (value == null || value.isBlank()) {
             return Duration.ZERO;
         }
+        Duration duration;
         try {
-            return Duration.parse(value.trim());
+            duration = Duration.parse(value.trim());
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Not an ISO-8601 duration: " + key + "=" + value, e);
         }
+        if (duration.isNegative()) {
+            throw new IllegalArgumentException("Must not be negative: " + key + "=" + value);
+        }
+        return duration;
     }
 
     private static int integer(UnaryOperator<String> config, String key, int fallback) {
