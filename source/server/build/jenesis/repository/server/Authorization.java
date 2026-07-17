@@ -611,16 +611,20 @@ public final class Authorization {
      *  expiry or a source-IP allowlist on the same credential), would otherwise last-writer-win - silently dropping
      *  a count increment, or reverting the just-set expiry/allowlist that this automated flush read before it. On a
      *  conflict the loop re-reads the latest metadata and re-applies the delta, so both survive; a persistently
-     *  contended counter forfeits this one increment (informational, re-accumulated on the next flush) rather than
-     *  looping forever. */
-    public void recordUsed(String tenant, String hash, Instant when, String address, long increment)
+     *  contended counter forfeits this attempt rather than looping forever.
+     *
+     *  <p>Returns whether the increment was settled: {@code true} when it was written, or when the credential is
+     *  revoked (no metadata) and there is nothing to record; {@code false} when every compare-and-set attempt lost to
+     *  contention. The caller keeps the delta on {@code false} and re-applies it on the next flush, so a contended
+     *  write defers the increment rather than dropping it. */
+    public boolean recordUsed(String tenant, String hash, Instant when, String address, long increment)
             throws IOException {
         require();
         String path = metadataPath(tenant, hash);
         for (int attempt = 0; attempt < USE_COUNT_RETRIES; attempt++) {
             Optional<ArtifactStore.Versioned> current = store.readVersioned(path);
             if (current.isEmpty()) {
-                return;                                             // a revoked credential (no metadata) is skipped
+                return true;                       // a revoked credential (no metadata) is settled - nothing to record
             }
             Properties metadata = new Properties();
             metadata.load(new ByteArrayInputStream(current.get().content()));
@@ -633,9 +637,10 @@ public final class Authorization {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             metadata.store(bytes, null);
             if (store.writeVersioned(path, bytes.toByteArray(), current.get().token())) {
-                return;
+                return true;
             }
         }
+        return false;                              // lost the compare-and-set every attempt - the caller keeps the delta
     }
 
     /** Bounded compare-and-set attempts for the accumulating {@link #recordUsed} counter before it forfeits the

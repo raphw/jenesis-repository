@@ -237,9 +237,13 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker, Observabi
         }
         int slash = key.indexOf('/');
         try {
-            authorization.recordUsed(key.substring(0, slash), key.substring(slash + 1), entry.when, entry.address, delta);
-            entry.flushed = entry.count;
-            writtenDay.put(key, day);
+            if (authorization.recordUsed(key.substring(0, slash), key.substring(slash + 1),
+                    entry.when, entry.address, delta)) {
+                entry.flushed = entry.count;
+                writtenDay.put(key, day);
+            }
+            // A false return means every compare-and-set lost to contention: leave `flushed` where it is so the delta
+            // is re-attempted on the next flush rather than being marked written and silently dropped.
         } catch (IOException e) {
             // best-effort
         }
