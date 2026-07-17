@@ -60,6 +60,21 @@ class ProxyCacheObservabilityTest {
     }
 
     @Test
+    void a_flood_of_distinct_misses_stays_bounded_by_the_cap() throws IOException {
+        NegativeCachingFetcher fetcher = new NegativeCachingFetcher(status(404), Duration.ofSeconds(60));
+        // Distinct absent artifacts arriving faster than the TTL (no clock advance, so nothing expires) must still not
+        // grow the map past its ceiling: a client probing a stream of distinct misses cannot drive unbounded heap
+        // growth. Flood well past the cap and assert the remembered-misses gauge never exceeds its advertised limit.
+        for (int index = 0; index < 40_000; index++) {
+            fetcher.fetch(URI.create("https://upstream.example/pkg/" + index + "/x-" + index + ".jar"), Map.of());
+        }
+        Metric gauge = fetcher.metrics().getFirst();
+        assertThat(gauge.limit()).isPresent();
+        assertThat(gauge.value()).as("the remembered misses never exceed the cap despite a 40k-distinct flood")
+                .isLessThanOrEqualTo(gauge.limit().getAsDouble());
+    }
+
+    @Test
     void a_success_is_never_remembered_so_it_does_not_move_the_gauge() throws IOException {
         NegativeCachingFetcher fetcher = new NegativeCachingFetcher(status(200), Duration.ofSeconds(60));
 

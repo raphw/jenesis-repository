@@ -102,6 +102,16 @@ public final class NegativeCachingFetcher implements ProxyFormat.Fetcher, Observ
         if (misses.size() >= MAX_ENTRIES) {
             Instant now = clock.instant();
             misses.values().removeIf(recordedAt -> !now.isBefore(recordedAt.plus(ttl)));
+            // A flood of distinct misses arriving faster than the TTL expires nothing, so the sweep above frees
+            // nothing and the map would grow past its ceiling without this: evict arbitrary live entries until there is
+            // room, so the size is bounded regardless of arrival rate (a client probing a stream of distinct absent
+            // artifacts cannot drive unbounded heap growth). A negative cache tolerates approximate eviction - a
+            // dropped entry just re-probes upstream once - and the gauge's advertised bound then actually holds.
+            Iterator<URI> iterator = misses.keySet().iterator();
+            while (misses.size() >= MAX_ENTRIES && iterator.hasNext()) {
+                iterator.next();
+                iterator.remove();
+            }
         }
         misses.put(url, clock.instant());
     }

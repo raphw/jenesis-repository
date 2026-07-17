@@ -40,6 +40,16 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
     /** A bound on the redirect chain, so a redirect loop cannot spin an import or a proxy fetch forever. */
     private static final int MAX_REDIRECTS = 5;
 
+    /** A sanity ceiling on a buffered {@link #fetch} body. The fetch path returns a small mutable document - a
+     *  packument, a {@code maven-metadata.xml}, a PyPI index, an import listing/JSON page - whole to its caller (which
+     *  parses it as a string or JSON tree), so it must be buffered; but a misconfigured or hostile upstream (or a
+     *  caller-supplied import base) returning a multi-gigabyte body would otherwise buffer it unbounded and exhaust the
+     *  heap. {@code readNBytes} grows the buffer incrementally, so a normal small response uses proportional memory and
+     *  only a runaway body approaches this ceiling, past which the fetch is treated as a miss rather than buffered. The
+     *  ceiling is far above any realistic index (even the largest npm packuments), so it never bites legitimate use. An
+     *  artifact download never comes through here - it streams via {@link #download}. */
+    private static final int MAX_FETCH_BODY = 256 * 1024 * 1024;
+
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .followRedirects(HttpClient.Redirect.NEVER)
@@ -59,8 +69,17 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
     @Override
     public Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException {
         try {
-            HttpResponse<byte[]> response = send(url, requestHeaders, HttpResponse.BodyHandlers.ofByteArray());
-            return Optional.of(new ProxyFormat.Fetched(response.statusCode(), response.body(), headers(response)));
+            HttpResponse<InputStream> response = send(url, requestHeaders, HttpResponse.BodyHandlers.ofInputStream());
+            byte[] body;
+            try (InputStream in = response.body()) {
+                body = in.readNBytes(MAX_FETCH_BODY + 1);
+            }
+            if (body.length > MAX_FETCH_BODY) {
+                // An index/metadata response past the sanity ceiling is not a real index - treat it as a miss rather
+                // than buffer a runaway body whole.
+                return Optional.empty();
+            }
+            return Optional.of(new ProxyFormat.Fetched(response.statusCode(), body, headers(response)));
         } catch (HttpTimeoutException e) {
             return Optional.empty();
         } catch (InterruptedException e) {
