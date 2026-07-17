@@ -114,13 +114,12 @@ class DemoSeederTest {
         DemoSeeding seeding = new DemoSeeding(true, new DemoSeeder(List.of(new MavenFormat()), fetcher),
                 store, beforeSeed::incrementAndGet);
 
-        seeding.start();
+        // The seed runs on a background virtual thread so boot is never blocked; join it so every write has landed
+        // before the assertions and the @TempDir teardown - otherwise the thread races the temp-dir deletion.
+        Thread seeder = seeding.start();
+        seeder.join(10_000);
+        assertThat(seeder.isAlive()).as("the background seed finished within the deadline").isFalse();
 
-        // The seed runs on a background virtual thread so boot is never blocked; await its effect.
-        long deadline = System.nanoTime() + 10_000_000_000L;
-        while (DemoSeeder.empty(store) && System.nanoTime() < deadline) {
-            Thread.sleep(20);
-        }
         assertThat(DemoSeeder.empty(store)).as("demo seeding populated the space").isFalse();
         assertThat(beforeSeed.get()).as("the pre-seed hook ran exactly once, before seeding").isEqualTo(1);
         assertThat(store.readVersioned("publish" + LOG4J_JAR)).isPresent();
