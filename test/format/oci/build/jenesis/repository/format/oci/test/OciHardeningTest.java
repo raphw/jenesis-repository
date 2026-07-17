@@ -64,6 +64,43 @@ class OciHardeningTest {
     }
 
     @Test
+    void a_traversal_image_name_is_refused() throws IOException {
+        ArtifactStore store = store();
+        // The image name is spliced into oci/<name>/tags/<ref> and oci/uploads keys. Unlike the tag and digest it may
+        // legitimately contain '/', so a '..' segment inside it is not caught by rejecting '/'; the per-segment name
+        // guard refuses it before it builds a key that, on a path-normalising backend, would traverse out of oci/.
+        byte[] manifest = "{\"schemaVersion\":2}".getBytes(StandardCharsets.UTF_8);
+        FakeExchange push = new FakeExchange("PUT", "/v2/../../publish/raw/evil/manifests/latest", manifest,
+                Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
+        format.handle(push, store);
+        assertThat(push.status()).as("a '..'-laced image name is refused").isEqualTo(400);
+        assertThat(store.list("publish")).as("nothing is planted in the publish namespace").isEmpty();
+
+        // A manifest read and a tags listing under a traversal name are refused too.
+        FakeExchange get = new FakeExchange("GET", "/v2/a/../../evil/manifests/latest");
+        format.handle(get, store);
+        assertThat(get.status()).isEqualTo(400);
+
+        // A legitimate multi-segment name is still accepted.
+        FakeExchange ok = new FakeExchange("PUT", "/v2/library/ubuntu/manifests/latest", manifest,
+                Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
+        format.handle(ok, store);
+        assertThat(ok.status()).as("a normal library/ubuntu name is accepted").isEqualTo(201);
+    }
+
+    @Test
+    void a_traversal_upload_session_is_refused() throws IOException {
+        ArtifactStore store = store();
+        // The upload session id builds the oci/uploads/<id>/... chunk keys whose bytes the client controls. A client
+        // that invents a '..'-laced id the server never issued is refused before any chunk write.
+        FakeExchange patch = new FakeExchange("PATCH", "/v2/app/blobs/uploads/../../publish/raw/evil",
+                new byte[]{1, 2, 3}, Map.of(), Map.of());
+        format.handle(patch, store);
+        assertThat(patch.status()).as("a '..'-laced upload session is refused").isEqualTo(400);
+        assertThat(store.list("publish")).as("no chunk is planted in the publish namespace").isEmpty();
+    }
+
+    @Test
     void a_tag_pointer_survives_a_lost_first_compare_and_set() throws IOException {
         ConflictOnceStore store = new ConflictOnceStore(store());
         byte[] manifest = "{\"schemaVersion\":2,\"mediaType\":\"x\"}".getBytes(StandardCharsets.UTF_8);

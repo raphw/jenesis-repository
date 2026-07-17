@@ -52,12 +52,22 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         if (rest.endsWith("/tags/list")) {
-            tags(rest.substring(0, rest.length() - "/tags/list".length()), store, exchange);
+            String name = rest.substring(0, rest.length() - "/tags/list".length());
+            if (!isName(name)) {
+                exchange.respond(400);   // a '..'-laced image name must not build an oci/<name>/... key
+                return;
+            }
+            tags(name, store, exchange);
             return;
         }
         int uploads = rest.indexOf("/blobs/uploads");
         if (uploads >= 0) {
-            upload(rest.substring(0, uploads), rest.substring(uploads + "/blobs/uploads".length()), store, exchange);
+            String name = rest.substring(0, uploads);
+            if (!isName(name)) {
+                exchange.respond(400);
+                return;
+            }
+            upload(name, rest.substring(uploads + "/blobs/uploads".length()), store, exchange);
             return;
         }
         int blobs = rest.indexOf("/blobs/");
@@ -67,7 +77,12 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         }
         int manifests = rest.indexOf("/manifests/");
         if (manifests >= 0) {
-            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()), store, exchange);
+            String name = rest.substring(0, manifests);
+            if (!isName(name)) {
+                exchange.respond(400);
+                return;
+            }
+            manifest(name, rest.substring(manifests + "/manifests/".length()), store, exchange);
             return;
         }
         exchange.respond(404);
@@ -115,6 +130,13 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         String id = session.startsWith("/") ? session.substring(1) : session;
+        if (!isSession(id)) {
+            // The session id builds the oci/uploads/<id>/... chunk keys, whose bytes the client controls; a client
+            // that invents a '..'-laced id (the server never issued) could aim those writes - or a finalized pointer -
+            // at a neighbouring key space on a path-normalising backend. Refuse an id that is not a safe segment.
+            exchange.respond(400);
+            return;
+        }
         if (method.equals("PATCH")) {
             append(store, id, exchange.requestStream());
             exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/uploads/" + id);
@@ -329,12 +351,14 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         String rest = path.substring("/v2/".length());
         int blobs = rest.indexOf("/blobs/");
         if (blobs >= 0 && !rest.contains("/blobs/uploads")) {
-            return proxyDigest(rest.substring(0, blobs), rest.substring(blobs + "/blobs/".length()), false,
+            String name = rest.substring(0, blobs);
+            return isName(name) && proxyDigest(name, rest.substring(blobs + "/blobs/".length()), false,
                     null, exchange, store, upstream, fetcher);
         }
         int manifests = rest.indexOf("/manifests/");
         if (manifests >= 0) {
-            return proxyDigest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()), true,
+            String name = rest.substring(0, manifests);
+            return isName(name) && proxyDigest(name, rest.substring(manifests + "/manifests/".length()), true,
                     exchange.requestHeader("Accept"), exchange, store, upstream, fetcher);
         }
         return false;
@@ -661,7 +685,59 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
      *  store key keeps a {@code /}- or {@code ..}-laced reference from resolving to a neighbouring key space - the
      *  tag-side counterpart of {@link #isDigestHex} on the blob path (a bare {@code ..} is rejected as a leading dot,
      *  and any {@code /} is rejected outright, so no reference can traverse out of the tag namespace). */
-    private static boolean isTag(String reference) {
+    /** Whether an OCI repository name is safe to splice into an {@code oci/<name>/...} store key: a {@code /}-separated
+     *  sequence of non-empty components, each starting with an alphanumeric and otherwise {@code [A-Za-z0-9._-]}, so no
+     *  component is a {@code .}/{@code ..} dot segment and none carries a backslash or control character. Unlike the tag
+     *  and the digest, a name may legitimately contain {@code /} (a multi-segment repository like {@code library/ubuntu}),
+     *  so a bare {@code ..} segment inside it is not caught by rejecting {@code /}; this validates each segment instead,
+     *  keeping a name from traversing out of the {@code oci/} namespace on a path-normalising store backend. Package-
+     *  visible so the {@link OciImporter} applies the same guard to a feed-supplied name. */
+    static boolean isName(String name) {
+        if (name.isEmpty() || name.length() > 255) {
+            return false;
+        }
+        int start = 0;
+        while (true) {
+            int slash = name.indexOf('/', start);
+            int end = slash < 0 ? name.length() : slash;
+            if (!isNameComponent(name, start, end)) {
+                return false;
+            }
+            if (slash < 0) {
+                return true;
+            }
+            start = slash + 1;
+        }
+    }
+
+    private static boolean isNameComponent(String name, int start, int end) {
+        if (end <= start) {
+            return false;   // an empty component: a leading, trailing or doubled slash
+        }
+        for (int index = start; index < end; index++) {
+            char character = name.charAt(index);
+            boolean alphanumeric = (character >= 'a' && character <= 'z')
+                    || (character >= 'A' && character <= 'Z')
+                    || (character >= '0' && character <= '9');
+            // A component must begin with an alphanumeric (so a leading '.', '-' or '_' - and thus any '.'/'..' dot
+            // segment - is refused) and otherwise carry only [A-Za-z0-9._-]; '/', '\\' and control chars are excluded.
+            if (index == start ? !alphanumeric
+                    : !alphanumeric && character != '.' && character != '_' && character != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether a blob-upload session id is a safe single store-key segment - the server issues a UUID, so a well-formed
+     *  id is one {@link #isNameComponent name component} and no longer than a UUID needs. Refusing anything else keeps a
+     *  client-invented {@code ..}- or {@code /}-laced id from aiming the {@code oci/uploads/<id>/...} chunk keys at a
+     *  neighbouring key space. */
+    private static boolean isSession(String id) {
+        return id.length() <= 255 && isNameComponent(id, 0, id.length());
+    }
+
+    static boolean isTag(String reference) {
         int length = reference.length();
         if (length == 0 || length > 128) {
             return false;

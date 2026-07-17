@@ -82,4 +82,34 @@ class OciImporterTest {
 
         assertThat(store.exists("blobs/" + hex)).isTrue();
     }
+
+    @Test
+    void a_feed_supplied_traversal_name_or_tag_plants_no_pointer() throws IOException {
+        // The import path builds oci/<name>/tags/<reference> from feed-supplied metadata, which never passes through
+        // an HTTP firewall, so a compromised source could splice a '..'-laced name or tag to plant a pointer outside
+        // the oci/ namespace on a path-normalising backend. The importer applies the same name/tag guard the live push
+        // and proxy paths carry: the manifest blob still lands (it is content-addressed), but no tag pointer is written.
+        String type = "application/vnd.oci.image.manifest.v1+json";
+        byte[] manifest = ("{\"mediaType\":\"" + type + "\"}").getBytes(StandardCharsets.UTF_8);
+        String hex = sha256(manifest);
+
+        importer.importArtifact("v2/../../publish/raw/evil/manifests/1.0",
+                new ByteArrayInputStream(manifest), store);
+        assertThat(store.exists("blobs/" + hex)).as("the manifest blob is still imported by digest").isTrue();
+        assertThat(store.list("publish")).as("no pointer is planted in the publish namespace").isEmpty();
+
+        importer.importArtifact("v2/app/manifests/..%2f..%2fevil".replace("%2f", "/"),
+                new ByteArrayInputStream(manifest), store);
+        assertThat(store.readVersioned("oci/app/tags/../../evil")).as("a traversal tag is not linked").isEmpty();
+    }
+
+    @Test
+    void an_oversized_manifest_is_not_buffered_or_imported() throws IOException {
+        // A compromised source could label an arbitrarily large body a "manifest"; the read is capped so it is neither
+        // buffered whole nor imported. 9 MiB is over the 8 MiB manifest ceiling.
+        byte[] oversized = new byte[9 * 1024 * 1024];
+        String hex = sha256(oversized);
+        importer.importArtifact("v2/app/manifests/1.0", new ByteArrayInputStream(oversized), store);
+        assertThat(store.exists("blobs/" + hex)).as("an over-ceiling manifest is skipped, not stored").isFalse();
+    }
 }

@@ -20,6 +20,11 @@ public final class OciImporter implements RepositoryImporter {
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
+    /** An OCI manifest is a small JSON document (a few KB); cap the buffered read so a compromised import source cannot
+     *  label an arbitrarily large body a "manifest" and drive an unbounded heap allocation. A body past the ceiling is
+     *  not a real manifest and is skipped. */
+    private static final int MAX_MANIFEST = 8 * 1024 * 1024;
+
     @Override
     public boolean handles(String format) {
         return format.equals("docker") || format.equals("oci");
@@ -33,8 +38,11 @@ public final class OciImporter implements RepositoryImporter {
         }
         int manifests = rest.indexOf("/manifests/");
         if (manifests >= 0) {
-            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()),
-                    content.readAllBytes(), store);
+            byte[] body = content.readNBytes(MAX_MANIFEST + 1);
+            if (body.length > MAX_MANIFEST) {
+                return;   // an over-large "manifest" is not a real manifest - do not buffer or import it
+            }
+            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()), body, store);
             return;
         }
         if (rest.contains("/blobs/")) {
@@ -49,6 +57,12 @@ public final class OciImporter implements RepositoryImporter {
         }
         store.write("oci/types/" + hex, new ByteArrayInputStream(mediaType(content).getBytes(StandardCharsets.UTF_8)));
         if (!reference.startsWith("sha256:")) {
+            if (!OciFormat.isName(name) || !OciFormat.isTag(reference)) {
+                // A feed-supplied name/tag that would traverse out of oci/<name>/tags/ (the live push and proxy paths
+                // both apply this guard; the import path must too) is not linked - the manifest blob is still imported
+                // by digest, it simply carries no tag pointer.
+                return;
+            }
             OciFormat.linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
         }
     }
