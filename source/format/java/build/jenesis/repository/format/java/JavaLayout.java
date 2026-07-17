@@ -24,8 +24,22 @@ public final class JavaLayout {
                     return ModuleDescriptor.read(in).name();
                 }
             }
-            return automatic;
+            // A module-info name is JVM-validated by read(); an Automatic-Module-Name is a raw manifest string that
+            // becomes a /module/<name>/ store key, so validate it is a legal module name first - a crafted value (a
+            // '/'- or '..'-laced or empty name) is treated as no module rather than reaching a pointer key.
+            return automatic == null ? null : validModuleName(automatic);
         } catch (IOException | RuntimeException _) {
+            return null;
+        }
+    }
+
+    /** The name if it is a legal Java module name (dot-separated Java identifiers), else null. Uses the JDK's own
+     *  module-name validation so the rule matches exactly what a real module name may contain. */
+    private static String validModuleName(String name) {
+        try {
+            ModuleDescriptor.newAutomaticModule(name);
+            return name;
+        } catch (IllegalArgumentException _) {
             return null;
         }
     }
