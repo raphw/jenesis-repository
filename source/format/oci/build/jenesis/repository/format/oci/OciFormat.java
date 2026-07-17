@@ -199,6 +199,14 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     private void manifest(String name, String reference, ArtifactStore store, FormatExchange exchange)
             throws IOException {
         if (exchange.method().equals("PUT")) {
+            if (!reference.startsWith("sha256:") && !isTag(reference)) {
+                // A manifest is pushed either by digest (sha256:...) or by tag; a reference that is neither a digest
+                // nor a well-formed tag would land as an oci/<name>/tags/<ref> store key, so a '/'- or '..'-laced
+                // reference could aim the write at a neighbouring key space - refuse it before storing anything, the
+                // tag-side counterpart of the isDigestHex guard on the blob path.
+                exchange.respond(400);
+                return;
+            }
             // writeBlob stores the manifest under blobs/<hex> and returns its digest, so even the manifest goes to
             // storage as a stream rather than being read into memory to be hashed.
             String hex = store.writeBlob(exchange.requestStream());
@@ -379,6 +387,9 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         store.write("oci/types/" + hex, new ByteArrayInputStream(
                 (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
         if (!reference.startsWith("sha256:")) {
+            if (!isTag(reference)) {
+                return false; // a non-tag reference must not become a tags/ store key - let the local 404 stand
+            }
             linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
         }
         handle(exchange, store);
@@ -639,6 +650,29 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         for (int index = 0; index < 64; index++) {
             char character = hex.charAt(index);
             if ((character < '0' || character > '9') && (character < 'a' || character > 'f')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether a manifest reference is a well-formed OCI tag - the Distribution grammar {@code
+     *  [a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}}. Refusing anything else before it becomes the {@code oci/<name>/tags/<ref>}
+     *  store key keeps a {@code /}- or {@code ..}-laced reference from resolving to a neighbouring key space - the
+     *  tag-side counterpart of {@link #isDigestHex} on the blob path (a bare {@code ..} is rejected as a leading dot,
+     *  and any {@code /} is rejected outright, so no reference can traverse out of the tag namespace). */
+    private static boolean isTag(String reference) {
+        int length = reference.length();
+        if (length == 0 || length > 128) {
+            return false;
+        }
+        for (int index = 0; index < length; index++) {
+            char character = reference.charAt(index);
+            boolean alphanumeric = (character >= 'a' && character <= 'z')
+                    || (character >= 'A' && character <= 'Z')
+                    || (character >= '0' && character <= '9');
+            if (index == 0 ? !alphanumeric && character != '_'
+                    : !alphanumeric && character != '_' && character != '.' && character != '-') {
                 return false;
             }
         }

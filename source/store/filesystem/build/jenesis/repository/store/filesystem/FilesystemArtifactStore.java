@@ -66,11 +66,28 @@ public final class FilesystemArtifactStore implements ArtifactStore {
         return Files.newInputStream(resolve(key));
     }
 
+    /** Create an upload temp file in {@code dir}, (re-)creating the directory first and retrying if a concurrent
+     *  {@link #delete} tidied the now-empty container away between the create-directory and the create-file. Without
+     *  the retry a publish into a directory another thread is emptying fails with a spurious {@code NoSuchFileException}
+     *  - the {@link #delete} tidy already guards the reverse direction (its {@code DirectoryNotEmptyException} catch),
+     *  so this closes the other half of the same race. */
+    private static Path createUploadTemp(Path dir) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                Files.createDirectories(dir);
+                return Files.createTempFile(dir, ".upload", ".tmp");
+            } catch (NoSuchFileException e) {
+                if (attempt >= 4) {
+                    throw e;
+                }
+            }
+        }
+    }
+
     @Override
     public void write(String key, InputStream in) throws IOException {
         Path path = resolve(key);
-        Files.createDirectories(path.getParent());
-        Path temp = Files.createTempFile(path.getParent(), ".upload", ".tmp");
+        Path temp = createUploadTemp(path.getParent());
         try {
             try (OutputStream out = Files.newOutputStream(temp)) {
                 in.transferTo(out);
@@ -85,8 +102,7 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     @Override
     public String writeBlob(InputStream in) throws IOException {
         Path blobs = resolve("blobs");
-        Files.createDirectories(blobs);
-        Path temp = Files.createTempFile(blobs, ".upload", ".tmp");
+        Path temp = createUploadTemp(blobs);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (OutputStream out = Files.newOutputStream(temp)) {
@@ -206,10 +222,10 @@ public final class FilesystemArtifactStore implements ArtifactStore {
             if (!Objects.equals(current, expected)) {
                 return false;
             }
-            Files.createDirectories(path.getParent());
             // The same .upload*.tmp shape a keyed write spools through, so list()'s in-flight filter hides this
-            // temp file too and an aborted write never leaves it behind.
-            Path temp = Files.createTempFile(path.getParent(), ".upload", ".tmp");
+            // temp file too and an aborted write never leaves it behind; createUploadTemp re-creates the parent if a
+            // concurrent delete tidied it away.
+            Path temp = createUploadTemp(path.getParent());
             try {
                 Files.write(temp, content);
                 Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);

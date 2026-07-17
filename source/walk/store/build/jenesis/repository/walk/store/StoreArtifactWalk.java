@@ -228,6 +228,14 @@ public final class StoreArtifactWalk implements ArtifactWalk {
             String key = segmentKey(scope, index);
             Optional<ArtifactStore.Versioned> current = store.readVersioned(key);
             Segment segment = parseSegment(current.orElse(null));
+            if (segment != null && segment.generation() > manifest.generation()) {
+                // The pass turned over to a newer generation while this worker held a manifest read at pass entry.
+                // The newer segment is a live claim of the pass that superseded ours - refuse-don't-steal applies
+                // across generations too, so leave it untouched (stealing it would reset a live holder's cursor and
+                // ping-pong the two passes). Our own pass is finished; skipping every newer segment lets claim() run
+                // dry and walk() return through finish(), and the next call reads the current manifest.
+                continue;
+            }
             boolean stale = segment == null || segment.generation() != manifest.generation();
             Instant now = clock.instant();
             if (!stale && (segment.state() == WalkSegment.State.DONE

@@ -28,8 +28,9 @@ import module java.base;
  * memory, O(N/256) - and judges each blob against the completed mark: a referenced blob has any stale
  * {@code gc/condemned/<hash>} marker removed; an unreferenced one is <em>condemned</em> (marker created, stamped
  * with this pass) the first time and <em>deleted only when its marker carries an earlier pass</em> - the marker is
- * the clock, giving every crash-torn or in-flight publish at least one full collection interval of grace with no
- * store-timestamp API. The marker re-read immediately before deletion is the final guard: a dedup re-publish that
+ * the clock, giving every crash-torn or in-flight publish a full mark-pass enumeration of grace (spared the moment it
+ * is referenced) with no store-timestamp API, and, when {@code jenesis.gc.grace} is set, a wall-clock floor on top so
+ * a fast generation turnover across nodes cannot shorten it. The marker re-read immediately before deletion is the final guard: a dedup re-publish that
  * re-links condemned content clears the marker on the write path ({@code Publication.link}), collapsing the
  * residual race to the two back-to-back reads between that re-read and the delete. Blob first, marker last; a
  * marker whose blob is gone is swept by the convergence leg, which also drops the reference shards of superseded
@@ -53,12 +54,26 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
 
     private final ArtifactWalk walk;
 
+    /** A wall-clock floor on the condemn-to-collect grace, on top of the one-pass generation gap. Zero (the default)
+     *  keeps the grace purely generation-based: condemn in one pass, collect in the next. A positive value guards the
+     *  case where generations advance faster than the nominal collection interval - several nodes each running
+     *  {@code collect}, or a node restarting and re-collecting after a segment lease expires - by refusing to delete a
+     *  blob until it has also carried its condemned marker for at least this long. Strictly more conservative than the
+     *  generation gap alone: it can only ever delay a deletion, never bring one forward, so it cannot delete a blob
+     *  the generation rule would spare. */
+    private final Duration graceFloor;
+
     /** This collector's identity inside reference-batch names, so concurrent collectors never contend on a key. */
     private final String collector = UUID.randomUUID().toString().substring(0, 8);
     private final AtomicLong batches = new AtomicLong();
 
     public MarkSweepGarbageCollector(ArtifactWalk walk) {
+        this(walk, Duration.ZERO);
+    }
+
+    public MarkSweepGarbageCollector(ArtifactWalk walk, Duration graceFloor) {
         this.walk = walk;
+        this.graceFloor = graceFloor == null ? Duration.ZERO : graceFloor;
     }
 
     @Override
@@ -66,7 +81,8 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
         roots(pointerRoots);
         Optional<WalkPass> mark = walk.pass(store, MARK);
         long judged = mark.isEmpty() ? 0
-                : mark.get().complete() ? mark.get().generation() : mark.get().generation() - 1;
+                : mark.get().complete() ? mark.get().generation()
+                : lastCompletedGeneration(store, mark.get().generation());
         if (judged <= 0) {
             return new GcPlan(false, 0, 0, 0, List.of()); // no completed mark ever ran - nothing is due yet
         }
@@ -84,6 +100,28 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
             }
         });
         return new GcPlan(true, 0, 0, due[0], sample);
+    }
+
+    /** The generation of the most recent mark whose reference shards still stand - the largest {@code gc/<n>} below
+     *  the current, in-progress generation. Preferred over {@code generation - 1} so the dry run stays correct after
+     *  a corrupt-manifest recovery re-bases the generation on the wall clock (a jump, not a {@code +1}), which would
+     *  otherwise point {@link References} at a {@code gc/<clock-1>} that never existed and preview every condemned
+     *  blob as due. In the ordinary sequential case this <em>is</em> {@code generation - 1}. Zero when no earlier
+     *  pass has left shards. */
+    private static long lastCompletedGeneration(ArtifactStore store, long below) throws IOException {
+        long best = 0;
+        for (String child : store.list("gc")) {
+            long pass;
+            try {
+                pass = Long.parseLong(child);
+            } catch (NumberFormatException _) {
+                continue; // the condemned space and anything unrecognised are not pass generations
+            }
+            if (pass < below && pass > best) {
+                best = pass;
+            }
+        }
+        return best;
     }
 
     /** Whether the marker was stamped by a judgment newer than the completed mark - due only at the pass after
@@ -260,11 +298,12 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
                 var _ = store.writeVersioned(marker, marker(generation, now),
                         current.map(ArtifactStore.Versioned::token).orElse(null));
                 condemned++;
-            } else if (parsed.pass() < generation) {
-                // Condemned by an earlier pass and still unreferenced by this one. The marker read above is the
-                // final guard - a re-link cleared it on the write path - and the completed mark's shard needs no
-                // re-read: it gained nothing but duplicates since the pass finished. Blob first, marker last, so
-                // a crash in between leaves only a marker the convergence leg removes.
+            } else if (parsed.pass() < generation && Duration.between(parsed.since(), now).compareTo(graceFloor) >= 0) {
+                // Condemned by an earlier pass, still unreferenced by this one, and past the wall-clock grace floor
+                // (zero by default). The marker read above is the final guard - a re-link cleared it on the write
+                // path - and the completed mark's shard needs no re-read: it gained nothing but duplicates since the
+                // pass finished. Blob first, marker last, so a crash in between leaves only a marker the convergence
+                // leg removes.
                 deleteIfPresent(store, key);
                 deleteIfPresent(store, marker);
                 collected++;
@@ -272,7 +311,7 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
                     sample.add(hash);
                 }
             }
-            // parsed.pass() >= generation: condemned within this judgment - its grace interval is still running.
+            // parsed.pass() >= generation, or younger than the grace floor: still within its grace, left standing.
         }
     }
 
