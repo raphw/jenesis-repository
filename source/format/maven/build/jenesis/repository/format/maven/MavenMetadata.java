@@ -217,8 +217,13 @@ public final class MavenMetadata {
     private List<String> versions(String coordinatePath) {
         List<String> versions = new ArrayList<>();
         for (String child : store.list("publish/maven/" + coordinatePath)) {
-            if (child.equals("maven-metadata.xml") || child.endsWith(".sha1") || child.endsWith(".md5")
-                    || child.endsWith(".asc")) {
+            // The coordinate directory holds version folders alongside the artifact-level maven-metadata.xml and
+            // its sidecars. Skip the document and every sidecar it can carry - not just the .sha1/.md5/.asc the
+            // publisher writes, but the .sha256/.sha512 a client or the proxy's checksum cache may deposit here
+            // (MavenFormat.isChecksum accepts those) - or a stray checksum sibling is enumerated as a version.
+            if (child.equals("maven-metadata.xml") || child.startsWith("maven-metadata.xml.")
+                    || child.endsWith(".sha1") || child.endsWith(".md5") || child.endsWith(".sha256")
+                    || child.endsWith(".sha512") || child.endsWith(".asc")) {
                 continue;
             }
             versions.add(child);

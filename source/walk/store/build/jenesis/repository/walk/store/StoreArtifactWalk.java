@@ -333,10 +333,13 @@ public final class StoreArtifactWalk implements ArtifactWalk {
         private void run() throws IOException {
             try {
                 node(range.root(), visitor);
+                commit(WalkSegment.State.DONE);
             } catch (ClaimLost _) {
-                return;
+                // A lost renewal mid-walk, or a lost CAS on the terminal DONE commit itself, both mean the claim
+                // was reclaimed while this worker held it - the new holder finishes the segment, so stop quietly
+                // rather than failing the whole pass. A segment shorter than one checkpoint stride never renews
+                // between claim and completion, so its DONE commit is the first and only place its lease is tested.
             }
-            commit(WalkSegment.State.DONE);
         }
 
         private void emit(String key, KeyVisitor visitor) throws IOException {
