@@ -15,21 +15,30 @@ import java.util.concurrent.atomic.AtomicLong;
  * Sheds excess load before the request reaches the repository: each request is metered against its tenant's rate
  * ceiling (the per-tenant {@link Authorization#rateLimit} when set, otherwise the deployment default), and one that
  * exhausts the tenant's {@link RateLimiter} bucket is answered {@code 429 Too Many Requests} with a {@code
- * Retry-After}. The tenant is read from the {@code Jenesis-Repository-Key} header, but only when the key is
- * {@link Authorization#wellFormed well-formed} (a valid checksum); a keyless or forged key meters against a shared
- * {@code anonymous} bucket on the default - so a flood of distinct forged keys cannot mint an unbounded number of
- * per-key buckets (a memory-exhaustion vector) nor evade the ceiling by cycling keys, since the pre-auth filter
- * cannot afford a store lookup to tell a real key from a fabricated one. The Actuator endpoints are never limited, so liveness and
- * scrape probes are unaffected. The effective ceiling is cached briefly per tenant so the limiter, not a store
- * read, is on the hot path. A ceiling of zero (nothing configured) is unlimited - the filter is then a no-op.
+ * Retry-After}. The tenant is read from the {@code Jenesis-Repository-Key} header when the key is
+ * {@link Authorization#wellFormed well-formed}, but that check is only a CRC32 typo guard, not a signature: this
+ * pre-auth filter cannot afford the store lookup that would tell a genuine key from a fabricated one, so the tenant
+ * here is effectively attacker-controlled. To keep a flood of distinct fabricated tenant names from minting an
+ * unbounded number of per-tenant buckets (a memory-exhaustion vector - it would also grow the ceiling cache and the
+ * per-tenant reject counters), the distinct-tenant cardinality is capped by {@link BoundedTenantBuckets}: at most
+ * {@link #MAX_TRACKED_TENANTS} tenants get their own bucket and the rest, along with every keyless request, share one
+ * {@code anonymous} bucket. A real deployment stays far below the cap, so a seen tenant keeps its own bucket; only an
+ * adversarial excess spills to the shared one. The Actuator endpoints are never limited, so liveness and scrape
+ * probes are unaffected. The effective ceiling is cached briefly per bucket so the limiter, not a store read, is on
+ * the hot path. A ceiling of zero (nothing configured) is unlimited - the filter is then a no-op.
  */
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final long CACHE_TTL_NANOS = 10_000_000_000L;
 
+    /** The most distinct tenants that ever get a dedicated bucket; the rest share {@code anonymous}. Far above any
+     *  real tenant count, so it bounds only an adversarial flood of fabricated tenant names, never a real deployment. */
+    static final int MAX_TRACKED_TENANTS = 50_000;
+
     private final RateLimiter limiter;
     private final Authorization authorization;
     private final long defaultPermitsPerMinute;
+    private final BoundedTenantBuckets buckets = new BoundedTenantBuckets(MAX_TRACKED_TENANTS);
     private final ConcurrentHashMap<String, long[]> ceilings = new ConcurrentHashMap<>();
     private final AtomicLong rejected = new AtomicLong();
     private final ConcurrentHashMap<String, AtomicLong> rejectedByTenant = new ConcurrentHashMap<>();
@@ -62,8 +71,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         String presented = request.getHeader("Jenesis-Repository-Key");
         String tenant = Authorization.wellFormed(presented) ? Authorization.tenantOf(presented) : null;
-        String bucket = tenant == null ? "anonymous" : tenant;
-        if (!limiter.allow(bucket, ceiling(bucket, tenant))) {
+        String bucket = buckets.bucket(tenant);
+        // A tenant that overflowed the cap meters against the shared bucket on the default ceiling - never its own
+        // per-tenant ceiling, which would re-introduce an unbounded per-tenant cache entry.
+        String effectiveTenant = bucket.equals(BoundedTenantBuckets.ANONYMOUS) ? null : tenant;
+        if (!limiter.allow(bucket, ceiling(bucket, effectiveTenant))) {
             rejected.incrementAndGet();
             rejectedByTenant.computeIfAbsent(bucket, key -> new AtomicLong()).incrementAndGet();
             response.setStatus(429);

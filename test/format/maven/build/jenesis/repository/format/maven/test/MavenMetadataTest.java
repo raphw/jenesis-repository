@@ -86,6 +86,23 @@ class MavenMetadataTest {
         assertThat(xml).contains("<version>1.0</version>").contains("<version>١</version>");
     }
 
+    @Test
+    void a_metadata_checksum_sibling_is_not_mistaken_for_a_version() throws IOException {
+        publish(List.of("1.0", "2.0"));
+        // A .sha256 / .sha512 checksum sibling of maven-metadata.xml, deposited in the coordinate directory by a
+        // client or cached there by the proxy, is not a version folder and must never be enumerated as a version.
+        Publication publication = new Publication(store);
+        publication.link("/maven/org/example/lib/maven-metadata.xml.sha256", "not-a-version");
+        publication.link("/maven/org/example/lib/maven-metadata.xml.sha512", "not-a-version-either");
+
+        String xml = new String(metadata.serve("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).contains("<version>1.0</version>").contains("<version>2.0</version>");
+        assertThat(xml).doesNotContain("maven-metadata.xml.sha256").doesNotContain("maven-metadata.xml.sha512");
+        assertThat(xml).contains("<release>2.0</release>");
+    }
+
     private static boolean order(String xml, String... versions) {
         int previous = -1;
         for (String version : versions) {

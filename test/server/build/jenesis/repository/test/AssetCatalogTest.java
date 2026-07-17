@@ -123,6 +123,31 @@ class AssetCatalogTest {
                 "/raw/tools/installer.bin");
     }
 
+    @Test
+    void it_pages_file_and_directory_siblings_without_dropping_or_duplicating() throws IOException {
+        // A leaf and a directory that are siblings differing only by the separator: the walk descends the
+        // directory before the leaf ('/' sorts below every other character), so `data/x` is emitted before
+        // `data.txt`. A cursor that resumes with a plain lexicographic compare (where '.' sorts below '/')
+        // disagrees with that emission order and drops - or duplicates - the sibling across the page boundary.
+        link("/raw/data/payload.bin", "in a subfolder".getBytes(StandardCharsets.UTF_8));
+        link("/raw/data.txt", "a sibling file".getBytes(StandardCharsets.UTF_8));
+
+        // The whole enumeration in one page (no cursor logic) is the ground truth of what must be served.
+        List<String> whole = catalog.page(null, 100).assets().stream().map(AssetCatalog.Asset::path).toList();
+
+        // The same walk, one asset at a time, must visit exactly the same set once each - no drops, no dupes.
+        List<String> paged = new java.util.ArrayList<>();
+        String cursor = null;
+        do {
+            AssetCatalog.Page page = catalog.page(cursor, 1);
+            page.assets().forEach(asset -> paged.add(asset.path()));
+            cursor = page.cursor();
+        } while (cursor != null);
+
+        assertThat(paged).containsExactlyElementsOf(whole);
+        assertThat(paged).contains("/raw/data/payload.bin", "/raw/data.txt");
+    }
+
     private void link(String path, byte[] content) throws IOException {
         publication.link(path, publication.storeBlob(new ByteArrayInputStream(content)));
     }
