@@ -32,12 +32,14 @@ public final class DemoSeeding {
         this.beforeSeed = beforeSeed;
     }
 
-    /** Start demo seeding in the background when the flag is on; return at once so boot is never blocked. */
-    public void start() {
+    /** Start demo seeding in the background when the flag is on; return at once so boot is never blocked. Returns the
+     *  background thread (or {@code null} when the flag is off and nothing was started) so a caller that needs to know
+     *  when seeding has finished - a test tearing down its store, say - can join it; boot itself ignores it. */
+    public Thread start() {
         if (!enabled) {
-            return;
+            return null;
         }
-        Thread.ofVirtual().name("demo-seeder").start(this::run);
+        return Thread.ofVirtual().name("demo-seeder").start(this::run);
     }
 
     private void run() {
