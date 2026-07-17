@@ -35,6 +35,7 @@ open module build.jenesis.repository.proxy.test {
     requires build.jenesis.repository.proxy;
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.observation;
+    requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
 }

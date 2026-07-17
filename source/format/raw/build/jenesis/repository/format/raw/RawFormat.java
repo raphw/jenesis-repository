@@ -47,7 +47,10 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
                 publication.unpublish(path);
                 exchange.respond(204);
             }
-            case "HEAD" -> exchange.respond(publication.blob(path).isPresent() ? 200 : 404);
+            // HEAD must answer exactly what a GET would: located() applies the withheld (quarantine/retraction)
+            // screens and confirms the content-addressed blob still exists, where blob() only reads the pointer -
+            // so a withheld or GC-reclaimed path would otherwise HEAD 200 while GET 404s.
+            case "HEAD" -> exchange.respond(publication.located(path).isPresent() ? 200 : 404);
             default -> {
                 if (path.endsWith("/")) {
                     listing(path, store, exchange);
