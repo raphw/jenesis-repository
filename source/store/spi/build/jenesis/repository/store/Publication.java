@@ -15,6 +15,12 @@ public final class Publication {
 
     private static final System.Logger LOGGER = System.getLogger(Publication.class.getName());
 
+    /** The ceiling on a {@link PublishInterceptor.Content#sibling} read. A sibling is small published metadata a gate
+     *  inspects beside the artifact (a jar reading its POM, a package reading its manifest) - never a whole artifact -
+     *  so the buffered read is capped at a few MiB. Past it the read fails loudly rather than materialising an
+     *  arbitrarily large blob into the heap, which would let a screen be turned into an out-of-memory lever. */
+    private static final int LARGEST_SIBLING = 8 * 1024 * 1024;
+
     /** The screen chain, discovered once at class load like {@code MavenFormat.MODULE_VIEWS} - empty in the free
      *  edition (no provider on the module path), so {@link #publish} is a plain store-then-link there. */
     private static final List<PublishInterceptor> DISCOVERED = ServiceLoader.load(PublishInterceptor.class)
@@ -250,9 +256,18 @@ public final class Publication {
                 if (key.isEmpty()) {
                     return Optional.empty();
                 }
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                store.read(key.get(), buffer);
-                return Optional.of(buffer.toByteArray());
+                // Read at most LARGEST_SIBLING + 1 bytes so the heap is bounded whatever the blob's real size: a
+                // sibling read is small metadata, and an oversized one is an anomaly a gate must be told about, not
+                // silently fed. readNBytes never buffers more than the cap, so the over-limit blob never lands whole
+                // in memory before we notice.
+                try (InputStream in = store.open(key.get())) {
+                    byte[] bytes = in.readNBytes(LARGEST_SIBLING + 1);
+                    if (bytes.length > LARGEST_SIBLING) {
+                        throw new IOException("sibling " + path + " exceeds the " + LARGEST_SIBLING
+                                + "-byte cap for a sibling metadata read");
+                    }
+                    return Optional.of(bytes);
+                }
             }
         };
     }

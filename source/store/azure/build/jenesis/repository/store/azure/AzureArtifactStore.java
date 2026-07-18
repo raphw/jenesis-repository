@@ -7,6 +7,7 @@ import com.azure.core.util.BinaryData;
 import com.azure.core.util.Context;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.models.BlobDownloadContentResponse;
+import com.azure.storage.blob.models.BlobErrorCode;
 import com.azure.storage.blob.models.BlobItem;
 import com.azure.storage.blob.models.BlobRange;
 import com.azure.storage.blob.models.BlobRequestConditions;
@@ -268,6 +269,13 @@ public final class AzureArtifactStore implements ArtifactStore {
             container.getBlobClient(keyPrefix + key).getBlockBlobClient().uploadWithResponse(options, null, Context.NONE);
             return true;
         } catch (BlobStorageException e) {
+            // A container-level 404 (ContainerNotFound) is a misconfiguration or outage, not a CAS conflict: mapping
+            // it to a false return would turn a missing/renamed container into silent retry-exhaustion at the caller.
+            // Surface it as a real IOException. Only a blob-level 404 (the blob an If-Match refers to has been
+            // deleted) is the benign conflict a re-read-and-retry resolves, alongside the 412/409 rejections.
+            if (BlobErrorCode.CONTAINER_NOT_FOUND.equals(e.getErrorCode())) {
+                throw new IOException("Could not write " + key + ": container does not exist", e);
+            }
             int status = e.getStatusCode();
             if (status == 412 || status == 409 || status == 404) {
                 return false;

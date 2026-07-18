@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The upload post-processing gate on {@link Publication#publish}: the blob is always stored content-addressed, then the
@@ -213,5 +214,26 @@ class PublishInterceptorTest {
         new Publication(store, List.of(reader)).publish(descriptor("/raw/jar"), bytes("the-jar"));
 
         assertThat(seenSibling).containsExactly("the-pom");
+    }
+
+    @Test
+    void the_sibling_view_refuses_an_oversized_sibling_rather_than_buffering_a_whole_artifact() throws IOException {
+        // A sibling read is small published metadata a gate inspects beside the artifact (a jar reading its POM);
+        // it must never be turned into a lever to buffer an arbitrarily large blob into the heap. An over-cap
+        // sibling fails loudly instead of materialising, and the cap read never buffers more than the ceiling.
+        new Publication(store, List.of()).publish(descriptor("/raw/huge"),
+                new ByteArrayInputStream(new byte[9 * 1024 * 1024]));
+
+        PublishInterceptor reader = new PublishInterceptor() {
+            @Override
+            public Disposition assess(ArtifactDescriptor artifact, Content content) throws IOException {
+                content.sibling("/raw/huge");
+                return Disposition.ACCEPT;
+            }
+        };
+        assertThatThrownBy(() -> new Publication(store, List.of(reader))
+                .publish(descriptor("/raw/jar"), bytes("the-jar")))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("sibling");
     }
 }

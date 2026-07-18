@@ -112,15 +112,36 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker, Observabi
     @Override
     public void close() {
         running = false;
-        if (thread != null) {
-            thread.interrupt();
+        Thread worker = thread;
+        if (worker != null) {
+            worker.interrupt();
+            boolean terminated = false;
             try {
-                thread.join(10_000L);
+                worker.join(10_000L);
+                terminated = !worker.isAlive();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            if (!terminated) {
+                // The worker did not stop within the grace window and is still draining. Flushing now would race its
+                // count++ on a Pending and could mark a hit flushed without persisting it - the very loss the "no hit
+                // lost within a process lifetime" contract forbids. Leave the tail to the still-running worker (its
+                // next drain flushes it) rather than corrupt the counter here.
+                return;
+            }
         }
-        LocalDate today = LocalDate.ofInstant(Instant.now(), ZoneOffset.UTC);
+        // The worker has terminated (or was never started), so every Pending is now quiescent: nothing mutates a
+        // count concurrently and this final pass is deterministic. Drain whatever the interrupted worker left queued
+        // (its blocking poll returns without draining on interrupt) so a clean shutdown forfeits no accepted hit, then
+        // flush every residual delta - including a credential already flushed once today, whose at-most-once-per-day
+        // gate would otherwise strand its same-day tail until the process ends.
+        Instant now = Instant.now();
+        List<Hit> tail = new ArrayList<>();
+        queue.drainTo(tail);
+        for (Hit hit : tail) {
+            accumulate(hit, now);
+        }
+        LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
         for (Map.Entry<String, Pending> entry : pending.entrySet()) {
             flush(entry.getKey(), entry.getValue(), today);
         }
@@ -149,12 +170,7 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker, Observabi
      *  delta has not been written today, at most one store write per credential per day. */
     public void drain(Collection<Hit> batch, Instant now) {
         for (Hit hit : batch) {
-            Pending entry = pending.computeIfAbsent(hit.tenant() + "/" + hit.hash(), key -> new Pending());
-            entry.count++;
-            entry.when = now;
-            if (hit.address() != null) {
-                entry.address = hit.address();
-            }
+            accumulate(hit, now);
         }
         LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
         for (Map.Entry<String, Pending> entry : pending.entrySet()) {
@@ -168,13 +184,30 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker, Observabi
         // slows each drain (it scans the whole map). The sibling download tracker bounds itself the same way.
         pending.entrySet().removeIf(entry -> {
             Pending value = entry.getValue();
-            if (value.count == value.flushed && !today.equals(writtenDay.get(entry.getKey()))) {
-                writtenDay.remove(entry.getKey());
-                return true;
+            synchronized (value) {
+                if (value.count == value.flushed && !today.equals(writtenDay.get(entry.getKey()))) {
+                    writtenDay.remove(entry.getKey());
+                    return true;
+                }
+                return false;
             }
-            return false;
         });
         lastDrain = now;
+    }
+
+    /** Fold one hit into its credential's accumulator - the count, the last address and the last-seen instant - under
+     *  the Pending's own monitor, so an increment and a {@link #flush} of the same credential can never interleave (a
+     *  flush reads the count and advances {@code flushed} under the same lock). Shared by the worker's {@link #drain}
+     *  and the deterministic drain-and-flush {@link #close} runs after the worker has stopped. */
+    private void accumulate(Hit hit, Instant now) {
+        Pending entry = pending.computeIfAbsent(hit.tenant() + "/" + hit.hash(), key -> new Pending());
+        synchronized (entry) {
+            entry.count++;
+            entry.when = now;
+            if (hit.address() != null) {
+                entry.address = hit.address();
+            }
+        }
     }
 
     /** The number of per-credential accumulators currently held: fully-flushed idle entries are dropped each drain,
@@ -231,15 +264,29 @@ public final class BatchingKeyUsageTracker implements KeyUsageTracker, Observabi
     }
 
     private void flush(String key, Pending entry, LocalDate day) {
-        long delta = entry.count - entry.flushed;
+        // Snapshot the count, delta and last-seen fields together under the entry's monitor, so a concurrent
+        // accumulate() cannot tear the read. Crucially, capture `snapshot` here and advance `flushed` only to it
+        // below - never to a re-read count - so a count++ landing while recordUsed is in flight stays an unflushed
+        // delta for the next flush rather than being absorbed as "flushed" without ever being persisted.
+        long snapshot;
+        long delta;
+        Instant when;
+        String address;
+        synchronized (entry) {
+            snapshot = entry.count;
+            delta = snapshot - entry.flushed;
+            when = entry.when;
+            address = entry.address;
+        }
         if (delta <= 0) {
             return;
         }
         int slash = key.indexOf('/');
         try {
-            if (authorization.recordUsed(key.substring(0, slash), key.substring(slash + 1),
-                    entry.when, entry.address, delta)) {
-                entry.flushed = entry.count;
+            if (authorization.recordUsed(key.substring(0, slash), key.substring(slash + 1), when, address, delta)) {
+                synchronized (entry) {
+                    entry.flushed = snapshot;
+                }
                 writtenDay.put(key, day);
             }
             // A false return means every compare-and-set lost to contention: leave `flushed` where it is so the delta

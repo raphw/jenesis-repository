@@ -6,6 +6,9 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.store.testkit.StoreInvariants;
+import build.jenesis.repository.walk.ArtifactWalk;
+import build.jenesis.repository.walk.WalkPass;
+import build.jenesis.repository.walk.WalkSegment;
 import build.jenesis.repository.walk.store.StoreArtifactWalk;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -160,6 +164,75 @@ class MarkSweepTest {
         assertThat(converged.isEmpty()).as("a re-run over a converged store changes nothing").isTrue();
         assertThat(store.exists("blobs/" + kept)).isTrue();
         assertThat(store.exists("blobs/" + orphan)).isFalse();
+    }
+
+    @Test
+    void a_sweep_never_deletes_after_its_reference_shards_are_superseded() throws IOException {
+        // The lease fence: a paused or lease-expired sweep worker that resumes after a newer mark generation has
+        // superseded (and whose converge may have dropped) its reference shards must not judge a blob against the
+        // emptied shards and delete a still-referenced one. Standing in for that, a decorator makes the mark manifest
+        // report a newer generation during the sweep - exactly what a concurrent node's later mark presents - and the
+        // sweep must refuse the delete, deferring it rather than deleting against a superseded reference set.
+        ArtifactStore store = store();
+        Publication publication = new Publication(store);
+        String kept = publication.storeBlob(bytes("kept"));
+        publication.link("/maven/kept.jar", kept);
+        String orphan = publication.storeBlob(bytes("orphan"));
+
+        // Pass 1 condemns the orphan; a normal pass 2 would collect it.
+        assertThat(collector().collect(store, List.of("publish"), clock.instant()).condemned()).isEqualTo(1);
+
+        ArtifactWalk inflating = new GenerationInflatingMarkWalk(
+                new StoreArtifactWalk(5, 4, Duration.ofMinutes(10), clock));
+        GcPlan fenced = new MarkSweepGarbageCollector(inflating).collect(store, List.of("publish"), clock.instant());
+        assertThat(fenced.collected()).as("a superseded reference set fences the delete").isZero();
+        assertThat(store.exists("blobs/" + orphan))
+                .as("the orphan is deferred, never deleted against dropped shards").isTrue();
+
+        // With the shards standing again (a normal walk) the deferred orphan is reclaimed - the fence only ever
+        // delays a delete, never loses one - and the referenced blob is untouched throughout.
+        assertThat(collector().collect(store, List.of("publish"), clock.instant()).collected()).isEqualTo(1);
+        assertThat(store.exists("blobs/" + orphan)).isFalse();
+        assertThat(store.exists("blobs/" + kept)).isTrue();
+    }
+
+    /** Forwards to a real walk but, once the sweep phase begins, reports the mark pass one generation newer than it
+     *  truly is - standing in for a concurrent node whose later mark has superseded (and whose converge may have
+     *  dropped) this sweep's reference shards. The mark phase itself runs against the true generation, so the shards
+     *  are written where the sweep loads them; only the fence's re-read of the mark manifest sees the advance. */
+    private static final class GenerationInflatingMarkWalk implements ArtifactWalk {
+
+        private final ArtifactWalk delegate;
+        private volatile boolean sweeping;
+
+        private GenerationInflatingMarkWalk(ArtifactWalk delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public WalkPass walk(ArtifactStore store, String consumer, List<String> roots, KeyVisitor visitor)
+                throws IOException {
+            if (consumer.equals("gc-sweep")) {
+                sweeping = true;
+            }
+            return delegate.walk(store, consumer, roots, visitor);
+        }
+
+        @Override
+        public Optional<WalkPass> pass(ArtifactStore store, String consumer) throws IOException {
+            Optional<WalkPass> real = delegate.pass(store, consumer);
+            if (sweeping && consumer.equals("gc-mark") && real.isPresent()) {
+                WalkPass pass = real.get();
+                return Optional.of(new WalkPass(pass.generation() + 1, pass.started(), pass.roots(),
+                        pass.segments(), pass.done(), pass.status()));
+            }
+            return real;
+        }
+
+        @Override
+        public List<WalkSegment> segments(ArtifactStore store, String consumer) throws IOException {
+            return delegate.segments(store, consumer);
+        }
     }
 
     @Test

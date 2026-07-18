@@ -11,6 +11,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static build.jenesis.repository.store.s3.test.Requirement.requireOrSkip;
 
 /**
@@ -136,6 +137,17 @@ public class S3ArtifactStoreTest {
         assertThat(store.writeVersioned(key, "v2".getBytes(StandardCharsets.UTF_8), token)).isTrue();
         assertThat(store.writeVersioned(key, "v3".getBytes(StandardCharsets.UTF_8), token)).isFalse();
         assertThat(new String(store.readVersioned(key).orElseThrow().content(), StandardCharsets.UTF_8)).isEqualTo("v2");
+    }
+
+    @Test
+    public void write_versioned_surfaces_a_missing_bucket_as_a_transport_error() {
+        // A bucket-level 404 (NoSuchBucket) is a misconfiguration or outage, not the benign key-level 404 that maps
+        // to a false CAS conflict; a versioned write against a bucket that does not exist must surface a real
+        // IOException rather than turn a broken deployment into silent retry-exhaustion at the caller.
+        ArtifactStore missing = new S3ArtifactStore(s3, "no-such-bucket").scope("acme");
+        assertThatThrownBy(() -> missing.writeVersioned("config/x", "v".getBytes(StandardCharsets.UTF_8), null))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("bucket");
     }
 
     @Test

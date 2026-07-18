@@ -270,6 +270,13 @@ public final class S3ArtifactStore implements ArtifactStore {
             }
             return true;
         } catch (S3Exception e) {
+            // A bucket-level 404 (NoSuchBucket) is a misconfiguration or outage, not a CAS conflict: mapping it to a
+            // false return would turn a missing/renamed bucket into silent retry-exhaustion at the caller. Surface it
+            // as a real IOException. Only a key-level 404 (the object an If-Match refers to has been deleted) is the
+            // benign conflict a re-read-and-retry resolves, alongside the 412/409 precondition rejections.
+            if (e.awsErrorDetails() != null && "NoSuchBucket".equals(e.awsErrorDetails().errorCode())) {
+                throw new IOException("Could not write " + key + ": bucket " + bucket + " does not exist", e);
+            }
             int status = e.statusCode();
             if (status == 412 || status == 409 || status == 404) {
                 return false;
