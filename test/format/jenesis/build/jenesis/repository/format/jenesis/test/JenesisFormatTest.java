@@ -59,6 +59,23 @@ class JenesisFormatTest {
     }
 
     @Test
+    void a_head_is_answered_from_the_stored_size_without_streaming_the_blob() throws IOException {
+        byte[] body = "modular jar bytes".getBytes(StandardCharsets.UTF_8);
+        format.handle(new FakeExchange("PUT", "/module/com.acme/1.0/com.acme.jar", body), store);
+
+        FakeExchange head = new FakeExchange("HEAD", "/module/com.acme/1.0/com.acme.jar");
+        format.handle(head, store);
+        assertThat(head.status()).isEqualTo(200);
+        assertThat(head.responseBytes()).as("a HEAD answers from metadata, never streaming the blob body").isEmpty();
+        assertThat(head.responseHeader("Content-Length"))
+                .as("Content-Length is the stored blob size").isEqualTo(Long.toString(body.length));
+
+        FakeExchange miss = new FakeExchange("HEAD", "/module/com.acme/9.9/com.acme.jar");
+        format.handle(miss, store);
+        assertThat(miss.status()).isEqualTo(404);
+    }
+
+    @Test
     void the_artifact_layout_round_trips_the_same_way() throws IOException {
         byte[] body = {4, 5, 6, 7};
 

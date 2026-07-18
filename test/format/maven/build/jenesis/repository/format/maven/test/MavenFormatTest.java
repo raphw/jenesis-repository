@@ -71,6 +71,41 @@ class MavenFormatTest {
     }
 
     @Test
+    void a_head_is_answered_from_the_stored_size_without_streaming_the_blob() throws IOException {
+        byte[] jar = "plain jar bytes".getBytes(StandardCharsets.UTF_8);
+        format.handle(new FakeExchange("PUT", "/maven/org/example/lib/1.0/lib-1.0.jar", jar), store);
+
+        FakeExchange head = new FakeExchange("HEAD", "/maven/org/example/lib/1.0/lib-1.0.jar");
+        format.handle(head, store);
+        assertThat(head.status()).isEqualTo(200);
+        assertThat(head.responseBytes()).as("a HEAD answers from metadata, never streaming the blob body").isEmpty();
+        assertThat(head.responseHeader("Content-Length"))
+                .as("Content-Length is the stored blob size").isEqualTo(Long.toString(jar.length));
+
+        FakeExchange miss = new FakeExchange("HEAD", "/maven/org/example/lib/1.0/absent.jar");
+        format.handle(miss, store);
+        assertThat(miss.status()).isEqualTo(404);
+    }
+
+    @Test
+    void a_head_of_a_computed_metadata_document_answers_from_its_length_without_a_body() throws IOException {
+        publication.link("/maven/org/example/lib/1.0/lib-1.0.jar", "h1");
+        publication.link("/maven/org/example/lib/2.0/lib-2.0.jar", "h2");
+
+        FakeExchange get = FakeExchange.get("/maven/org/example/lib/maven-metadata.xml",
+                Map.of(MavenMetadata.COMPUTE_SETTING, "true"));
+        format.handle(get, store);
+        int length = get.responseBytes().length;
+
+        FakeExchange head = new FakeExchange("HEAD", "/maven/org/example/lib/maven-metadata.xml",
+                new byte[0], Map.of(), Map.of(), Map.of(MavenMetadata.COMPUTE_SETTING, "true"));
+        format.handle(head, store);
+        assertThat(head.status()).isEqualTo(200);
+        assertThat(head.responseBytes()).as("a HEAD never writes the computed document body").isEmpty();
+        assertThat(head.responseHeader("Content-Length")).isEqualTo(Long.toString(length));
+    }
+
+    @Test
     void describe_maps_a_maven_path_to_its_neutral_coordinate() {
         assertThat(format.describe("/maven/org/example/lib/1.0/lib-1.0.jar")).hasValueSatisfying(descriptor -> {
             assertThat(descriptor.ecosystem()).isEqualTo("Maven");

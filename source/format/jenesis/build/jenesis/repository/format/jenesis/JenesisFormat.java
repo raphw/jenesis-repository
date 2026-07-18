@@ -39,7 +39,15 @@ public final class JenesisFormat implements RepositoryFormat {
             exchange.respond(404);
             return;
         }
-        try (OutputStream out = exchange.respond(200, store.size(key.get()))) {
+        long size = store.size(key.get());
+        if (exchange.method().equals("HEAD")) {
+            // A HEAD is answered from the stored size (Content-Length), 200 with no body, without opening the blob -
+            // the same HEAD-from-metadata contract OciFormat/RawFormat follow, rather than streaming the whole blob.
+            exchange.setResponseHeader("Content-Length", Long.toString(size));
+            exchange.respond(200);
+            return;
+        }
+        try (OutputStream out = exchange.respond(200, size)) {
             store.read(key.get(), out);
         }
     }

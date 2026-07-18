@@ -32,33 +32,53 @@ public final class MavenSource implements ImportSource {
     private static final int MAX_DEPTH = 64;
     private static final int INDEX_CHECKPOINT_INTERVAL = 512;
 
+    /** The default ceiling on the coordinates the listing-less index walk retains for its {@code maven-metadata.xml}
+     *  refresh pass. A very large source (a full Maven Central mirror is hundreds of thousands of coordinates) would
+     *  otherwise accumulate every coordinate and its version set on the heap for the whole import; past this bound the
+     *  authoritative index records are still imported and only the supplementary metadata refresh of the overflow
+     *  coordinates is skipped. Overridable per source through {@link #withRefreshLimit}. */
+    static final int MAX_REFRESH_COORDINATES = 250_000;
+
     private final URI base;
     private final String repository;
     private final ProxyFormat.Fetcher fetcher;
     private final String authorization;
     private final String cursor;
+    private final int refreshLimit;
 
     public MavenSource(URI base, String repository, ProxyFormat.Fetcher fetcher) {
-        this(base, repository, fetcher, null, null);
+        this(base, repository, fetcher, null, null, MAX_REFRESH_COORDINATES);
     }
 
-    private MavenSource(URI base, String repository, ProxyFormat.Fetcher fetcher, String authorization, String cursor) {
+    private MavenSource(URI base, String repository, ProxyFormat.Fetcher fetcher, String authorization, String cursor,
+                        int refreshLimit) {
         this.base = base;
         this.repository = repository;
         this.fetcher = fetcher;
         this.authorization = authorization;
         this.cursor = cursor;
+        this.refreshLimit = refreshLimit;
     }
 
     /** Authenticate the listings and downloads with HTTP basic credentials (a repository user and password or token). */
     public MavenSource withCredentials(String username, String password) {
         String token = Base64.getEncoder().encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
-        return new MavenSource(base, repository, fetcher, "Basic " + token, cursor);
+        return new MavenSource(base, repository, fetcher, "Basic " + token, cursor, refreshLimit);
     }
 
     /** Resume the walk from a cursor a prior run checkpointed. */
     public MavenSource from(String cursor) {
-        return new MavenSource(base, repository, fetcher, authorization, cursor);
+        return new MavenSource(base, repository, fetcher, authorization, cursor, refreshLimit);
+    }
+
+    /** Cap the coordinates the listing-less index walk retains for its metadata-refresh pass (default
+     *  {@link #MAX_REFRESH_COORDINATES}), so a very large source imports with bounded heap. The limit must be stable
+     *  across a resumed run, since the retained set is rebuilt by replaying the index stream deterministically. */
+    public MavenSource withRefreshLimit(int refreshLimit) {
+        if (refreshLimit <= 0) {
+            throw new IllegalArgumentException("A refresh limit must be positive");
+        }
+        return new MavenSource(base, repository, fetcher, authorization, cursor, refreshLimit);
     }
 
     /** Whether the repository root answers HTTP at all - any status counts, only a transport failure (an unknown
@@ -173,6 +193,12 @@ public final class MavenSource implements ImportSource {
      * {@code maven-metadata.xml} - the index is published in batches and lags what the repository actually holds, so
      * the metadata is the authority on versions once a coordinate is known. A resume replays the index stream without
      * re-importing (rebuilding the coordinate set costs no downloads) and continues where the cursor points.
+     *
+     * <p>The retained coordinate set is bounded by the {@link #withRefreshLimit refresh limit} ({@link
+     * #MAX_REFRESH_COORDINATES} by default), so a very large source cannot grow it (or the pom-dedup set) without
+     * bound: every index record is still emitted, but the {@code maven-metadata.xml} refresh of coordinates beyond
+     * the limit is skipped - best-effort by design, keeping the import's heap bounded while the authoritative index
+     * content stays complete.
      */
     private void walkIndex(Asset consumer, Checkpoint checkpoint, URI root) throws IOException {
         boolean refreshing = cursor != null && cursor.startsWith(META);
@@ -196,13 +222,24 @@ public final class MavenSource implements ImportSource {
                 consumed++;
                 RepositoryIndex.Gav gav = RepositoryIndex.coordinate(record);
                 if (gav != null) {
-                    indexed.computeIfAbsent(gav.artifactPath(), key -> new HashSet<>()).add(gav.version());
+                    // Track this coordinate's versions for the refresh pass, but admit a *new* coordinate only while
+                    // under the refresh limit; a coordinate already tracked keeps accumulating its versions. Past the
+                    // limit the record below is still emitted - only the metadata refresh of the overflow coordinate is
+                    // skipped - so the authoritative index import stays complete under a bounded heap.
+                    Set<String> versions = indexed.get(gav.artifactPath());
+                    if (versions == null && indexed.size() < refreshLimit) {
+                        versions = new HashSet<>();
+                        indexed.put(gav.artifactPath(), versions);
+                    }
+                    if (versions != null) {
+                        versions.add(gav.version());
+                    }
                     if (!refreshing && consumed > resumeRecords) {
                         String path = gav.path(), pom = gav.pomPath();
                         if (!path.equals(pom)) {
                             emit(consumer, root, path);
                         }
-                        if (pom != null && pomEmitted.add(pom)) {
+                        if (pom != null && emitPom(pomEmitted, pom)) {
                             emit(consumer, root, pom);
                         }
                     }
@@ -249,6 +286,19 @@ public final class MavenSource implements ImportSource {
                 emit(consumer, root, prefix + "." + RepositoryIndex.extension(packaging));
             }
         }
+    }
+
+    /** Whether a shared pom path should be emitted now, deduplicating across the index records that reference it while
+     *  the tracking set is under the refresh limit; past the limit an untracked pom re-emits (the content-addressed
+     *  store dedupes the redundant download) rather than growing the set without bound. */
+    private boolean emitPom(Set<String> pomEmitted, String pom) {
+        if (pomEmitted.contains(pom)) {
+            return false;
+        }
+        if (pomEmitted.size() < refreshLimit) {
+            pomEmitted.add(pom);
+        }
+        return true;
     }
 
     private void emit(Asset consumer, URI root, String path) throws IOException {

@@ -130,6 +130,61 @@ class ProxyCacheObservabilityTest {
                 .allSatisfy(name -> assertThat(name).matches("jenesis\\.proxy\\..+"));
     }
 
+    @Test
+    void eviction_drops_the_oldest_entries_first_and_keeps_the_byte_accounting_bounded() throws IOException {
+        // Each cached index body is the largest cacheable size (8 MiB = MAX_BODY), so eight fill the 64 MiB ceiling
+        // exactly and a ninth pushes past it - forcing exactly one eviction. Sharing one body array keeps the test's
+        // own heap small; the cache accounts by length, not identity.
+        int bodySize = 8 * 1024 * 1024;
+        long ceiling = 64L * 1024 * 1024;
+        RecordingFetcher delegate = new RecordingFetcher(new byte[bodySize]);
+        RevalidatingFetcher fetcher = new RevalidatingFetcher(delegate);
+
+        List<URI> urls = new java.util.ArrayList<>();
+        for (int at = 0; at < 9; at++) {
+            URI url = URI.create("https://upstream.example/index-" + at + ".json");
+            urls.add(url);
+            fetcher.fetch(url, Map.of());
+        }
+
+        // Accounting stays bounded: the ninth 8 MiB body would take the total to 72 MiB, so one entry was evicted
+        // back to the 64 MiB ceiling - eight remembered, not nine.
+        assertThat(metric(fetcher, "jenesis.proxy.revalidation.bytes").value())
+                .isEqualTo((double) ceiling).isLessThanOrEqualTo((double) ceiling);
+        assertThat(metric(fetcher, "jenesis.proxy.revalidation.entries").value()).isEqualTo(8.0);
+
+        // Oldest-first: the newest entry (index-8) is still remembered, so its re-fetch carries a conditional
+        // validator; the oldest (index-0) was the one evicted, so its re-fetch is unconditional - proving the
+        // eviction followed insertion age, not the ConcurrentHashMap's arbitrary bucket order.
+        delegate.conditional.clear();
+        fetcher.fetch(urls.get(8), Map.of());
+        assertThat(delegate.conditional.get(urls.get(8)))
+                .as("the newest entry survived and is revalidated conditionally").isEqualTo("\"index-8.json\"");
+
+        fetcher.fetch(urls.get(0), Map.of());
+        assertThat(delegate.conditional.get(urls.get(0)))
+                .as("the oldest entry was evicted, so nothing remains to revalidate against").isNull();
+    }
+
+    /** A stub upstream that answers every fetch with a 200 carrying a per-URL {@code ETag} and one shared body, and
+     *  records the {@code If-None-Match} it was sent per URL (null when the fetch was unconditional) - so a test can
+     *  tell a still-cached entry (conditional re-fetch) from an evicted one (unconditional re-fetch). */
+    private static final class RecordingFetcher implements ProxyFormat.Fetcher {
+        private final byte[] body;
+        private final Map<URI, String> conditional = new java.util.HashMap<>();
+
+        private RecordingFetcher(byte[] body) {
+            this.body = body;
+        }
+
+        @Override
+        public Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> headers) {
+            conditional.put(url, headers.get("If-None-Match"));
+            String tag = "\"" + url.getPath().substring(url.getPath().lastIndexOf('/') + 1) + "\"";
+            return Optional.of(new ProxyFormat.Fetched(200, body, Map.of("ETag", tag)));
+        }
+    }
+
     private static Metric metric(RevalidatingFetcher fetcher, String name) {
         return fetcher.metrics().stream()
                 .filter(metric -> metric.name().equals(name))

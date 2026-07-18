@@ -121,13 +121,21 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
             exchange.respond(status(publish(store, path, exchange.requestStream()).disposition()));
             return;
         }
+        boolean head = exchange.method().equals("HEAD");
         // W5.12(3): with the opt-in computation on, an artifact-level document has its version list reconciled (or is
         // derived for a coordinate no client uploaded); a checksum is served from the authored bytes. Empty means the
         // default verbatim serve stands.
         if (MavenMetadata.isMetadataRequest(path) && metadataCompute(exchange)) {
             Optional<byte[]> computed = new MavenMetadata(store).computed(path);
             if (computed.isPresent()) {
-                exchange.respond(200, computed.get());
+                // A HEAD answers from the computed document's length (Content-Length only, no body), the way OCI/Raw
+                // answer a HEAD from metadata instead of writing the whole document out.
+                if (head) {
+                    exchange.setResponseHeader("Content-Length", Long.toString(computed.get().length));
+                    exchange.respond(200);
+                } else {
+                    exchange.respond(200, computed.get());
+                }
                 return;
             }
         }
@@ -138,7 +146,16 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
             exchange.respond(404);
             return;
         }
-        try (OutputStream out = exchange.respond(200, store.size(key.get()))) {
+        long size = store.size(key.get());
+        if (head) {
+            // A HEAD is answered from the stored size (Content-Length), 200 with no body, without opening the blob -
+            // the read-first HEAD-from-metadata contract OciFormat/RawFormat already follow, so a HEAD never streams
+            // the whole artifact just to discard it.
+            exchange.setResponseHeader("Content-Length", Long.toString(size));
+            exchange.respond(200);
+            return;
+        }
+        try (OutputStream out = exchange.respond(200, size)) {
             store.read(key.get(), out);
         }
     }
