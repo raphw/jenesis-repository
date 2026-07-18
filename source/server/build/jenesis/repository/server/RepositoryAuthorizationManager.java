@@ -8,6 +8,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.function.Supplier;
 
 /**
@@ -51,16 +52,33 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
                 scope = repo;
             }
         }
+        String key = request.getHeader("Jenesis-Repository-Key");
         Authorization.Decision decision;
         try {
-            decision = authorization.authorize(
-                    request.getHeader("Jenesis-Repository-Key"),
-                    scope,
-                    required);
+            // A key may carry a source-IP allowlist (set-allowed-addresses): a request from an address outside it is
+            // forbidden even with an otherwise-valid key, so a stolen key is useless off its network. Enforce it on the
+            // request path here - authorize() alone never consults it - deriving the client address the way
+            // Authorization.clientAddress documents (the TCP peer, honouring a forwarded header only from a trusted
+            // proxy; with no trusted proxies configured a client-set X-Forwarded-For is ignored, so the allowlist
+            // cannot be spoofed). A key with no allowlist admits every address, so this is a no-op for the common case.
+            if (!authorization.addressAllowed(key, clientAddress(request))) {
+                decision = Authorization.Decision.FORBIDDEN;
+            } else {
+                decision = authorization.authorize(key, scope, required);
+            }
         } catch (IOException e) {
             decision = Authorization.Decision.FORBIDDEN;
         }
         request.setAttribute("jenesis.repository.decision", decision);
         return new AuthorizationDecision(decision == Authorization.Decision.ALLOWED);
+    }
+
+    /** The client's source address for the allowlist check: the TCP peer, with a forwarded header honoured only from a
+     *  trusted proxy. No trusted proxies are configured on the free single-token server, so the peer is always the
+     *  client and a client-supplied {@code X-Forwarded-For} is ignored (it cannot spoof the allowlist). A deployment
+     *  that terminates behind a real proxy contributes a richer manager that passes its trusted-proxy CIDRs here. */
+    private static String clientAddress(HttpServletRequest request) {
+        return Authorization.clientAddress(
+                request.getRemoteAddr(), request.getHeader("X-Forwarded-For"), List.of());
     }
 }

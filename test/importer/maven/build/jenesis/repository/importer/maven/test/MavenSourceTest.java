@@ -259,6 +259,50 @@ class MavenSourceTest {
     }
 
     @Test
+    void the_index_walk_bounds_its_retained_coordinates_and_skips_the_metadata_refresh_past_the_limit()
+            throws IOException {
+        // Three coordinates in the index; a refresh limit of two admits the first two seen for the maven-metadata
+        // refresh pass and lets the third overflow. Every coordinate's index record is still imported; only the
+        // overflow coordinate's metadata refresh (its lagging 2.0) is skipped, so a huge source imports with bounded
+        // heap while the authoritative index content stays complete.
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
+        responses.put(root, status(403));
+        responses.put(root + ".index/nexus-maven-repository-index.properties", ok("nexus.index.id=repo\n"));
+        responses.put(root + ".index/nexus-maven-repository-index.gz", new ProxyFormat.Fetched(200, index(List.of(
+                record("u", "org.a|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"),
+                record("u", "org.b|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"),
+                record("u", "org.c|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"))), Map.of()));
+        String metadata = """
+                <metadata><versioning><versions>
+                  <version>1.0</version><version>2.0</version>
+                </versions></versioning></metadata>""";
+        for (String group : List.of("a", "b", "c")) {
+            responses.put(root + "org/" + group + "/lib/maven-metadata.xml", ok(metadata));
+            responses.put(root + "org/" + group + "/lib/2.0/lib-2.0.pom", ok("<project><packaging>pom</packaging></project>"));
+        }
+        FakeFetcher fetcher = new FakeFetcher(responses);
+
+        List<String> paths = new ArrayList<>(), cursors = new ArrayList<>();
+        new MavenSource(URI.create("https://mirror.example/repo"), ".", fetcher).withRefreshLimit(2)
+                .forEach((format, path, content) -> paths.add(path), cursors::add);
+
+        // Every coordinate's index records are imported, and the two tracked coordinates are refreshed to their 2.0;
+        // the overflow coordinate (org.c) imports its index record but its 2.0 is never refreshed in.
+        assertThat(paths).containsExactly(
+                "org/a/lib/1.0/lib-1.0.jar", "org/a/lib/1.0/lib-1.0.pom",
+                "org/b/lib/1.0/lib-1.0.jar", "org/b/lib/1.0/lib-1.0.pom",
+                "org/c/lib/1.0/lib-1.0.jar", "org/c/lib/1.0/lib-1.0.pom",
+                "org/a/lib/2.0/lib-2.0.pom",
+                "org/b/lib/2.0/lib-2.0.pom");
+        assertThat(cursors).containsExactly("meta:org/a/lib", "meta:org/b/lib", null);
+        // The bound shows on the wire: the two tracked coordinates' metadata is fetched, the overflow one's is not.
+        assertThat(fetcher.urls)
+                .contains(root + "org/a/lib/maven-metadata.xml", root + "org/b/lib/maven-metadata.xml")
+                .doesNotContain(root + "org/c/lib/maven-metadata.xml");
+    }
+
+    @Test
     void an_index_walk_resumes_by_record_position() throws IOException {
         String root = "https://mirror.example/repo/";
         List<Map<String, String>> records = new ArrayList<>();

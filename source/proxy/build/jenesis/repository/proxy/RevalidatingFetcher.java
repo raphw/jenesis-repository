@@ -31,12 +31,16 @@ public final class RevalidatingFetcher implements ProxyFormat.Fetcher, Observabi
     private static final long MAX_TOTAL = 64L * 1024 * 1024;
     private static final int MAX_BODY = 8 * 1024 * 1024;
 
-    private record Cached(byte[] body, Map<String, String> headers, String etag, String lastModified) {
+    private record Cached(byte[] body, Map<String, String> headers, String etag, String lastModified, long sequence) {
     }
 
     private final ProxyFormat.Fetcher delegate;
     private final ConcurrentMap<URI, Cached> cache = new ConcurrentHashMap<>();
     private final AtomicLong bytes = new AtomicLong();
+    // A monotonic stamp assigned to each entry as it is (re)fetched, so eviction can order by age: a ConcurrentHashMap
+    // iterates its entrySet in hash-bucket order, which says nothing about which entry is oldest, so the sequence is
+    // what makes "evict the oldest first" actually oldest-first rather than an arbitrary bucket walk.
+    private final AtomicLong sequence = new AtomicLong();
 
     public RevalidatingFetcher(ProxyFormat.Fetcher delegate) {
         this.delegate = delegate;
@@ -57,7 +61,8 @@ public final class RevalidatingFetcher implements ProxyFormat.Fetcher, Observabi
             String etag = response.header("ETag");
             String lastModified = response.header("Last-Modified");
             if ((etag != null || lastModified != null) && response.body().length <= MAX_BODY) {
-                store(url, new Cached(response.body(), response.headers(), etag, lastModified));
+                store(url, new Cached(response.body(), response.headers(), etag, lastModified,
+                        sequence.incrementAndGet()));
             } else {
                 // Drop any prior entry, subtracting its bytes from the running total: a bare cache.remove would leak
                 // the accounting so `bytes` drifts permanently high and the eviction loop later evicts every fresh
@@ -115,11 +120,21 @@ public final class RevalidatingFetcher implements ProxyFormat.Fetcher, Observabi
     private void store(URI url, Cached cached) {
         Cached previous = cache.put(url, cached);
         long total = bytes.addAndGet(cached.body().length - (previous == null ? 0 : previous.body().length));
-        Iterator<Map.Entry<URI, Cached>> victims = cache.entrySet().iterator();
-        while (total > MAX_TOTAL && victims.hasNext()) {
+        if (total <= MAX_TOTAL) {
+            return;
+        }
+        // Evict oldest-first: order a snapshot of the entries by their fetch sequence (ascending, so the
+        // least-recently-refreshed lead) and drop from the front until the total is back under the ceiling. Iterating
+        // the ConcurrentHashMap directly would evict in hash-bucket order - an arbitrary victim, not the oldest the
+        // javadoc and the bytes gauge promise. The atomic remove(key, value) keeps the byte accounting exact even if
+        // two threads evict concurrently: only a removal that actually took effect subtracts its bytes.
+        List<Map.Entry<URI, Cached>> entries = new ArrayList<>(cache.entrySet());
+        entries.sort(Comparator.comparingLong(entry -> entry.getValue().sequence()));
+        Iterator<Map.Entry<URI, Cached>> victims = entries.iterator();
+        while (bytes.get() > MAX_TOTAL && victims.hasNext()) {
             Map.Entry<URI, Cached> victim = victims.next();
             if (cache.remove(victim.getKey(), victim.getValue())) {
-                total = bytes.addAndGet(-victim.getValue().body().length);
+                bytes.addAndGet(-victim.getValue().body().length);
             }
         }
     }

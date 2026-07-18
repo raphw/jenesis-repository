@@ -40,6 +40,8 @@ public class RepositoryAuthE2ETest {
     private String ro;
     private String bogus;
     private String releasesRo;
+    private String offnet;
+    private String allowlisted;
 
     @BeforeAll
     public void boot() throws IOException {
@@ -55,6 +57,14 @@ public class RepositoryAuthE2ETest {
         authorization.grant(ro, "*", Authorization.REPOSITORY_READ);
         releasesRo = Authorization.mint("acme");
         authorization.grant(releasesRo, "releases", Authorization.REPOSITORY_READ);
+        // Two read keys carrying a source-IP allowlist: one that excludes loopback (so a request from the test client
+        // is off-net) and one that includes it (so the same request is on-net), to prove the allowlist gates the wire.
+        offnet = Authorization.mint("acme");
+        authorization.grant(offnet, "*", Authorization.REPOSITORY_READ);
+        authorization.setAllowedAddresses("acme", Authorization.hash(offnet), "10.0.0.0/8");
+        allowlisted = Authorization.mint("acme");
+        authorization.grant(allowlisted, "*", Authorization.REPOSITORY_READ);
+        authorization.setAllowedAddresses("acme", Authorization.hash(allowlisted), "127.0.0.1,::1");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         root = "http://localhost:" + server.port();
@@ -107,6 +117,17 @@ public class RepositoryAuthE2ETest {
         assertThat(assets(releasesRo, "releases").statusCode()).isEqualTo(200);
         assertThat(assets(releasesRo, "default").statusCode()).isEqualTo(403);
         assertThat(assets(ro, "default").statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    public void a_key_is_refused_from_an_address_outside_its_allowlist_and_admitted_from_within() throws Exception {
+        // A deploy from loopback (ci carries no allowlist, so any address is admitted) seeds an artifact to read.
+        assertThat(put("maven/org/example/ip/1/ip-1.jar", ci).statusCode()).isEqualTo(201);
+        // offnet has repository:read but an allowlist of 10.0.0.0/8; the test client connects over loopback, which is
+        // outside it, so an otherwise-valid key is forbidden - the allowlist is enforced on the request path, not just
+        // stored. allowlisted carries the same read right and an allowlist that includes loopback, so it reads.
+        assertThat(get("maven/org/example/ip/1/ip-1.jar", offnet).statusCode()).isEqualTo(403);
+        assertThat(get("maven/org/example/ip/1/ip-1.jar", allowlisted).statusCode()).isEqualTo(200);
     }
 
     private HttpResponse<byte[]> assets(String key) throws IOException, InterruptedException {
