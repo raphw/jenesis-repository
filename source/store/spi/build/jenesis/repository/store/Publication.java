@@ -246,6 +246,11 @@ public final class Publication {
     private PublishInterceptor.Content access(String hash) {
         return new PublishInterceptor.Content() {
             @Override
+            public ArtifactStore store() {
+                return store;
+            }
+
+            @Override
             public InputStream open() throws IOException {
                 return store.open("blobs/" + hash);
             }

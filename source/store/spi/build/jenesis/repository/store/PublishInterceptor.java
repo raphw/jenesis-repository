@@ -35,6 +35,13 @@ public interface PublishInterceptor {
 
         /** The bytes already published at a sibling request path (a jar reading its POM), or empty if nothing is there. */
         Optional<byte[]> sibling(String path) throws IOException;
+
+        /** The scoped store the publication routed through - the doubly-scoped (tenant/repository) space this upload
+         *  belongs to, the same store {@link #committed} receives. A screen that must consult already-recorded state
+         *  for its verdict - an operator's accept-risk waiver recorded against this coordinate's findings, say - reads
+         *  it from here, so the decision is made against the repository's own durable record rather than a tenant-only
+         *  view the gate cannot scope correctly. Keep any such read cheap; {@code assess} is on the publish path. */
+        ArtifactStore store();
     }
 
     /** The screen's position in the chain, lower first; screens sharing a position keep their discovery order. The
