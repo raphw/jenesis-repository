@@ -56,6 +56,14 @@ public class GcsConditionalWriteTest {
         try (exchange) {
             String path = exchange.getRequestURI().getPath();
             byte[] body = exchange.getRequestBody().readAllBytes();
+            if (path.startsWith("/gone")) {
+                // A configured-but-absent bucket: every operation on it (including the provider's swallowed
+                // create-bucket attempt) answers 404 NoSuchBucket, the bucket-level 404 a versioned write must
+                // surface as a real error rather than mistake for a key-level CAS conflict.
+                respond(exchange, 404, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
+                        + "<Code>NoSuchBucket</Code><Message>the bucket does not exist</Message></Error>");
+                return;
+            }
             if (!path.startsWith("/repo")) {
                 exchange.sendResponseHeaders(501, -1);
                 return;
@@ -143,5 +151,22 @@ public class GcsConditionalWriteTest {
         assertThatThrownBy(() -> ArtifactStoreProvider.resolve("gcs", key -> null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("JENESIS_GCS_BUCKET");
+    }
+
+    @Test
+    public void a_bucket_level_404_surfaces_as_a_transport_error_not_a_cas_conflict() {
+        // A NoSuchBucket 404 is a misconfiguration or outage - a missing/renamed bucket - not the benign key-level
+        // 404 an If-generation-match write treats as a CAS conflict. Mapping it to a false return would turn it into
+        // silent retry-exhaustion; a versioned write must surface it as a real IOException.
+        Map<String, String> values = Map.of(
+                "JENESIS_GCS_BUCKET", "gone",
+                "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.getAddress().getPort(),
+                "JENESIS_GCS_ACCESS_KEY_ID", "hmac-access",
+                "JENESIS_GCS_SECRET_ACCESS_KEY", "hmac-secret");
+        ArtifactStore missing = ArtifactStoreProvider.resolve("gcs", values::get).scope("acme");
+        assertThatThrownBy(() -> missing.writeVersioned("config/x", "v".getBytes(StandardCharsets.UTF_8), null))
+                .as("a bucket-level 404 is a real transport/config failure, never a silent CAS conflict")
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("bucket");
     }
 }

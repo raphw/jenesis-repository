@@ -67,6 +67,34 @@ class GcGraceFloorTest {
     }
 
     @Test
+    void the_dry_run_applies_the_same_grace_floor_as_collect_so_they_agree() throws IOException {
+        // plan() must apply the wall-clock grace floor collect() enforces, or the dry run over-reports every
+        // condemned blob still inside its grace window - previewing a reclamation the next collect would withhold.
+        ArtifactStore store = store();
+        Publication publication = new Publication(store);
+        String orphan = publication.storeBlob(new ByteArrayInputStream("orphan".getBytes(StandardCharsets.UTF_8)));
+
+        // Pass 1 condemns the orphan under a one-hour floor, stamping the marker with this instant.
+        assertThat(collector(Duration.ofHours(1)).collect(store, List.of("publish"), clock.instant()).condemned())
+                .isEqualTo(1);
+
+        // Under the floor: the dry run previews nothing due, and a real collect withholds it too - they agree.
+        clock.advance(Duration.ofMinutes(10));
+        assertThat(collector(Duration.ofHours(1)).plan(store, List.of("publish"), clock.instant()).collected())
+                .as("under the wall-clock floor the dry run previews nothing due").isZero();
+        assertThat(collector(Duration.ofHours(1)).collect(store, List.of("publish"), clock.instant()).collected())
+                .as("and the collect withholds it too").isZero();
+
+        // Past the floor: the dry run previews the blob due, matching the collect that then reclaims it.
+        clock.advance(Duration.ofHours(1));
+        assertThat(collector(Duration.ofHours(1)).plan(store, List.of("publish"), clock.instant()).collected())
+                .as("past the floor the dry run previews the blob due").isEqualTo(1);
+        assertThat(collector(Duration.ofHours(1)).collect(store, List.of("publish"), clock.instant()).collected())
+                .as("and the collect reclaims exactly what the dry run previewed").isEqualTo(1);
+        assertThat(store.exists("blobs/" + orphan)).isFalse();
+    }
+
+    @Test
     void a_zero_floor_is_the_generation_only_default() throws IOException {
         ArtifactStore store = store();
         Publication publication = new Publication(store);

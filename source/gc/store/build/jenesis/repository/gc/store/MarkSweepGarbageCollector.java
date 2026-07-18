@@ -90,9 +90,19 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
         long[] due = {0};
         List<String> sample = new ArrayList<>();
         each(store, CONDEMNED, name -> {
-            if (!hash(name) || marked(store, name, judged)
-                    || !store.exists("blobs/" + name) || references.contains(name)) {
-                return; // unrecognised, condemned by a newer judgment, already-collected residue, or re-referenced
+            if (!hash(name) || !store.exists("blobs/" + name) || references.contains(name)) {
+                return; // unrecognised, already-collected residue, or re-referenced
+            }
+            Marker parsed = store.readVersioned(CONDEMNED + "/" + name)
+                    .map(MarkSweepGarbageCollector::parse).orElse(null);
+            // Mirror collect()'s deletion test exactly, so the dry run previews precisely what the next collect would
+            // reclaim: condemned by a judgment at or before the completed mark (an unreadable/newer marker is not due,
+            // repaired by a sweep) AND past the wall-clock grace floor (zero by default). Applying the same floor here
+            // is what keeps plan and collect in agreement - without it the dry run over-reports every blob still
+            // inside its grace window.
+            if (parsed == null || parsed.pass() > judged
+                    || Duration.between(parsed.since(), now).compareTo(graceFloor) < 0) {
+                return;
             }
             due[0]++;
             if (sample.size() < GcPlan.SAMPLE) {
@@ -122,14 +132,6 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
             }
         }
         return best;
-    }
-
-    /** Whether the marker was stamped by a judgment newer than the completed mark - due only at the pass after
-     *  the one that condemned it. An unreadable marker is treated as newer: never due, repaired by a sweep. */
-    private static boolean marked(ArtifactStore store, String name, long judged) throws IOException {
-        Marker marker = store.readVersioned(CONDEMNED + "/" + name)
-                .map(MarkSweepGarbageCollector::parse).orElse(null);
-        return marker == null || marker.pass() > judged;
     }
 
     @Override
@@ -298,12 +300,13 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
                 var _ = store.writeVersioned(marker, marker(generation, now),
                         current.map(ArtifactStore.Versioned::token).orElse(null));
                 condemned++;
-            } else if (parsed.pass() < generation && Duration.between(parsed.since(), now).compareTo(graceFloor) >= 0) {
-                // Condemned by an earlier pass, still unreferenced by this one, and past the wall-clock grace floor
-                // (zero by default). The marker read above is the final guard - a re-link cleared it on the write
-                // path - and the completed mark's shard needs no re-read: it gained nothing but duplicates since the
-                // pass finished. Blob first, marker last, so a crash in between leaves only a marker the convergence
-                // leg removes.
+            } else if (parsed.pass() < generation && Duration.between(parsed.since(), now).compareTo(graceFloor) >= 0
+                    && referencesStillStand()) {
+                // Condemned by an earlier pass, still unreferenced by this one, past the wall-clock grace floor
+                // (zero by default), and our reference shards still stand (the lease fence below). The marker read
+                // above is the final guard - a re-link cleared it on the write path - and the completed mark's shard
+                // needs no re-read: it gained nothing but duplicates since the pass finished. Blob first, marker
+                // last, so a crash in between leaves only a marker the convergence leg removes.
                 deleteIfPresent(store, key);
                 deleteIfPresent(store, marker);
                 collected++;
@@ -312,6 +315,21 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
                 }
             }
             // parsed.pass() >= generation, or younger than the grace floor: still within its grace, left standing.
+        }
+
+        /** A lease fence against deleting a blob after this sweep's reference shards were dropped from under it. The
+         *  shards this sweep judges against live under {@code gc/<generation>/refs} (keyed by the mark generation),
+         *  and {@link #converge} drops a pass's shards only for {@code pass < generation} - so they can only vanish
+         *  once a mark completes at a generation strictly greater than ours. A paused or lease-expired sweep worker
+         *  that resumes after that has stopped could otherwise re-judge against emptied shards and delete a still-
+         *  referenced blob (every hash reads as unreferenced when the shards are gone). Re-reading the mark manifest
+         *  immediately before each delete, and refusing when its generation has advanced past ours, closes that
+         *  window: an advanced generation is the necessary precondition for our shards to have been dropped, so this
+         *  never deletes against a superseded reference set. It is deliberately conservative - it may defer a still-
+         *  safe delete while another node's newer mark is only in flight (its converge has not run) - which the next
+         *  pass, marking afresh, re-judges and reclaims. Correctness over a marginal deletion this round. */
+        private boolean referencesStillStand() throws IOException {
+            return walk.pass(store, MARK).map(WalkPass::generation).orElse(0L) <= generation;
         }
     }
 

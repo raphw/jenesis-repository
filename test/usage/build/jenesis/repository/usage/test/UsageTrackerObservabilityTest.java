@@ -136,6 +136,48 @@ class UsageTrackerObservabilityTest {
         assertThat(report.tasks()).extracting(TaskStatus::name).containsExactly("jenesis.usage.flush");
     }
 
+    @Test
+    void close_flushes_every_accepted_hit_including_the_undrained_queue_tail() throws IOException {
+        // Determinism on shutdown: close() drains the queue tail and flushes every residual delta only after the
+        // worker has stopped, so no accepted hit within the process lifetime is lost. The worker is never started
+        // here, so every recorded hit sits in the queue; a clean close must still persist them all.
+        BatchingKeyUsageTracker tracker = new BatchingKeyUsageTracker(authorization, true);
+        for (int index = 0; index < 50; index++) {
+            tracker.record("acme", hash, "10.0.0.1");
+        }
+
+        tracker.close();
+
+        assertThat(authorization.credential("acme", hash).orElseThrow().useCount())
+                .as("close drains the queue tail and flushes it - no accepted hit is lost").isEqualTo(50L);
+    }
+
+    @Test
+    void close_flushes_the_same_day_residual_after_joining_the_worker() throws Exception {
+        // A credential already flushed once today is gated by the at-most-once-per-day rule, so its later same-day
+        // hits accumulate unflushed; close() must flush that residual after the worker stops, without racing its
+        // count++ - so no hit within the process lifetime is lost.
+        BatchingKeyUsageTracker tracker = new BatchingKeyUsageTracker(authorization, true);
+        tracker.start();
+        try {
+            tracker.record("acme", hash, "10.0.0.1");
+            Instant deadline = Instant.now().plusSeconds(10);
+            while (authorization.credential("acme", hash).orElseThrow().useCount() < 1L
+                    && Instant.now().isBefore(deadline)) {
+                Thread.sleep(5);
+            }
+            assertThat(authorization.credential("acme", hash).orElseThrow().useCount())
+                    .as("the worker flushed the first hit").isEqualTo(1L);
+            tracker.record("acme", hash, "10.0.0.1");   // these accumulate but the worker will not re-flush today
+            tracker.record("acme", hash, "10.0.0.1");
+        } finally {
+            tracker.close();
+        }
+
+        assertThat(authorization.credential("acme", hash).orElseThrow().useCount())
+                .as("close flushes the same-day residual after joining the worker - no hit lost").isEqualTo(3L);
+    }
+
     private static Metric metric(BatchingKeyUsageTracker tracker, String name) {
         return tracker.metrics().stream()
                 .filter(metric -> metric.name().equals(name))

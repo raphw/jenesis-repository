@@ -207,11 +207,20 @@ public final class FilesystemArtifactStore implements ArtifactStore {
         if (!Files.isRegularFile(path)) {
             return Optional.empty();
         }
-        // Token before content: a write landing in between then pairs OLD token with NEW content, so a
-        // compare-and-set from this read loses and retries - the safe direction. The reverse order would pair
-        // a fresh token with stale content and let a stale update pass as current.
-        long token = Files.getLastModifiedTime(path).toMillis();
-        return Optional.of(new Versioned(Files.readAllBytes(path), token));
+        // The isRegularFile probe and the token/content reads are not one atomic operation: a concurrent delete can
+        // vanish the file in the window between the probe and the reads (or between reading the token and the bytes),
+        // which throws NoSuchFileException (or, on some providers, FileNotFoundException) where the contract - and the
+        // object-store backends' 404 -> empty behaviour - is Optional.empty(). Map that race to absent, so a reader
+        // that lost to a delete simply sees no object, never an escaping exception.
+        try {
+            // Token before content: a write landing in between then pairs OLD token with NEW content, so a
+            // compare-and-set from this read loses and retries - the safe direction. The reverse order would pair
+            // a fresh token with stale content and let a stale update pass as current.
+            long token = Files.getLastModifiedTime(path).toMillis();
+            return Optional.of(new Versioned(Files.readAllBytes(path), token));
+        } catch (NoSuchFileException | FileNotFoundException e) {
+            return Optional.empty();
+        }
     }
 
     @Override

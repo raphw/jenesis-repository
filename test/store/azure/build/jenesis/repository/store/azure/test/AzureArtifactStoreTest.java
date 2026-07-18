@@ -9,6 +9,7 @@ import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static build.jenesis.repository.store.azure.test.Requirement.requireOrSkip;
 
 /**
@@ -32,6 +33,7 @@ public class AzureArtifactStoreTest {
             "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 
     private Docker azurite;
+    private BlobServiceClient service;
     private BlobContainerClient container;
     private ArtifactStore store;
 
@@ -47,7 +49,7 @@ public class AzureArtifactStoreTest {
         String connectionString = "DefaultEndpointsProtocol=http;AccountName=" + ACCOUNT
                 + ";AccountKey=" + KEY
                 + ";BlobEndpoint=http://127.0.0.1:" + port + "/" + ACCOUNT + ";";
-        BlobServiceClient service = new BlobServiceClientBuilder().connectionString(connectionString).buildClient();
+        service = new BlobServiceClientBuilder().connectionString(connectionString).buildClient();
         container = service.getBlobContainerClient("repo");
         awaitReady();
         store = new AzureArtifactStore(container).scope("acme");
@@ -132,6 +134,17 @@ public class AzureArtifactStoreTest {
         assertThat(store.writeVersioned(key, "v2".getBytes(StandardCharsets.UTF_8), token)).isTrue();
         assertThat(store.writeVersioned(key, "v3".getBytes(StandardCharsets.UTF_8), token)).isFalse();
         assertThat(new String(store.readVersioned(key).orElseThrow().content(), StandardCharsets.UTF_8)).isEqualTo("v2");
+    }
+
+    @Test
+    public void write_versioned_surfaces_a_missing_container_as_a_transport_error() {
+        // A container-level 404 (ContainerNotFound) is a misconfiguration or outage, not the benign blob-level 404
+        // that maps to a false CAS conflict; a versioned write against a container that does not exist must surface a
+        // real IOException rather than turn a broken deployment into silent retry-exhaustion at the caller.
+        ArtifactStore missing = new AzureArtifactStore(service.getBlobContainerClient("no-such-container")).scope("acme");
+        assertThatThrownBy(() -> missing.writeVersioned("config/x", "v".getBytes(StandardCharsets.UTF_8), null))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("container");
     }
 
     @Test

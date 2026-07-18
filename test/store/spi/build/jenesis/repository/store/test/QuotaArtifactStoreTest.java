@@ -54,6 +54,22 @@ class QuotaArtifactStoreTest {
     }
 
     @Test
+    void a_failed_delete_leaves_the_blob_counted_never_dropping_the_bytes() throws IOException {
+        // delete() must decrement only after the delegate delete succeeds: a failed delete leaves the blob stored,
+        // so it must stay counted. Decrementing first would drop the bytes while the blob lingers and let the quota
+        // over-admit - the counter drifts toward over-counting (the safe direction), never toward a phantom-free one.
+        ArtifactStore raw = delegate();
+        QuotaArtifactStore store = new QuotaArtifactStore(new FailingDeleteDelegate(raw, "blobs/aaa"), 1000);
+        store.write("blobs/aaa", bytes(300));
+        assertThat(store.used()).isEqualTo(300);
+
+        assertThatThrownBy(() -> store.delete("blobs/aaa")).isInstanceOf(IOException.class);
+
+        assertThat(store.exists("blobs/aaa")).as("the failed delete left the blob stored").isTrue();
+        assertThat(store.used()).as("so the bytes stay counted - no phantom free").isEqualTo(300);
+    }
+
+    @Test
     void a_re_written_blob_does_not_double_count() throws IOException {
         QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
         store.write("blobs/aaa", bytes(300));
@@ -146,6 +162,75 @@ class QuotaArtifactStoreTest {
         assertThat(store.recompute()).as("every live blob summed across page boundaries").isEqualTo(2001);
         assertThat(store.used()).isEqualTo(2001);
         assertThat(pages).as("bounded pages, resumed across the namespace").hasSize(3).containsOnly(1000);
+    }
+
+    /** Forwards to a real store but fails {@link ArtifactStore#delete} for one key, standing in for a delete that
+     *  the backend rejects (a permission error, a transient outage), so the counter can be asserted to hold when the
+     *  blob it names is still stored. */
+    private record FailingDeleteDelegate(ArtifactStore delegate, String failKey) implements ArtifactStore {
+
+        @Override
+        public void delete(String key) throws IOException {
+            if (key.equals(failKey)) {
+                throw new IOException("delete refused for " + key);
+            }
+            delegate.delete(key);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
     }
 
     /** Forwards to a real store but fails {@link ArtifactStore#list} outright, so the recompute provably streams

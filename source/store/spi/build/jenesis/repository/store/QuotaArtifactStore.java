@@ -196,13 +196,19 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
 
     @Override
     public void delete(String key) throws IOException {
-        if (limit > 0 && key.startsWith(BLOBS)) {
-            long size = delegate.size(key);
-            if (size > 0) {
-                adjust(-size);
-            }
+        if (limit <= 0 || !key.startsWith(BLOBS)) {
+            delegate.delete(key);
+            return;
         }
+        // Delete first, decrement after the delete succeeds: a failed delete leaves the blob stored, so it must stay
+        // counted. Decrementing before the delete would drop the bytes from the counter while the blob lingers, and a
+        // string of failed deletes would let the quota over-admit. Fail toward over-counting - the safe direction, the
+        // periodic recompute reconcile corrects any drift - never toward a phantom-freed counter.
+        long size = delegate.size(key);
         delegate.delete(key);
+        if (size > 0) {
+            adjust(-size);
+        }
     }
 
     /** Add a signed delta to the persisted counter, retrying the compare-and-set under contention; best-effort -

@@ -22,6 +22,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -258,6 +260,41 @@ class FilesystemArtifactStoreTest {
     @Test
     void read_versioned_is_empty_for_an_absent_object() throws IOException {
         assertThat(store.readVersioned("meta/none")).isEmpty();
+    }
+
+    @Test
+    void read_versioned_reads_a_racing_delete_as_empty_never_throwing() throws Exception {
+        // The isRegularFile probe and the token/content reads are not one atomic operation: a concurrent delete can
+        // vanish the file in the window. The contract - and the object-store backends' 404 -> empty - is
+        // Optional.empty(), never an escaping NoSuchFileException. A writer flips the key in and out while a reader
+        // hammers readVersioned; the reader must only ever see the written content or absence, and never throw.
+        AtomicReference<Throwable> writerFailure = new AtomicReference<>();
+        AtomicBoolean stop = new AtomicBoolean();
+        Thread writer = new Thread(() -> {
+            try {
+                while (!stop.get()) {
+                    store.writeVersioned("race/key", "v".getBytes(StandardCharsets.UTF_8), null);
+                    store.delete("race/key");
+                }
+            } catch (Throwable t) {
+                writerFailure.compareAndSet(null, t);
+            }
+        });
+        writer.start();
+        try {
+            for (int i = 0; i < 20_000 && writerFailure.get() == null; i++) {
+                // A pre-fix readVersioned would let a NoSuchFileException escape here on the race; it must not.
+                Optional<ArtifactStore.Versioned> read = store.readVersioned("race/key");
+                if (read.isPresent()) {
+                    assertThat(new String(read.get().content(), StandardCharsets.UTF_8))
+                            .as("a present read is always the whole written content, never a torn half").isEqualTo("v");
+                }
+            }
+        } finally {
+            stop.set(true);
+            writer.join(30_000);
+        }
+        assertThat(writerFailure.get()).as("the churn writer never faulted").isNull();
     }
 
     @Test
