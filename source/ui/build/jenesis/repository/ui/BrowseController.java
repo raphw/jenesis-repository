@@ -2,6 +2,7 @@ package build.jenesis.repository.ui;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.PublishedAssets;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -47,10 +48,12 @@ public class BrowseController {
 
     private final ArtifactStore store;
     private final Publication publication;
+    private final PublishedAssets assets;
 
     public BrowseController(ArtifactStore store) {
         this.store = store;
         this.publication = new Publication(store);
+        this.assets = new PublishedAssets(store, publication);
     }
 
     /** The full browse page: the breadcrumb trail to {@code path} and the immediate children under it. */
@@ -77,55 +80,29 @@ public class BrowseController {
      * The console face of the free {@code GET /api/assets} enumeration: a downloadable, streamed export of every
      * published asset in the repository as NDJSON (one {@code {"path","size","sha256"}} object per line), the outbound
      * mirror of the import connectors so getting your data out is never the paid feature. It walks the {@code publish/}
-     * pointer tree through the same {@link ArtifactStore} listing seam the browse uses - reading only the tiny
-     * publication pointer (its content <em>is</em> the blob hash) and the blob's stored size, never an artifact blob -
-     * and writes each entry as it is reached, so an arbitrarily large repository exports without buffering the tree.
-     * A path the store withholds (a retracted or quarantined artifact) is skipped through {@link Publication#located},
-     * and the {@code /quarantine} review subtree is never walked, so the export serves exactly what a {@code GET}
-     * would. It is deny-by-default authenticated like the browse (a GET any signed-in user may take); the coordinate
-     * enrichment {@code /api/assets} adds needs the owning format, which this store-only console does not carry, so the
-     * export carries the format-neutral pointer facts.
+     * pointer tree through the shared {@link PublishedAssets} walk the server's {@code /api/assets} catalogue also uses
+     * - reading only the tiny publication pointer (its content <em>is</em> the blob hash) and the blob's stored size,
+     * never an artifact blob - and writes each entry as it is reached, so an arbitrarily large repository exports
+     * without buffering the tree. A path the store withholds (a retracted or quarantined artifact) is skipped and the
+     * {@code /quarantine} review subtree is never walked (both are the shared walk's own guarantees), so the export
+     * serves exactly what a {@code GET} would. It is deny-by-default authenticated like the browse (a GET any signed-in
+     * user may take); the coordinate enrichment {@code /api/assets} adds needs the owning format, which this store-only
+     * console does not carry, so the export carries the format-neutral pointer facts the walk emits, as NDJSON.
      */
     @GetMapping("/assets")
     public void assets(HttpServletResponse response) throws IOException {
         response.setHeader("Content-Type", "application/x-ndjson");
         response.setHeader("Content-Disposition", "attachment; filename=\"assets.ndjson\"");
         try (Writer out = new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8)) {
-            walk("", out);
+            assets.walk(null, Integer.MAX_VALUE, entry -> emit(entry, out));
         }
     }
 
-    /** Depth-first over the {@code publish/} pointer tree, emitting each leaf pointer as one NDJSON line; the
-     *  content-addressed {@code blobs/} bucket and the {@code /quarantine} review subtree are never walked. */
-    private void walk(String relative, Writer out) throws IOException {
-        List<String> children = store.list(relative.isEmpty() ? ROOT : ROOT + "/" + relative);
-        if (children.isEmpty()) {
-            if (!relative.isEmpty()) {
-                emit(relative, out);
-            }
-            return;
-        }
-        for (String child : children) {
-            if (relative.isEmpty() && child.equals("quarantine")) {
-                continue;
-            }
-            walk(relative.isEmpty() ? child : relative + "/" + child, out);
-        }
-    }
-
-    /** Emit one published leaf as an NDJSON object; a pointer the store withholds (quarantined/retracted) or whose blob
-     *  is gone resolves to no key and is skipped, so the export never names an unserved path. */
-    private void emit(String relative, Writer out) throws IOException {
-        String requestPath = "/" + relative;
-        Optional<String> located = publication.located(requestPath);
-        if (located.isEmpty()) {
-            return;
-        }
-        String key = located.get();
-        long size = store.size(key);
-        String sha256 = key.substring("blobs/".length());
-        out.write("{\"path\":\"" + jsonEscape(requestPath) + "\",\"size\":" + size
-                + ",\"sha256\":\"" + jsonEscape(sha256) + "\"}\n");
+    /** Render one walked pointer as an NDJSON object; the domain walk already skipped withheld pointers and the
+     *  quarantine subtree, so this is pure presentation - the one thing that legitimately lives in the controller. */
+    private static void emit(PublishedAssets.Entry entry, Writer out) throws IOException {
+        out.write("{\"path\":\"" + jsonEscape(entry.path()) + "\",\"size\":" + entry.size()
+                + ",\"sha256\":\"" + jsonEscape(entry.sha256()) + "\"}\n");
     }
 
     /** Minimal JSON string escaping for the two fields the export carries - a request path and a hex digest - so a path
