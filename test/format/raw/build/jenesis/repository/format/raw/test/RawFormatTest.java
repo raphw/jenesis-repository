@@ -73,6 +73,30 @@ class RawFormatTest {
     }
 
     @Test
+    void a_quarantined_put_is_held_and_a_rejected_put_links_nothing() throws IOException {
+        // Guards RawFormat.handle's PUT routing through Publication.publish and its disposition->status mapping:
+        // QUARANTINE -> 202 and the path is withheld (GET 404, held under /quarantine); REJECT -> 422 and nothing is
+        // linked. A revert to link(storeBlob(...)) would answer 201 and serve both.
+        FakeExchange quarantined = new FakeExchange(
+                "PUT", "/raw/gate-quarantine.bin", "held".getBytes(StandardCharsets.UTF_8));
+        format.handle(quarantined, store);
+        assertThat(quarantined.status()).isEqualTo(202);
+
+        FakeExchange getHeld = new FakeExchange("GET", "/raw/gate-quarantine.bin");
+        format.handle(getHeld, store);
+        assertThat(getHeld.status()).as("a quarantined artifact is withheld from serving").isEqualTo(404);
+
+        FakeExchange rejected = new FakeExchange(
+                "PUT", "/raw/gate-reject.bin", "blocked".getBytes(StandardCharsets.UTF_8));
+        format.handle(rejected, store);
+        assertThat(rejected.status()).isEqualTo(422);
+
+        FakeExchange getRejected = new FakeExchange("GET", "/raw/gate-reject.bin");
+        format.handle(getRejected, store);
+        assertThat(getRejected.status()).isEqualTo(404);
+    }
+
+    @Test
     void a_missing_file_and_an_empty_directory_report_absence() throws IOException {
         FakeExchange head = new FakeExchange("HEAD", "/raw/missing");
         format.handle(head, store);
