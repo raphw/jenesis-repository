@@ -56,4 +56,21 @@ class RawImporterTest {
         importer.importArtifact("/other/x", new ByteArrayInputStream(new byte[]{1, 2}), store);
         assertThat(publication.located("/raw/other/x")).as("a leading slash is normalised").isPresent();
     }
+
+    @Test
+    void an_imported_asset_is_screened_by_the_gate() throws IOException {
+        // Guards RawImporter routing through Publication.publish rather than a raw link: a migrated asset the gate
+        // quarantines is withheld from serving (held for review), and a rejected one links nothing - a revert to
+        // link(storeBlob(content)) would import both un-screened.
+        importer.importArtifact("gate-quarantine.bin",
+                new ByteArrayInputStream("deny-listed".getBytes(StandardCharsets.UTF_8)), store);
+        assertThat(publication.located("/raw/gate-quarantine.bin"))
+                .as("a quarantined import is not served").isEmpty();
+        assertThat(publication.located("/quarantine/raw/gate-quarantine.bin"))
+                .as("but is held for review").isPresent();
+
+        importer.importArtifact("gate-reject.bin",
+                new ByteArrayInputStream("blocked".getBytes(StandardCharsets.UTF_8)), store);
+        assertThat(publication.located("/raw/gate-reject.bin")).as("a rejected import links nothing").isEmpty();
+    }
 }
