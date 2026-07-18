@@ -82,6 +82,13 @@ public final class RevalidatingFetcher implements ProxyFormat.Fetcher, Observabi
     }
 
     @Override
+    public Optional<ProxyFormat.Head> head(URI url, Map<String, String> requestHeaders) throws IOException {
+        // A HEAD carries no body to revalidate - only fetch's small index bodies are remembered - so it passes
+        // straight through to the delegate exactly as download does, preserving the delegate's real HTTP HEAD.
+        return delegate.head(url, requestHeaders);
+    }
+
+    @Override
     public List<Metric> metrics() {
         return List.of(
                 Metric.bounded("jenesis.proxy.revalidation.bytes",

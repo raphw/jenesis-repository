@@ -99,6 +99,47 @@ public interface ProxyFormat {
             return fetch(url, requestHeaders).map(response ->
                     new Download(response.status(), new ByteArrayInputStream(response.body()), response.headers()));
         }
+
+        /**
+         * Ask the upstream for a {@code GET}'s status and response headers <em>without</em> its body - the size, content
+         * type, {@code ETag} / {@code Last-Modified} and auth challenge a {@code HEAD} is served from, so a repository
+         * can answer a client {@code HEAD} (or size-probe a candidate) without pulling the artifact. An empty result is
+         * a transport failure and a non-{@code 200} rides in the {@link Head}'s status, mirroring {@link #fetch} /
+         * {@link #download} - the caller acts on the status rather than the fetcher throwing. {@code Fetcher.NONE}
+         * answers empty here as it does for every capability.
+         *
+         * <p>The default falls back to {@link #download}, reading only the status and headers and then closing the body
+         * stream without draining it - correct, but it still opens the upstream body, so an uncached large artifact's
+         * {@code HEAD} would open (though never read) its download. A real HTTP fetcher <strong>overrides this with an
+         * actual HTTP {@code HEAD} request</strong>, so the body is never opened at all and a huge uncached artifact's
+         * {@code HEAD} costs a header exchange, not a body transfer - the metadata-answered {@code HEAD} the streaming
+         * principle calls for.
+         */
+        default Optional<Head> head(URI url, Map<String, String> requestHeaders) throws IOException {
+            Optional<Download> download = download(url, requestHeaders);
+            if (download.isEmpty()) {
+                return Optional.empty();
+            }
+            try (Download response = download.get()) {
+                return Optional.of(new Head(response.status(), response.headers()));
+            }
+        }
+    }
+
+    /** A bodiless upstream response: the HTTP status and the response headers a {@code HEAD} carries (content type,
+     *  size via {@code Content-Length}, {@code ETag} / {@code Last-Modified} validators, an auth challenge) with no
+     *  body - the {@link ProxyFormat.Fetcher#head} counterpart of {@link Fetched} / {@link Download}. */
+    record Head(int status, Map<String, String> headers) {
+
+        /** The first value of a response header, case-insensitively, or {@code null}. */
+        public String header(String name) {
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                if (entry.getKey().equalsIgnoreCase(name)) {
+                    return entry.getValue();
+                }
+            }
+            return null;
+        }
     }
 
     /** A streaming upstream response: the HTTP status, the body stream (which the caller owns and closes, so a

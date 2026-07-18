@@ -11,7 +11,9 @@ import build.jenesis.repository.format.ProxyFormat;
  * The upstream fetch over HTTP: request headers are forwarded; the status and response headers are returned.
  * {@link ProxyFormat.Fetcher#download} is overridden to stream a download's body straight through rather than
  * buffer it, so a large artifact (a proxied blob or an import) copies from the network to storage without
- * materializing it; the caller acts on the status and closes the stream.
+ * materializing it; the caller acts on the status and closes the stream. {@link ProxyFormat.Fetcher#head} is
+ * likewise overridden to issue a real HTTP {@code HEAD}, so a size/metadata probe of an uncached large artifact
+ * never opens its body (the SPI default would fall back to a body-opening {@code download}).
  *
  * <p>Every request is bounded by a per-request timeout on top of the connect timeout, so a stalled upstream - one
  * that accepts the connection but never sends a response - cannot hang a proxy read or an import forever. A timeout
@@ -59,7 +61,7 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
     @Override
     public Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException {
         try {
-            HttpResponse<byte[]> response = send(url, requestHeaders, HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<byte[]> response = send(url, requestHeaders, "GET", HttpResponse.BodyHandlers.ofByteArray());
             return Optional.of(new ProxyFormat.Fetched(response.statusCode(), response.body(), headers(response)));
         } catch (HttpTimeoutException e) {
             return Optional.empty();
@@ -72,7 +74,7 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
     @Override
     public Optional<ProxyFormat.Download> download(URI url, Map<String, String> requestHeaders) throws IOException {
         try {
-            HttpResponse<InputStream> response = send(url, requestHeaders, HttpResponse.BodyHandlers.ofInputStream());
+            HttpResponse<InputStream> response = send(url, requestHeaders, "GET", HttpResponse.BodyHandlers.ofInputStream());
             return Optional.of(new ProxyFormat.Download(response.statusCode(), response.body(), headers(response)));
         } catch (HttpTimeoutException e) {
             return Optional.empty();
@@ -82,17 +84,41 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
         }
     }
 
-    /** Issue the GET and follow redirects by hand, dropping the {@link #SENSITIVE} headers the moment the chain
-     *  leaves the original origin so a caller credential never travels to a redirect target on another host. Both
-     *  entry points are GET, so a redirect never has to reconsider the method. An intermediate redirect's body is
-     *  closed before the next hop; the final response is returned with its body intact for the caller. */
-    private <T> HttpResponse<T> send(URI url, Map<String, String> requestHeaders, HttpResponse.BodyHandler<T> handler)
+    /**
+     * A genuine HTTP {@code HEAD}: the upstream is asked for a {@code GET}'s status and response headers with no body,
+     * so an uncached large artifact's {@code HEAD} costs a header exchange and never opens - let alone reads - its
+     * body, unlike the SPI default that would fall back to a body-opening {@link #download}. Redirects are followed
+     * by the same manual chain as {@link #fetch} / {@link #download} - the credential-dropping on a cross-origin hop
+     * included - reissuing {@code HEAD} at each hop; the {@link HttpResponse.BodyHandlers#discarding() discarding}
+     * handler means no body is buffered even should the upstream answer a {@code HEAD} with one.
+     */
+    @Override
+    public Optional<ProxyFormat.Head> head(URI url, Map<String, String> requestHeaders) throws IOException {
+        try {
+            HttpResponse<Void> response = send(url, requestHeaders, "HEAD", HttpResponse.BodyHandlers.discarding());
+            return Optional.of(new ProxyFormat.Head(response.statusCode(), headers(response)));
+        } catch (HttpTimeoutException e) {
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while fetching " + url, e);
+        }
+    }
+
+    /** Issue the request with the given {@code method} ({@code GET} or {@code HEAD}) and follow redirects by hand,
+     *  dropping the {@link #SENSITIVE} headers the moment the chain leaves the original origin so a caller credential
+     *  never travels to a redirect target on another host. The method is carried unchanged across every hop, so a
+     *  redirected {@code HEAD} stays a {@code HEAD}. An intermediate redirect's body is closed before the next hop;
+     *  the final response is returned with its body intact for the caller. */
+    private <T> HttpResponse<T> send(URI url, Map<String, String> requestHeaders, String method,
+                                     HttpResponse.BodyHandler<T> handler)
             throws IOException, InterruptedException {
         URI origin = url;
         URI current = url;
         Map<String, String> headers = new LinkedHashMap<>(requestHeaders);
         for (int redirect = 0; ; redirect++) {
-            HttpRequest.Builder request = HttpRequest.newBuilder(current).timeout(requestTimeout).GET();
+            HttpRequest.Builder request = HttpRequest.newBuilder(current).timeout(requestTimeout)
+                    .method(method, HttpRequest.BodyPublishers.noBody());
             headers.forEach(request::header);
             HttpResponse<T> response = client.send(request.build(), handler);
             Optional<String> location = redirect < MAX_REDIRECTS && isRedirect(response.statusCode())

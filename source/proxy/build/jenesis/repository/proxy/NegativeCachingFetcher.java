@@ -70,6 +70,21 @@ public final class NegativeCachingFetcher implements ProxyFormat.Fetcher, Observ
     }
 
     @Override
+    public Optional<ProxyFormat.Head> head(URI url, Map<String, String> requestHeaders) throws IOException {
+        // A HEAD probes the same URL a fetch/download would, so a remembered upstream 404 answers it from memory too;
+        // otherwise the delegate's real HTTP HEAD runs and a definite 404 is remembered, keeping the negative cache
+        // consistent across all three verbs.
+        if (cached(url)) {
+            return Optional.of(new ProxyFormat.Head(404, Map.of()));
+        }
+        Optional<ProxyFormat.Head> head = delegate.head(url, requestHeaders);
+        if (head.isPresent() && head.get().status() == 404) {
+            record(url);
+        }
+        return head;
+    }
+
+    @Override
     public List<Metric> metrics() {
         return List.of(Metric.bounded("jenesis.proxy.negativecache.entries",
                 "Upstream 404s currently remembered, so a build tool's re-probes for a missing artifact are answered "
