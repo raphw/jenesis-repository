@@ -69,4 +69,36 @@ class RawProxyTest {
         boolean served = format.proxy(listing, store, upstream, serving(200, new byte[]{1}));
         assertThat(served).isFalse();
     }
+
+    @Test
+    void a_quarantined_proxy_miss_is_screened_and_withheld_not_served() throws IOException {
+        // Guards RawFormat.proxy routing through Publication.publish (the compliance gate) rather than a raw
+        // store-then-link: a proxied artifact the gate quarantines is withheld, so located() is empty and the
+        // re-dispatch answers 404 - a revert to link(storeBlob(download.body())) would serve it 200.
+        byte[] body = "suspect upstream file".getBytes(StandardCharsets.UTF_8);
+        FakeExchange get = new FakeExchange("GET", "/raw/pkg/gate-quarantine.bin");
+
+        boolean served = format.proxy(get, store, upstream, serving(200, body));
+
+        assertThat(served).as("the proxy handled the request (screened, then re-dispatched)").isTrue();
+        assertThat(get.status()).as("the withheld artifact serves 404, not the fetched body").isEqualTo(404);
+        assertThat(new Publication(store).located("/raw/pkg/gate-quarantine.bin"))
+                .as("a quarantined proxy artifact is not located for serving").isEmpty();
+        assertThat(new Publication(store).located("/quarantine/raw/pkg/gate-quarantine.bin"))
+                .as("but it is held under the quarantine view for review").isPresent();
+    }
+
+    @Test
+    void a_rejected_proxy_miss_links_nothing() throws IOException {
+        FakeExchange get = new FakeExchange("GET", "/raw/pkg/gate-reject.bin");
+
+        boolean served = format.proxy(get, store, upstream,
+                serving(200, "rejected".getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(served).isTrue();
+        assertThat(get.status()).isEqualTo(404);
+        assertThat(new Publication(store).located("/raw/pkg/gate-reject.bin")).isEmpty();
+        assertThat(new Publication(store).located("/quarantine/raw/pkg/gate-reject.bin"))
+                .as("a rejected artifact is not even held for review").isEmpty();
+    }
 }

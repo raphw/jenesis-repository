@@ -3,6 +3,7 @@ package build.jenesis.repository.format.jenesis.test;
 import build.jenesis.repository.format.jenesis.JenesisFormat;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.store.Publication;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -73,6 +74,32 @@ class JenesisFormatTest {
         FakeExchange miss = new FakeExchange("HEAD", "/module/com.acme/9.9/com.acme.jar");
         format.handle(miss, store);
         assertThat(miss.status()).isEqualTo(404);
+    }
+
+    @Test
+    void a_quarantined_module_put_is_held_and_a_rejected_one_links_nothing() throws IOException {
+        // Guards JenesisFormat's hosted PUT routing through Publication.publish and its disposition->status mapping:
+        // QUARANTINE -> 202 with the path withheld (GET 404, held under /quarantine), REJECT -> 422 with nothing linked.
+        // A revert to link(storeBlob(exchange.requestStream())) would answer 201 and serve both un-screened.
+        FakeExchange quarantined = new FakeExchange(
+                "PUT", "/module/com.acme/1.0/gate-quarantine.jar", "held".getBytes(StandardCharsets.UTF_8));
+        format.handle(quarantined, store);
+        assertThat(quarantined.status()).isEqualTo(202);
+        assertThat(new Publication(store).located("/module/com.acme/1.0/gate-quarantine.jar"))
+                .as("a quarantined module is withheld from serving").isEmpty();
+        assertThat(new Publication(store).located("/quarantine/module/com.acme/1.0/gate-quarantine.jar"))
+                .as("but is held under the quarantine view for review").isPresent();
+
+        FakeExchange getHeld = new FakeExchange("GET", "/module/com.acme/1.0/gate-quarantine.jar");
+        format.handle(getHeld, store);
+        assertThat(getHeld.status()).isEqualTo(404);
+
+        FakeExchange rejected = new FakeExchange(
+                "PUT", "/module/com.acme/1.0/gate-reject.jar", "blocked".getBytes(StandardCharsets.UTF_8));
+        format.handle(rejected, store);
+        assertThat(rejected.status()).isEqualTo(422);
+        assertThat(new Publication(store).located("/module/com.acme/1.0/gate-reject.jar"))
+                .as("a rejected module links nothing").isEmpty();
     }
 
     @Test
