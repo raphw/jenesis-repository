@@ -31,7 +31,9 @@ public interface ArtifactStoreProvider {
         return Set.of();
     }
 
-    /** Resolve the named backend via {@link ServiceLoader}, falling back to the bundled {@code filesystem} backend. */
+    /** Resolve the named backend via {@link ServiceLoader}, falling back to the bundled {@code filesystem} backend only
+     *  when no backend was explicitly selected. An explicitly-named backend that no provider answers to fails loudly
+     *  rather than silently serving and persisting against the local disk. */
     static ArtifactStore resolve(String name, UnaryOperator<String> config) {
         ArtifactStoreProvider chosen = null, filesystem = null;
         for (ArtifactStoreProvider provider : ServiceLoader.load(ArtifactStoreProvider.class)) {
@@ -41,6 +43,14 @@ public interface ArtifactStoreProvider {
             if (provider.name().equalsIgnoreCase("filesystem")) {
                 filesystem = provider;
             }
+        }
+        if (chosen == null && name != null && !name.isBlank() && !name.equalsIgnoreCase("filesystem")) {
+            // A backend was explicitly configured but its module is not on the path (or the name is misspelled).
+            // Refuse to fall back to the local filesystem: that silently serves and persists against the wrong
+            // backend - publishes land in ephemeral storage and every artifact in the intended bucket 404s.
+            throw new IllegalStateException("The '" + name + "' artifact store backend is selected but no provider"
+                    + " answers to it (its module is not on the path, or the name is misspelled); refusing to fall"
+                    + " back to the local filesystem.");
         }
         ArtifactStoreProvider selected = chosen != null ? chosen : filesystem;
         if (selected == null) {

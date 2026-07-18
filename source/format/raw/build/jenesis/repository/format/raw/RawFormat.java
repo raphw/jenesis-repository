@@ -88,7 +88,11 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
             if (download.status() != 200) {
                 return false;
             }
-            publication.link(path, publication.storeBlob(download.body()));
+            // Publish through the interceptor chain, not a raw link, so a proxied artifact is screened by any installed
+            // compliance gate exactly as a PUT is. On ACCEPT it is linked and the handle() re-dispatch serves it; on
+            // QUARANTINE/REJECT it is withheld, so located() is empty and the re-dispatch answers 404. Streamed, never
+            // buffered (publish hashes the body on the fly).
+            publication.publish(ArtifactDescriptor.at("raw", path), download.body());
         }
         handle(exchange, store);
         return true;
