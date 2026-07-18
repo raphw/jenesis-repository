@@ -90,9 +90,17 @@ public final class MarkSweepGarbageCollector implements GarbageCollector {
         long[] due = {0};
         List<String> sample = new ArrayList<>();
         each(store, CONDEMNED, name -> {
-            if (!hash(name) || marked(store, name, judged)
-                    || !store.exists("blobs/" + name) || references.contains(name)) {
-                return; // unrecognised, condemned by a newer judgment, already-collected residue, or re-referenced
+            if (!hash(name) || !store.exists("blobs/" + name) || references.contains(name)) {
+                return; // unrecognised, already-collected residue, or re-referenced
+            }
+            Marker marker = store.readVersioned(CONDEMNED + "/" + name)
+                    .map(MarkSweepGarbageCollector::parse).orElse(null);
+            if (marker == null || marker.pass() > judged
+                    || Duration.between(marker.since(), now).compareTo(graceFloor) < 0) {
+                // Condemned by a newer judgment (or unreadable), or still within its wall-clock grace floor - the
+                // collect() pass would leave it standing, so the dry run must not preview it as due. Applying the same
+                // grace check collect() uses keeps plan() an exact preview of what the next collect reclaims.
+                return;
             }
             due[0]++;
             if (sample.size() < GcPlan.SAMPLE) {

@@ -67,6 +67,32 @@ class GcGraceFloorTest {
     }
 
     @Test
+    void plan_previews_the_floor_exactly_as_collect_holds_it() throws IOException {
+        ArtifactStore store = store();
+        Publication publication = new Publication(store);
+        String orphan = publication.storeBlob(new ByteArrayInputStream("orphan".getBytes(StandardCharsets.UTF_8)));
+
+        // Pass 1 condemns the orphan under a one-hour floor.
+        collector(Duration.ofHours(1)).collect(store, List.of("publish"), clock.instant());
+        assertThat(store.exists("gc/condemned/" + orphan)).isTrue();
+
+        // Only ten minutes pass - well short of the floor. The dry run must preview exactly what the next collect
+        // would reclaim: nothing yet, because the blob is still within its wall-clock grace. Before the fix, plan()
+        // ignored the floor and previewed the blob as due while collect() still held it - a false preview.
+        clock.advance(Duration.ofMinutes(10));
+        GcPlan preview = collector(Duration.ofHours(1)).plan(store, List.of("publish"), clock.instant());
+        GcPlan actual = collector(Duration.ofHours(1)).collect(store, List.of("publish"), clock.instant());
+        assertThat(preview.collected()).as("the dry run honours the grace floor").isZero();
+        assertThat(preview.collected()).as("plan previews exactly what collect reclaims").isEqualTo(actual.collected());
+        assertThat(store.exists("blobs/" + orphan)).isTrue();
+
+        // Past the floor, the dry run previews the blob as due (matching what the next collect deletes).
+        clock.advance(Duration.ofHours(1));
+        assertThat(collector(Duration.ofHours(1)).plan(store, List.of("publish"), clock.instant()).collected())
+                .as("past the floor, the dry run counts it due").isEqualTo(1);
+    }
+
+    @Test
     void a_zero_floor_is_the_generation_only_default() throws IOException {
         ArtifactStore store = store();
         Publication publication = new Publication(store);
