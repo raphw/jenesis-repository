@@ -82,7 +82,11 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         String key = "blobs/" + hex;
-        if (!store.exists(key)) {
+        // The withheld/<hash> marker is the blobs-namespace twin of the publish/ namespace's quarantine screen (a
+        // store-layout convention, like gc/condemned/<hash>): OCI serves by digest straight from blobs/, which no
+        // publish/ pointer hold ever reached, so a compliance hold on these bytes retracts serving here through the
+        // marker instead. Absent marker, zero-cost beyond one existence probe.
+        if (!store.exists(key) || store.exists("withheld/" + hex)) {
             exchange.respond(404);
             return;
         }
@@ -237,7 +241,9 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             return;
         }
         String key = "blobs/" + hex;
-        if (!store.exists(key)) {
+        // A withheld manifest 404s exactly as a withheld blob does (the withheld/<hash> convention above), so a held
+        // image cannot be pulled by digest or tag while its layers 404.
+        if (!store.exists(key) || store.exists("withheld/" + hex)) {
             exchange.respond(404);
             return;
         }
