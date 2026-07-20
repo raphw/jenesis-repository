@@ -32,8 +32,21 @@ final class Docker implements AutoCloseable {
 
     /** Start {@code image} detached with {@code command}, publishing {@code containerPort} to an ephemeral host port. */
     static Docker start(String image, int containerPort, String... command) throws IOException, InterruptedException {
-        List<String> argv = new ArrayList<>(List.of(
-                "docker", "run", "-d", "--rm", "-p", Integer.toString(containerPort), image));
+        return start(image, containerPort, Map.of(), command);
+    }
+
+    /**
+     * Start {@code image} detached with {@code command} and the given {@code env} (each passed as a {@code -e KEY=VALUE}
+     * to {@code docker run}), publishing {@code containerPort} to an ephemeral host port.
+     */
+    static Docker start(String image, int containerPort, Map<String, String> env, String... command)
+            throws IOException, InterruptedException {
+        List<String> argv = new ArrayList<>(List.of("docker", "run", "-d", "--rm", "-p", Integer.toString(containerPort)));
+        env.forEach((key, value) -> {
+            argv.add("-e");
+            argv.add(key + "=" + value);
+        });
+        argv.add(image);
         Collections.addAll(argv, command);
         Result result = exec(600, argv.toArray(String[]::new));
         if (result.exit() != 0) {
