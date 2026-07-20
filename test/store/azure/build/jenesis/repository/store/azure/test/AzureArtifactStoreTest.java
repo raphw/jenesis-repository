@@ -187,8 +187,8 @@ public class AzureArtifactStoreTest {
         assertThat(children).hasSize(count);
         assertThat(children).contains("0000", "0999", "1000");
 
-        // page() streams the same hierarchical listing lazily (Azure has no arbitrary start-at key, so the
-        // resume skips to the boundary and stops at the limit): still ordered, still complete, one page in memory.
+        // page() streams the same hierarchical listing lazily; the resume seeks server-side to the boundary
+        // (ListBlobsOptions.startFrom) and stops at the limit: still ordered, still complete, one page in memory.
         List<String> paged = new ArrayList<>();
         store.page("paged", "", count, paged::add);
         assertThat(paged).hasSize(count);
@@ -196,6 +196,14 @@ public class AzureArtifactStoreTest {
         List<String> resumed = new ArrayList<>();
         store.page("paged", "0499", 3, resumed::add);
         assertThat(resumed).containsExactly("0500", "0501", "0502");
+
+        // A resume near the tail of a >1000-key namespace continues server-side from the boundary rather than
+        // re-listing the whole prefix and skipping in the client: the window is exactly the three names that
+        // strictly follow "0997", proving the cursor is pushed into the listing (startFrom) not applied after it.
+        List<String> tail = new ArrayList<>();
+        store.page("paged", "0997", 5, tail::add);
+        assertThat(tail).as("the start-at cursor seeks past every earlier key server-side")
+                .containsExactly("0998", "0999", "1000");
     }
 
     @Test
