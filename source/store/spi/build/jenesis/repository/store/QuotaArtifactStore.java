@@ -209,6 +209,14 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
             return;
         }
         boolean fresh = !delegate.exists(key);
+        // A content-addressed blob whose key (blobs/<hash>) already resolves is byte-for-byte the content being
+        // written: there is nothing to store, so skip the delegate write entirely rather than re-upload (and re-spool)
+        // identical bytes. The dedup is probed here, before the body is ever streamed to the backend, so a re-put of
+        // stored content costs one existence check and reads none of the body. Staged oci/uploads/ chunks are not
+        // content-addressed, so they keep their overwrite semantics and fall through to the write below.
+        if (!fresh && key.startsWith(BLOBS)) {
+            return;
+        }
         if (fresh && used() >= limit) {
             throw new QuotaExceededException(limit, used());
         }
@@ -226,9 +234,18 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         if (limit <= 0) {
             return delegate.writeBlob(in);
         }
+        // Refuse at the ceiling before spooling a single byte: a fresh content-addressed blob only pushes further
+        // over, and there is no need to buffer the whole body to a temp file to discover that - the check is a single
+        // counter read the streaming write need not consume the body to answer. (A blob already stored would add
+        // nothing, but its hash is unknown until the body is read; at a full store the honest answer is still to
+        // refuse, and a re-put of existing content at exactly the ceiling is the rare edge the next under-limit write
+        // deduplicates. The soft edge - a write begun under the limit completes even as it crosses - is unchanged.)
+        if (used() >= limit) {
+            throw new QuotaExceededException(limit, used());
+        }
         // The content-addressed key is only known once the stream is digested, so buffer to a temp file while
-        // hashing, then route the stored bytes through this store's own metered write, which enforces the quota and
-        // counts the blob exactly as a keyed publish would (freshness, refusal at the limit, usage adjustment).
+        // hashing, then route the stored bytes through this store's own metered write, which dedups an already-stored
+        // blob (no re-upload, no second spool) and otherwise counts it exactly as a keyed publish would.
         Path temporary = Files.createTempFile("quota-blob-", null);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

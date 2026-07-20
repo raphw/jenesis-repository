@@ -122,6 +122,47 @@ class QuotaArtifactStoreTest {
     }
 
     @Test
+    void a_re_written_blob_is_not_re_uploaded_to_the_delegate() throws IOException {
+        // A content-addressed blob already stored is byte-for-byte identical to the content being written; the quota
+        // store must dedup it before touching the backend - the delegate sees exactly one write for the key, never a
+        // wasteful re-upload (and never a second temp spool) of the same bytes.
+        CountingWriteDelegate raw = new CountingWriteDelegate(delegate());
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 1000);
+        store.write("blobs/aaa", bytes(300));
+        store.write("blobs/aaa", bytes(300));
+        assertThat(raw.writes("blobs/aaa")).as("the already-stored blob is not re-uploaded").isEqualTo(1);
+        assertThat(store.used()).isEqualTo(300);
+    }
+
+    @Test
+    void a_streamed_dedup_blob_probes_before_spooling_and_is_not_re_uploaded() throws IOException {
+        // The streaming write buffers once to learn the hash, then routes through the keyed write, which dedups on
+        // the hash: identical content is stored to the delegate exactly once, never re-uploaded on a second call.
+        CountingWriteDelegate raw = new CountingWriteDelegate(delegate());
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 1000);
+        String hash = store.writeBlob(bytes(300));
+        assertThat(store.writeBlob(bytes(300))).as("identical content dedupes to one blob").isEqualTo(hash);
+        assertThat(raw.writes("blobs/" + hash)).as("the streamed blob is stored once, never re-uploaded").isEqualTo(1);
+        assertThat(store.used()).isEqualTo(300);
+    }
+
+    @Test
+    void a_streamed_write_at_the_ceiling_is_refused_before_the_body_is_read() throws IOException {
+        // The 507 fires on a single counter read, before the (possibly large) body is buffered to a temp file - a
+        // store already at the ceiling refuses a fresh streaming write without consuming a single byte of it.
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 500);
+        store.write("blobs/aaa", bytes(500));
+        InputStream unread = new InputStream() {
+            @Override
+            public int read() {
+                throw new AssertionError("the body must not be read once the ceiling is reached");
+            }
+        };
+        assertThatThrownBy(() -> store.writeBlob(unread)).isInstanceOf(QuotaExceededException.class);
+        assertThat(store.used()).isEqualTo(500);
+    }
+
+    @Test
     void a_streamed_blob_is_metered_and_dedupes_like_a_keyed_write() throws IOException {
         QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
         String first = store.writeBlob(bytes(300));
@@ -259,6 +300,81 @@ class QuotaArtifactStoreTest {
         @Override
         public long size(String key) throws IOException {
             return delegate.size(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
+    }
+
+    /** Forwards to a real store but tallies every {@link ArtifactStore#write} per key, so a test can prove an
+     *  already-stored content blob is deduped away rather than re-uploaded (its key stays at a single write). */
+    private record CountingWriteDelegate(ArtifactStore delegate, java.util.Map<String, Integer> counts)
+            implements ArtifactStore {
+
+        CountingWriteDelegate(ArtifactStore delegate) {
+            this(delegate, new java.util.HashMap<>());
+        }
+
+        int writes(String key) {
+            return counts.getOrDefault(key, 0);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            counts.merge(key, 1, Integer::sum);
+            delegate.write(key, in);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
         }
 
         @Override
