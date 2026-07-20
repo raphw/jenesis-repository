@@ -3,6 +3,8 @@ package build.jenesis.repository.walk.test;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.PublishInterceptor;
 import build.jenesis.repository.walk.RebuildPass;
 import build.jenesis.repository.walk.WalkConsumer;
 import build.jenesis.repository.walk.WalkPass;
@@ -214,6 +216,36 @@ class RebuildPassTest {
                 .filter(artifact -> artifact.path().equals("npm/lodash/-/lodash-4.17.21.tgz"))
                 .findFirst().orElseThrow();
         assertThat(linked.size()).isEqualTo("kept bytes".length());
+    }
+
+    @Test
+    void a_rebuild_never_reinstates_a_withheld_or_quarantined_pointer_into_the_index() throws IOException {
+        ArtifactStore store = store("withheld");
+        // A served artifact, an artifact retracted after the fact (a fresh advisory against bytes that served for
+        // months - pointer and blob both intact), and a pointer the gate diverted to the quarantine review subtree.
+        String served = publish(store, "/maven/app-1.0.jar", "served payload");
+        publish(store, "/maven/app-1.1.jar", "later flagged");
+        publish(store, "/quarantine/maven/held-1.0.jar", "held for review");
+        // The withhold screen the deployment runs: app-1.1 has been retracted from serving though its pointer stands.
+        Publication screened = new Publication(store, List.of(new PublishInterceptor() {
+            @Override
+            public boolean withheld(String path, ArtifactStore store) {
+                return path.equals("/maven/app-1.1.jar");
+            }
+        }));
+        Recording consumer = new Recording();
+
+        Optional<WalkPass> pass = RebuildPass.run(walk(), store, screened, List.of("publish"), List.of(consumer));
+
+        assertThat(pass).hasValueSatisfying(result -> assertThat(result.complete()).isTrue());
+        assertThat(consumer.derived).as("a rebuild yields exactly what a GET would - never a withheld or "
+                        + "quarantine-review pointer, so neither reappears in an index the pass rebuilds")
+                .containsOnlyKeys("/maven/app-1.0.jar")
+                .containsEntry("/maven/app-1.0.jar", served);
+        assertThat(consumer.derived).as("the retracted-after-advisory artifact is not reinstated")
+                .doesNotContainKey("/maven/app-1.1.jar");
+        assertThat(consumer.derived).as("no phantom index entry for a quarantine-review pointer")
+                .doesNotContainKey("/quarantine/maven/held-1.0.jar");
     }
 
     @Test
