@@ -28,6 +28,34 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
             "application/vnd.docker.distribution.manifest.v2+json",
             "application/vnd.docker.distribution.manifest.list.v2+json");
 
+    /** The chunks of an in-flight chunked upload, staged by session id before they are finalized into a blob. */
+    private static final String UPLOADS = "oci/uploads/";
+
+    /** One start-time marker per open upload session, in its own namespace - kept out of the session's numbered
+     *  chunks (so it never disturbs chunk indexing) and out of the quota-metered {@link #UPLOADS} staging (so the
+     *  tiny marker is never itself counted). The reaper ages a never-finalized session out by this marker. */
+    private static final String SESSIONS = "oci/upload-sessions/";
+
+    /** How long an un-finalized chunked-upload session is kept before {@link #reap} drops it. A {@code docker push}
+     *  that opens a session and streams chunks but never finalizes it (a crashed or hostile client) is stored bytes
+     *  that count against the quota, so it is swept once this stale rather than growing the store without bound. */
+    private static final Duration UPLOAD_SESSION_TTL = Duration.ofHours(24);
+
+    private final Clock clock;
+    private final Duration uploadTtl;
+
+    public OciFormat() {
+        this(Clock.systemUTC(), UPLOAD_SESSION_TTL);
+    }
+
+    /** The {@link Clock} and TTL seam lets a test open a session, advance time past the TTL and assert the reaper
+     *  drops it without sleeping - the injectable-clock-over-a-wall-clock-default idiom the negative cache and the
+     *  mark-sweep collector expose as a public constructor for the same reason. */
+    public OciFormat(Clock clock, Duration uploadTtl) {
+        this.clock = clock;
+        this.uploadTtl = uploadTtl;
+    }
+
     @Override
     public String name() {
         return "oci";
@@ -106,12 +134,19 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     private void upload(String name, String session, ArtifactStore store, FormatExchange exchange) throws IOException {
         String method = exchange.method();
         if (method.equals("POST")) {
+            // Fresh-upload sweep (the negative cache's "a fresh miss first sweeps expired entries" idiom): drop every
+            // session abandoned past the TTL before opening a new one, so an un-finalized session's staged chunks are
+            // reclaimed - and released from the quota counter - without needing a scheduler.
+            reap(store);
             String digest = exchange.queryParameter("digest");
             if (digest != null) {
                 store(digest, exchange.requestStream(), store, name, exchange);
                 return;
             }
             String id = UUID.randomUUID().toString();
+            // Record when the session opened so the reaper can age it out if it is streamed into but never finalized.
+            store.write(SESSIONS + id, new ByteArrayInputStream(
+                    Long.toString(clock.millis()).getBytes(StandardCharsets.UTF_8)));
             exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/uploads/" + id);
             exchange.setResponseHeader("Docker-Upload-UUID", id);
             exchange.setResponseHeader("Range", "0-0");
@@ -179,11 +214,41 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         });
     }
 
-    /** Drop every chunk object of a finalized (or abandoned) upload session. */
+    /** Drop every chunk object of a finalized (or abandoned) upload session, then its start marker. The marker is
+     *  deleted last, so a crash mid-cleanup leaves it behind for the reaper to retry against rather than orphaning
+     *  the chunks - the same converge-through-the-store, fail-toward-a-retry ordering the delete path elsewhere uses. */
     private static void cleanup(ArtifactStore store, String id) throws IOException {
         for (String index : store.list("oci/uploads/" + id)) {
             store.delete("oci/uploads/" + id + "/" + index);
         }
+        store.delete(SESSIONS + id);
+    }
+
+    /** Drop every upload session whose start marker is older than the TTL - a chunked push that opened a session
+     *  (and possibly streamed chunks into the quota-metered {@link #UPLOADS} staging) but never finalized it. The
+     *  reclaimed chunk bytes converge back out of the quota counter through {@link #cleanup}'s metered deletes.
+     *  Returns the number of sessions reaped. */
+    public int reap(ArtifactStore store) throws IOException {
+        Instant cutoff = clock.instant().minus(uploadTtl);
+        int reaped = 0;
+        for (String id : store.list("oci/upload-sessions")) {
+            Optional<ArtifactStore.Versioned> marker = store.readVersioned(SESSIONS + id);
+            if (marker.isEmpty()) {
+                continue;
+            }
+            Instant startedAt;
+            try {
+                startedAt = Instant.ofEpochMilli(Long.parseLong(
+                        new String(marker.get().content(), StandardCharsets.UTF_8).trim()));
+            } catch (NumberFormatException malformed) {
+                continue; // a marker we cannot read as a timestamp is left for an operator, never blindly reaped
+            }
+            if (startedAt.isBefore(cutoff)) {
+                cleanup(store, id);
+                reaped++;
+            }
+        }
+        return reaped;
     }
 
     private void store(String digest, InputStream content, ArtifactStore store, String name, FormatExchange exchange)
@@ -302,11 +367,12 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     }
 
     /** Collect every image name under the {@code oci/} prefix - a directory with a non-empty {@code tags} child.
-     *  The format's own sidecar prefixes ({@code types}, {@code uploads}) and the {@code tags} leaf itself are
-     *  reserved by this layout and never image-name segments. */
+     *  The format's own sidecar prefixes ({@code types}, {@code uploads}, {@code upload-sessions}) and the
+     *  {@code tags} leaf itself are reserved by this layout and never image-name segments. */
     private void images(ArtifactStore store, String prefix, List<String> names) {
         for (String child : store.list(prefix.isEmpty() ? "oci" : "oci/" + prefix)) {
-            if (child.equals("tags") || prefix.isEmpty() && (child.equals("types") || child.equals("uploads"))) {
+            if (child.equals("tags") || prefix.isEmpty()
+                    && (child.equals("types") || child.equals("uploads") || child.equals("upload-sessions"))) {
                 continue;
             }
             String name = prefix.isEmpty() ? child : prefix + "/" + child;

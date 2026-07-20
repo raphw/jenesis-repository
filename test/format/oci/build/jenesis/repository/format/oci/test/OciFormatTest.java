@@ -13,6 +13,8 @@ import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
@@ -131,6 +133,75 @@ class OciFormatTest {
         FakeExchange get = new FakeExchange("GET", "/v2/app/blobs/sha256:" + hex);
         format.handle(get, store);
         assertThat(get.responseBytes()).isEqualTo(full);
+    }
+
+    @Test
+    void a_stale_un_finalized_upload_session_is_reaped_after_its_ttl() throws IOException {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
+
+        // Open a chunked session and stream a chunk into it, but never finalize (no PUT) - the leak an authenticated
+        // writer uses to grow stored bytes past the quota.
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(begin, store);
+        String id = begin.responseHeader("Docker-Upload-UUID");
+        FakeExchange patch = new FakeExchange("PATCH", "/v2/app/blobs/uploads/" + id,
+                "half-a-layer".getBytes(StandardCharsets.UTF_8));
+        reaping.handle(patch, store);
+        assertThat(store.list("oci/uploads/" + id)).as("the chunk is staged").isNotEmpty();
+
+        // Before the TTL elapses a reap spares the still-live session.
+        clock.advance(Duration.ofHours(23));
+        assertThat(reaping.reap(store)).isZero();
+        assertThat(store.list("oci/uploads/" + id)).isNotEmpty();
+
+        // Past the TTL the abandoned session - staged chunks and start marker both - is swept.
+        clock.advance(Duration.ofHours(2));
+        assertThat(reaping.reap(store)).isEqualTo(1);
+        assertThat(store.list("oci/uploads/" + id)).as("the staged chunks are gone").isEmpty();
+        assertThat(store.list("oci/upload-sessions")).as("the start marker is gone").doesNotContain(id);
+    }
+
+    @Test
+    void a_new_upload_lazily_reaps_a_stale_session_without_a_scheduler() throws IOException {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
+
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(begin, store);
+        String stale = begin.responseHeader("Docker-Upload-UUID");
+        reaping.handle(new FakeExchange("PATCH", "/v2/app/blobs/uploads/" + stale,
+                "orphan".getBytes(StandardCharsets.UTF_8)), store);
+
+        clock.advance(Duration.ofHours(25));
+        // A fresh POST sweeps the abandoned session on the upload path itself - the negative-cache lazy-sweep idiom.
+        FakeExchange next = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(next, store);
+        assertThat(next.status()).isEqualTo(202);
+        assertThat(store.list("oci/uploads/" + stale)).as("the stale session was reaped on the new upload").isEmpty();
+    }
+
+    @Test
+    void reaping_never_touches_a_finalized_or_reserved_namespace() throws IOException {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
+
+        // A completed chunked push leaves no session behind, so a much-later reap has nothing to sweep and the
+        // finalized blob and its catalog remain untouched.
+        byte[] full = "hello world".getBytes(StandardCharsets.UTF_8);
+        String hex = sha256(full);
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(begin, store);
+        String id = begin.responseHeader("Docker-Upload-UUID");
+        reaping.handle(new FakeExchange("PUT", "/v2/app/blobs/uploads/" + id, full,
+                Map.of("digest", "sha256:" + hex), Map.of()), store);
+        assertThat(store.list("oci/upload-sessions")).as("finalizing cleared the session marker").doesNotContain(id);
+
+        clock.advance(Duration.ofDays(30));
+        assertThat(reaping.reap(store)).isZero();
+        FakeExchange get = new FakeExchange("GET", "/v2/app/blobs/sha256:" + hex);
+        reaping.handle(get, store);
+        assertThat(get.status()).as("the finalized blob is untouched by the reaper").isEqualTo(200);
     }
 
     @Test
