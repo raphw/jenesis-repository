@@ -42,6 +42,8 @@ public class GcsArtifactStoreTest {
         Map<String, String> values = Map.of(
                 "JENESIS_GCS_BUCKET", "repo",
                 "JENESIS_GCS_ENDPOINT", "http://localhost:" + port,
+                // The emulator speaks plaintext http, so opt past the https-endpoint secure default.
+                "JENESIS_GCS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_GCS_REGION", "us-east-1",
                 "JENESIS_GCS_ACCESS_KEY_ID", ACCESS_KEY,
                 "JENESIS_GCS_SECRET_ACCESS_KEY", SECRET_KEY);

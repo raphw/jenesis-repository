@@ -51,6 +51,9 @@ public class IndexImportTest {
         // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
         // (auth=false) opt-out to preserve its intent - both servers stay unauthenticated.
         System.setProperty("jenesis.repository.auth", "false");
+        // The import SSRF screen now blocks a loopback upstream by default; the source registry is on localhost, so
+        // pin the internal-host opt-out (the guard itself is proven by ImportHostGuardTest).
+        System.setProperty("jenesis.repository.block-private-import-hosts", "false");
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("source-store").toString());
         source = RepositoryApplication.start(0);
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("target-store").toString());
@@ -80,6 +83,7 @@ public class IndexImportTest {
         }
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
+        System.clearProperty("jenesis.repository.block-private-import-hosts");
     }
 
     @Test

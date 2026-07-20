@@ -69,6 +69,25 @@ class ProxyCacheObservabilityTest {
     }
 
     @Test
+    void the_remembered_misses_never_exceed_the_cap_under_a_flood_of_distinct_live_keys() throws IOException {
+        // A long TTL so nothing expires during the flood: the map cannot be pruned of expired entries, so the only
+        // thing keeping it bounded is the clear-on-still-full guard. Flood it with far more distinct un-expired 404s
+        // than the cap and prove the gauge (the map size) never rises above the bound it is measured against - so a
+        // flood of misses cannot exhaust memory past the cap.
+        NegativeCachingFetcher fetcher = new NegativeCachingFetcher(status(404), Duration.ofHours(1));
+        double cap = fetcher.metrics().get(0).limit().orElseThrow();
+
+        double peak = 0;
+        for (int at = 0; at < 40_000; at++) {
+            fetcher.fetch(URI.create("https://upstream.example/miss/" + at + "/x-1.0.jar"), Map.of());
+            peak = Math.max(peak, fetcher.metrics().get(0).value());
+        }
+
+        assertThat(peak).as("distinct un-expired misses far past the cap never grow the map beyond it")
+                .isLessThanOrEqualTo(cap);
+    }
+
+    @Test
     void a_fresh_revalidation_cache_reports_zero_bytes_and_zero_entries() {
         RevalidatingFetcher fetcher = new RevalidatingFetcher(status(200));
 

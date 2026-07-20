@@ -20,7 +20,8 @@ import java.util.function.UnaryOperator;
  * The {@code s3} artifact-store backend over any S3-compatible bucket (AWS S3, GCS via the XML API,
  * MinIO, LocalStack). Selected with {@code jenesis.repository.store=s3}; configured by
  * {@code JENESIS_AWS_BUCKET} (required), {@code JENESIS_AWS_REGION} (default {@code us-east-1}) and an
- * optional {@code JENESIS_AWS_ENDPOINT} (an S3-compatible endpoint, enabling path-style access).
+ * optional {@code JENESIS_AWS_ENDPOINT} (an S3-compatible endpoint, enabling path-style access; required to be
+ * {@code https} unless {@code JENESIS_AWS_ALLOW_INSECURE_ENDPOINT=true} explicitly permits a plaintext one).
  * Credentials come from the standard AWS chain (environment, profile or instance role) unless
  * {@code JENESIS_AWS_ACCESS_KEY_ID} and {@code JENESIS_AWS_SECRET_ACCESS_KEY} are both supplied through
  * the config lookup, in which case those static keys are used - the path a self-hosted S3-compatible
@@ -58,7 +59,8 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
                 .credentialsProvider(credentials(config));
         String endpoint = config.apply("JENESIS_AWS_ENDPOINT");
         if (endpoint != null && !endpoint.isBlank()) {
-            builder.endpointOverride(URI.create(endpoint)).forcePathStyle(true);
+            URI override = secureEndpoint(endpoint, config.apply("JENESIS_AWS_ALLOW_INSECURE_ENDPOINT"));
+            builder.endpointOverride(override).forcePathStyle(true);
         }
         S3Client s3 = builder.build();
         try {
@@ -68,6 +70,23 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
             // below surface a clear error if the bucket is truly unusable.
         }
         return new S3ArtifactStore(s3, bucket);
+    }
+
+    /**
+     * The endpoint override, required to be {@code https} by default so credentials and artifact bytes are not sent
+     * over a plaintext transport a MITM can read or tamper with. A plaintext {@code http} endpoint - a local MinIO or
+     * LocalStack container, say - is an explicit opt-out: set {@code JENESIS_AWS_ALLOW_INSECURE_ENDPOINT=true}.
+     */
+    public static URI secureEndpoint(String endpoint, String allowInsecure) {
+        URI override = URI.create(endpoint);
+        String scheme = override.getScheme();
+        boolean https = scheme != null && scheme.equalsIgnoreCase("https");
+        if (!https && !Boolean.parseBoolean(allowInsecure)) {
+            throw new IllegalStateException("JENESIS_AWS_ENDPOINT must be an https:// endpoint (got '" + endpoint
+                    + "'); set JENESIS_AWS_ALLOW_INSECURE_ENDPOINT=true to allow a plaintext endpoint, e.g. a local "
+                    + "MinIO or LocalStack container.");
+        }
+        return override;
     }
 
     /**
