@@ -29,6 +29,7 @@ import java.util.Arrays;
 import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The OIDC exchange end to end against a real signature: a temporary RSA key signs a JWT, the public key is served as
@@ -180,6 +181,30 @@ class OidcExchangeTest {
                 + Instant.now().plusSeconds(300).getEpochSecond() + "}");
         assertThat(exchange.exchange("acme", rs256(header("RS256", "k1"), noAud, keyPair.getPrivate())))
                 .as("a token missing aud matches no audience-pinned trust and mints nothing, without a 500").isNull();
+    }
+
+    @Test
+    void a_trust_created_with_a_blank_or_null_audience_is_rejected_at_creation_with_a_clear_message() {
+        // Fail-fast at the single creation/parse chokepoint (the Trust canonical constructor): a trust must not exist
+        // with a blank audience, because a blank audience would silently accept a token minted for any relying party.
+        assertThatThrownBy(() -> new Authorization.Trust("github", issuer, "  ",
+                "repo:acme/app:*", "releases", "repository:read", Duration.ofMinutes(15)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .as("a blank audience names the offending trust and states the remedy")
+                .hasMessageContaining("github")
+                .hasMessageContaining("requires an explicit audience");
+        assertThatThrownBy(() -> new Authorization.Trust("github", issuer, null,
+                "repo:acme/app:*", "releases", "repository:read", Duration.ofMinutes(15)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .as("a null audience is rejected the same way")
+                .hasMessageContaining("requires an explicit audience");
+    }
+
+    @Test
+    void a_trust_created_with_an_explicit_audience_is_accepted() {
+        Authorization.Trust trust = new Authorization.Trust("github", issuer, "jenesis",
+                "repo:acme/app:*", "releases", "repository:read", Duration.ofMinutes(15));
+        assertThat(trust.audience()).isEqualTo("jenesis");
     }
 
     private String header(String algorithm, String kid) {
