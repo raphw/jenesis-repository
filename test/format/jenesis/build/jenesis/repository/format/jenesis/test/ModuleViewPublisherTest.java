@@ -46,4 +46,18 @@ class ModuleViewPublisherTest {
         assertThat(publication.located("/module/com.acme.lib/1.0/com.acme.lib.jar")).contains("blobs/" + hash);
         assertThat(publication.located("/module/com.acme.lib/com.acme.lib.jar")).contains("blobs/" + hash);
     }
+
+    @Test
+    void unpublish_removes_exactly_the_versioned_and_latest_module_view_publish_linked() throws IOException {
+        // The retraction counterpart of publish: a module view linked by a cross-publish (a proxied jar since retracted
+        // for a checksum mismatch) is removed from both the versioned and the latest pointer, so it resolves by neither.
+        String hash = publication.storeBlob(
+                new ByteArrayInputStream("modular jar".getBytes(StandardCharsets.UTF_8)));
+        publisher.publish("com.acme.lib", "1.0", hash, store);
+
+        publisher.unpublish("com.acme.lib", "1.0", store);
+
+        assertThat(publication.located("/module/com.acme.lib/1.0/com.acme.lib.jar")).isEmpty();
+        assertThat(publication.located("/module/com.acme.lib/com.acme.lib.jar")).isEmpty();
+    }
 }
