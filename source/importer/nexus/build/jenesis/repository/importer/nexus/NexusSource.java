@@ -68,6 +68,14 @@ public final class NexusSource implements ImportSource {
                 for (JsonNode asset : item.path("assets")) {
                     String path = asset.path("path").asString(null);
                     String downloadUrl = asset.path("downloadUrl").asString(null);
+                    if (path != null && path.startsWith("/")) {
+                        // Nexus 3.71+ (the H2/PostgreSQL datastore that replaced OrientDB) reports asset paths
+                        // absolute, with a leading slash; the repository-relative path a store write needs - and the
+                        // shape the OrientDB-era listing and the fixtures use - drops it. Normalise before safePath,
+                        // whose empty-first-segment check would otherwise reject the whole asset (its traversal
+                        // intent - ./ .. backslash - is untouched).
+                        path = path.substring(1);
+                    }
                     if (path == null || downloadUrl == null || !ImportSource.safePath(path)) {
                         continue;   // an incomplete entry, or a traversal-laced path no store write should see
                     }
