@@ -50,8 +50,8 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
 
     /** The {@link Clock} and TTL seam lets a test open a session, advance time past the TTL and assert the reaper
      *  drops it without sleeping - the injectable-clock-over-a-wall-clock-default idiom the negative cache and the
-     *  mark-sweep collector use. */
-    OciFormat(Clock clock, Duration uploadTtl) {
+     *  mark-sweep collector expose as a public constructor for the same reason. */
+    public OciFormat(Clock clock, Duration uploadTtl) {
         this.clock = clock;
         this.uploadTtl = uploadTtl;
     }
@@ -228,7 +228,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
      *  (and possibly streamed chunks into the quota-metered {@link #UPLOADS} staging) but never finalized it. The
      *  reclaimed chunk bytes converge back out of the quota counter through {@link #cleanup}'s metered deletes.
      *  Returns the number of sessions reaped. */
-    int reap(ArtifactStore store) throws IOException {
+    public int reap(ArtifactStore store) throws IOException {
         Instant cutoff = clock.instant().minus(uploadTtl);
         int reaped = 0;
         for (String id : store.list("oci/upload-sessions")) {
