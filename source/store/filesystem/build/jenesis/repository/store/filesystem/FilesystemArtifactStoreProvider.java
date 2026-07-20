@@ -16,6 +16,15 @@ public final class FilesystemArtifactStoreProvider implements ArtifactStoreProvi
     @Override
     public ArtifactStore create(UnaryOperator<String> config) {
         String root = config.apply("JENESIS_STORE_ROOT");
-        return new FilesystemArtifactStore(Path.of(root == null || root.isBlank() ? "/var/lib/jenesis-repository" : root));
+        Path path = Path.of(root == null || root.isBlank() ? "/var/lib/jenesis-repository" : root);
+        try {
+            // Create the store root owner-only (rwx------) up front, so the top-level container is never left
+            // world-readable at the process umask; a root that cannot be created is a fail-fast, not a store
+            // that silently lands blobs somewhere unintended.
+            OwnerOnly.createDirectories(path);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot create filesystem store root " + path, e);
+        }
+        return new FilesystemArtifactStore(path);
     }
 }
