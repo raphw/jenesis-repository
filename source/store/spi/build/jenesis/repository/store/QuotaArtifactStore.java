@@ -209,6 +209,14 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
             return;
         }
         boolean fresh = !delegate.exists(key);
+        // A content-addressed blob whose key (blobs/<hash>) already resolves is byte-for-byte the content being
+        // written: there is nothing to store, so skip the delegate write entirely rather than re-upload (and re-spool)
+        // identical bytes. The dedup is probed here, before the body is ever streamed to the backend, so a re-put of
+        // stored content costs one existence check and reads none of the body. Staged oci/uploads/ chunks are not
+        // content-addressed, so they keep their overwrite semantics and fall through to the write below.
+        if (!fresh && key.startsWith(BLOBS)) {
+            return;
+        }
         if (fresh && used() >= limit) {
             throw new QuotaExceededException(limit, used());
         }
@@ -226,9 +234,12 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         if (limit <= 0) {
             return delegate.writeBlob(in);
         }
-        // The content-addressed key is only known once the stream is digested, so buffer to a temp file while
-        // hashing, then route the stored bytes through this store's own metered write, which enforces the quota and
-        // counts the blob exactly as a keyed publish would (freshness, refusal at the limit, usage adjustment).
+        // The content-addressed key is only known once the stream is digested, so buffer to a temp file (on disk, not
+        // in heap) while hashing, then route the stored bytes through this store's own metered write. That keyed write
+        // dedups an already-stored blob (no re-upload, no second spool) and otherwise counts it exactly as a keyed
+        // publish would - refusing a fresh blob at the ceiling. The ceiling check cannot be pulled ahead of the spool:
+        // the hash is unknown until the body is read, so a re-deployed (byte-identical, already-stored) blob - which
+        // adds no bytes and must be admitted even at a full store - is indistinguishable from a fresh one until then.
         Path temporary = Files.createTempFile("quota-blob-", null);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

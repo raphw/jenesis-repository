@@ -12,6 +12,7 @@ import com.azure.storage.blob.models.BlobItem;
 import com.azure.storage.blob.models.BlobRange;
 import com.azure.storage.blob.models.BlobRequestConditions;
 import com.azure.storage.blob.models.BlobStorageException;
+import com.azure.storage.blob.models.ListBlobsOptions;
 import com.azure.storage.blob.options.BlobInputStreamOptions;
 import com.azure.storage.blob.options.BlockBlobSimpleUploadOptions;
 import com.azure.storage.blob.specialized.BlobOutputStream;
@@ -178,19 +179,25 @@ public final class AzureArtifactStore implements ArtifactStore {
             return;
         }
         String base = keyPrefix + (prefix.isEmpty() ? "" : prefix + "/");
-        // Azure's List Blobs offers no arbitrary start-at key (its marker is an opaque continuation token), but
-        // the hierarchical listing pages lazily over contiguous key-range slices - so skip to the boundary and
-        // stop at the limit; memory stays one page however large the child set, and only the skip is
-        // O(position), the honest best the service gives. The SDK hands each page's blobs and prefixes as two
-        // separate lists, so merge them back into key order first. That order puts a container's prefix entry
-        // at `name + "/"`, AFTER a sibling whose name extends this one past a character below '/' (`app.txt`
-        // the blob precedes `app/` the prefix, yet the child `app` pages first) - so every name parks and the
-        // smallest parked one releases only once no smaller-named child can still arrive (held()). A released
-        // name at or below startAfter is dropped rather than emitted.
+        // Azure's List Blobs honours a server-side start-at key (ListBlobsOptions.startFrom, its own query parameter,
+        // distinct from the opaque continuation marker), so seek straight to the boundary instead of re-listing from
+        // the base and skipping every prior key in the client. The resume now costs one bounded page from startAfter,
+        // not an O(position) scan, so paging a whole namespace in strides stops being O(N^2). Mirrors the s3 backend,
+        // including the name-order repair: the SDK hands each page's blobs and prefixes as two separate lists, so
+        // merge them back into key order first. That order puts a container's prefix entry at `name + "/"`, AFTER a
+        // sibling whose name extends this one past a character below '/' (`app.txt` the blob precedes `app/` the
+        // prefix, yet the child `app` pages first) - so every name parks and the smallest parked one releases only
+        // once no smaller-named child can still arrive (held()). A released name at or below startAfter is dropped
+        // rather than emitted: start-from skips the boundary's own blob but not a same-named container's prefix, and a
+        // prefix-child of the boundary was already paged by the call that emitted the boundary itself.
+        ListBlobsOptions options = new ListBlobsOptions().setPrefix(base).setMaxResultsPerPage(Math.min(limit + 1, 5000));
+        if (!startAfter.isEmpty()) {
+            options.setStartFrom(base + startAfter);
+        }
         TreeSet<String> pending = new TreeSet<>();
         int emitted = 0;
         String last = null;
-        for (PagedResponse<BlobItem> page : container.listBlobsByHierarchy(base).iterableByPage()) {
+        for (PagedResponse<BlobItem> page : container.listBlobsByHierarchy("/", options, null).iterableByPage()) {
             List<String> ordered = new ArrayList<>();
             for (BlobItem item : page.getValue()) {
                 String relative = item.getName().substring(base.length());
