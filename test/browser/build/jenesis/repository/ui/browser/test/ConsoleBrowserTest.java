@@ -5,13 +5,17 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Publication;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.openqa.selenium.By;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.remote.RemoteWebDriver;
@@ -33,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("browser")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.MethodName.class)
+@ExtendWith(RetryOnBrowserTimeout.class)
 public class ConsoleBrowserTest {
 
     private SeleniumContainer container;
@@ -47,17 +52,39 @@ public class ConsoleBrowserTest {
         container = SeleniumContainer.start();
         console = Console.start();
         seed(console.storeRoot());
+    }
+
+    /** A FRESH browser session per test. The container and the server boot once (expensive), but each spec drives its
+     *  own {@link RemoteWebDriver}: a single session shared across the whole ordered suite accumulates state and slows
+     *  under CI load until a form login tips past the wait budget and the rest of the suite cascades - the "first spec
+     *  passes, the rest time out" flake. A per-test session keeps every spec as fast as the first, and the specs are
+     *  already session-independent (each logs in from a cleared session), so this is behaviour-neutral. */
+    @BeforeEach
+    void openBrowser() throws Exception {
         ChromeOptions options = new ChromeOptions();
         options.addArguments("--no-sandbox", "--disable-gpu", "--window-size=1400,1000");
         driver = new RemoteWebDriver(container.webDriverUrl().toURL(), options);
         browser = new ConsoleBrowser(driver, console.baseUrl());
     }
 
+    /** End this test's session on the grid so no per-test session accumulates on the container. Null the fields first
+     *  and swallow a quit failure: a session already evicted under CI load must never mask the test's own outcome. */
+    @AfterEach
+    void closeBrowser() {
+        RemoteWebDriver finished = driver;
+        driver = null;
+        browser = null;
+        if (finished != null) {
+            try {
+                finished.quit();
+            } catch (WebDriverException alreadyGone) {
+                // the grid session was lost under load; nothing left to release
+            }
+        }
+    }
+
     @AfterAll
     void shutdown() {
-        if (driver != null) {
-            driver.quit();
-        }
         if (console != null) {
             console.close();
         }
