@@ -329,11 +329,34 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     }
 
     private void tags(String name, ArtifactStore store, FormatExchange exchange) throws IOException {
+        // A withheld tag is screened out of the listing exactly as its manifest 404s on a pull: the tags/list must not
+        // disclose a tag whose manifest is held (AUDIT §5/§8 - never disclose a withheld artifact, its existence
+        // included). Bounded: one pointer resolve + one marker probe per tag already listed, no re-list.
+        List<String> tags = new ArrayList<>();
+        for (String tag : store.list("oci/" + name + "/tags")) {
+            if (!tagWithheld(store, name, tag)) {
+                tags.add(tag);
+            }
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
-        body.put("tags", store.list("oci/" + name + "/tags"));
+        body.put("tags", tags);
         exchange.setResponseHeader("Content-Type", "application/json");
         exchange.respond(200, JSON.writeValueAsString(body).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Whether the manifest {@code tag} of {@code name} points at is currently withheld - the tag resolved through its
+     *  {@code oci/<name>/tags/<tag>} pointer to a digest, then screened by the same {@code withheld/<hash>} marker the
+     *  blob and manifest serve paths honour (the one seam a held image 404s through). A tag whose pointer is missing or
+     *  does not resolve to a real digest is not treated as withheld here - it is not a held artifact, and the serve
+     *  path's own guards answer it - so only a genuinely held tag is dropped from the catalog and the tags/list. */
+    private static boolean tagWithheld(ArtifactStore store, String name, String tag) throws IOException {
+        Optional<ArtifactStore.Versioned> pointer = store.readVersioned("oci/" + name + "/tags/" + tag);
+        if (pointer.isEmpty()) {
+            return false;
+        }
+        String hex = hex(new String(pointer.get().content(), StandardCharsets.UTF_8).trim());
+        return isDigestHex(hex) && store.exists("withheld/" + hex);
     }
 
     /** The Distribution catalog ({@code GET /v2/_catalog}): every image name that carries at least one tag pointer,
@@ -369,18 +392,33 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
     /** Collect every image name under the {@code oci/} prefix - a directory with a non-empty {@code tags} child.
      *  The format's own sidecar prefixes ({@code types}, {@code uploads}, {@code upload-sessions}) and the
      *  {@code tags} leaf itself are reserved by this layout and never image-name segments. */
-    private void images(ArtifactStore store, String prefix, List<String> names) {
+    private void images(ArtifactStore store, String prefix, List<String> names) throws IOException {
         for (String child : store.list(prefix.isEmpty() ? "oci" : "oci/" + prefix)) {
             if (child.equals("tags") || prefix.isEmpty()
                     && (child.equals("types") || child.equals("uploads") || child.equals("upload-sessions"))) {
                 continue;
             }
             String name = prefix.isEmpty() ? child : prefix + "/" + child;
-            if (!store.list("oci/" + name + "/tags").isEmpty()) {
+            // An image is catalogued only if it has a surviving (non-withheld) tag: a fully-held image - every tag's
+            // manifest withheld - must not be disclosed in the catalog while its bytes 404 (AUDIT §5/§8), so its name
+            // is omitted just as a held tag is dropped from tags/list.
+            if (hasSurvivingTag(store, name)) {
                 names.add(name);
             }
             images(store, name, names);
         }
+    }
+
+    /** Whether {@code name} carries at least one non-withheld tag - the catalog inclusion test. Short-circuits at the
+     *  first surviving tag, so an image with any servable tag costs one pointer resolve, and a wholly-withheld one is
+     *  screened over the tag listing already in hand (bounded, §7 - never an unbounded re-list per image). */
+    private static boolean hasSurvivingTag(ArtifactStore store, String name) throws IOException {
+        for (String tag : store.list("oci/" + name + "/tags")) {
+            if (!tagWithheld(store, name, tag)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
