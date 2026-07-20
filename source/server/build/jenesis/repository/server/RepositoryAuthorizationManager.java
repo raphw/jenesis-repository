@@ -15,7 +15,8 @@ import java.util.function.Supplier;
  * Authorizes a request against the {@link Authorization} credential model. An anonymous deployment (the headless
  * default) allows everything; an enforcing one reads the {@code Jenesis-Repository-Key} and optional
  * {@code Jenesis-Repository-Name} headers and requires {@code repository:read} for a GET/HEAD and
- * {@code repository:write} for any other method. The computed {@link Authorization.Decision} is recorded on the
+ * {@code repository:write} for any other method, on the router-resolved in-repository path so a path-scoped grant
+ * ({@code <repo>:<prefix>}) authorizes exactly its subtree. The computed {@link Authorization.Decision} is recorded on the
  * request so {@link RepositoryAuthorizationEntryPoint} can answer {@code 401} for an unauthorized request (no key,
  * a malformed or expired key) and {@code 403} for a forbidden one (a key that lacks the right), regardless of which
  * Spring Security failure path the denial takes. It is contributed as a bean by
@@ -24,9 +25,11 @@ import java.util.function.Supplier;
 public class RepositoryAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
 
     private final Authorization authorization;
+    private final RepositoryRouting routing;
 
-    public RepositoryAuthorizationManager(Authorization authorization) {
+    public RepositoryAuthorizationManager(Authorization authorization, RepositoryRouting routing) {
         this.authorization = authorization;
+        this.routing = routing;
     }
 
     @Override
@@ -53,6 +56,12 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
             }
         }
         String key = request.getHeader("Jenesis-Repository-Key");
+        // Reuse the router's own resolution of the in-repository path (the request URI with the /repository prefix
+        // stripped, exactly as the format dispatcher matches on) rather than re-deriving it here, so a path-scoped
+        // grant (<repo>:<prefix>) authorizes exactly the subtree it grants. A repository-wide grant carries no prefix
+        // and covers every path, so threading the path changes nothing for it - it only makes a prefix grant, which
+        // is otherwise dead against the pathless 3-arg check, actually evaluated.
+        String path = routing.route(request).path();
         Authorization.Decision decision;
         try {
             // A key may carry a source-IP allowlist (set-allowed-addresses): a request from an address outside it is
@@ -64,7 +73,7 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
             if (!authorization.addressAllowed(key, clientAddress(request))) {
                 decision = Authorization.Decision.FORBIDDEN;
             } else {
-                decision = authorization.authorize(key, scope, required);
+                decision = authorization.authorize(key, scope, path, required);
             }
         } catch (IOException e) {
             decision = Authorization.Decision.FORBIDDEN;
