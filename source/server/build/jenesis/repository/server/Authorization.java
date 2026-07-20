@@ -96,9 +96,20 @@ public final class Authorization {
 
     /** A named OIDC trust: an id-token from {@code issuer} (signed by its JWKS) whose {@code audience} and
      *  {@code subject} (a glob, blank for any) match is exchanged for a short-lived credential of {@code ttl} carrying
-     *  {@code rights} on {@code scope}. A blank {@code audience} accepts any audience. */
+     *  {@code rights} on {@code scope}. The {@code audience} is required and must be explicit: a blank audience would
+     *  match a token bearing <em>any</em> {@code aud} - including one minted for a foreign relying party - so it is
+     *  rejected at construction (fail-fast) rather than silently trusting every audience. Every Trust, whether built
+     *  in code or parsed from stored config ({@link #trusts}), flows through this canonical constructor, so the check
+     *  covers every creation and parse path. */
     public record Trust(String name, String issuer, String audience, String subject, String scope, String rights,
                         Duration ttl) {
+        public Trust {
+            if (audience == null || audience.isBlank()) {
+                throw new IllegalArgumentException("OIDC trust '" + name + "' (issuer " + issuer
+                        + ") requires an explicit audience: set its audience to the value your tokens carry in the "
+                        + "aud claim; a blank audience would accept a token minted for any relying party");
+            }
+        }
     }
 
     /** The effective policy for {@code tenant}: a stored per-tenant default/ceiling layered over the deployment-wide
@@ -206,7 +217,8 @@ public final class Authorization {
         return trusts;
     }
 
-    /** Add or replace an OIDC trust by name; {@code issuer}, {@code scope} and {@code rights} are required. */
+    /** Add or replace an OIDC trust by name; {@code issuer}, {@code scope} and {@code rights} are required here, and
+     *  an explicit {@code audience} is enforced earlier at {@link Trust} construction. */
     public void setTrust(String tenant, Trust trust) throws IOException {
         require();
         if (trust.name() == null || trust.name().isBlank() || trust.issuer() == null || trust.issuer().isBlank()
