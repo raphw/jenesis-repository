@@ -42,6 +42,10 @@ public class RepositorySpringE2ETest {
     @BeforeAll
     public void boot() {
         System.setProperty("JENESIS_STORE_ROOT", anonymousStore.toString());
+        // Auth now defaults on; this base server is the documented anonymous deployment (the round-trip and health
+        // tests below run unauthenticated), so pin the anonymous (auth=false) opt-out to preserve its intent. The
+        // enforcing_auth test starts its own server with auth=true.
+        System.setProperty("jenesis.repository.auth", "false");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/";

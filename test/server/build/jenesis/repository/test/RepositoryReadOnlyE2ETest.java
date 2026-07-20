@@ -35,6 +35,9 @@ public class RepositoryReadOnlyE2ETest {
     public void boot() {
         System.setProperty("JENESIS_STORE_ROOT", store.toString());
         System.setProperty("jenesis.repository.read-only", "true");
+        // Auth now defaults on; the read-only gate (not the auth filter) must be what refuses the writes here, so pin
+        // the anonymous (auth=false) opt-out to preserve the test's intent.
+        System.setProperty("jenesis.repository.auth", "false");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port();
@@ -46,6 +49,7 @@ public class RepositoryReadOnlyE2ETest {
             server.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.read-only");
     }
 

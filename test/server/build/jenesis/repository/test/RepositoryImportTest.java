@@ -150,6 +150,9 @@ public class RepositoryImportTest {
         // (W5.12): with it on, a coordinate with no stored document falls back to deriving one from the version
         // folders - the importer case the flag's derivation fallback exists for.
         System.setProperty("jenesis.repository.maven-metadata-compute", "true");
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
@@ -160,6 +163,7 @@ public class RepositoryImportTest {
         running.close();
         nexus.stop(0);
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.maven-metadata-compute");
     }
 

@@ -58,6 +58,9 @@ public class MavenProxyTest {
             fetches.incrementAndGet();
             return upstream.fetch(url, requestHeaders);
         };
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0, Map.of("maven", URI.create(CENTRAL)), counting);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port() + "/repository";
@@ -69,6 +72,7 @@ public class MavenProxyTest {
             running.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

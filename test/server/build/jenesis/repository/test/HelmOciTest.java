@@ -47,6 +47,9 @@ public class HelmOciTest {
     public void start() {
         requireOrSkip(commandAvailable(HELM), "helm is required for the Helm-over-OCI verification");
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("store").toString());
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         env = Map.of(
                 "HELM_CACHE_HOME", root.resolve("helm-cache").toString(),
@@ -60,6 +63,7 @@ public class HelmOciTest {
             running.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

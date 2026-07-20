@@ -47,6 +47,9 @@ public class BatchUploadTest {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         System.setProperty("jenesis.repository.batch-upload", "true");
         System.setProperty("jenesis.repository.batch-upload-max-entries", "5");
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port() + "/repository";
@@ -58,6 +61,7 @@ public class BatchUploadTest {
             running.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.batch-upload");
         System.clearProperty("jenesis.repository.batch-upload-max-entries");
     }

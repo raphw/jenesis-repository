@@ -18,6 +18,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
 import io.micrometer.observation.ObservationRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -46,6 +48,8 @@ import java.util.ServiceLoader;
 @EnableConfigurationProperties(RepositoryProperties.class)
 public class RepositoryAutoConfiguration {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(RepositoryAutoConfiguration.class);
+
     public RepositoryAutoConfiguration(Environment environment) {
         // Hand the Spring Environment to the config-driven SPI enable/disable convention before any bean below
         // discovers providers, so every jenesis.repository.* toggle - including its JENESIS_REPOSITORY_* environment
@@ -67,6 +71,16 @@ public class RepositoryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public Authorization authorization(RepositoryProperties properties, ArtifactStore store) {
+        if (!properties.isAuth()) {
+            // Secure-defaults principle: an insecure configuration must be loud, not silent. Per-credential
+            // authorization is on by default; this deployment turned it off explicitly (jenesis.repository.auth=false),
+            // so warn at boot that every request is served with no credential. Anonymous is a legitimate explicit
+            // choice, so this warns rather than failing the boot.
+            LOGGER.warn("SECURITY: per-credential authorization is DISABLED (jenesis.repository.auth=false) - the "
+                    + "repository is running ANONYMOUS/OPEN and every request is served without a credential. This is "
+                    + "an explicit opt-out; unset it or set jenesis.repository.auth=true (the default) to enforce "
+                    + "authorization.");
+        }
         return properties.isAuth() ? Authorization.enforcing(store) : Authorization.anonymous();
     }
 
