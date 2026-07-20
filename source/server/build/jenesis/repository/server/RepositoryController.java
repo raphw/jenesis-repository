@@ -23,7 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -224,6 +226,17 @@ public class RepositoryController {
             respond(response, 400, "url and repository are required");
             return;
         }
+        // SSRF screen: with the anonymous-possible default, an unguarded import URL turns this endpoint into a proxy
+        // for the deployment's own network - a cloud metadata service (169.254.169.254), a loopback control plane
+        // (127.0.0.1) or an internal host. Refuse a non-http(s) URL or one whose host resolves to a private, loopback,
+        // link-local, site-local, multicast, CGNAT or unique-local address. On by default; an internal-host migration
+        // opts out with jenesis.repository.block-private-import-hosts=false.
+        if (blockPrivateImportHosts() && !isPublicImportUrl(url)) {
+            respond(response, 400, "import url must be an http(s) URL to a public host; a private, loopback, "
+                    + "link-local or cloud-metadata host is refused to prevent SSRF (set "
+                    + "jenesis.repository.block-private-import-hosts=false to allow an internal-host migration)");
+            return;
+        }
         String resume = spec.path("resume").asString(null);
         ImportJobs.Snapshot prior = resume == null ? null : jobs.snapshot(store, resume).orElse(null);
         String cursor = prior == null ? null : prior.cursor();
@@ -355,6 +368,66 @@ public class RepositoryController {
      *  toggle from, so no extra dependency is threaded in; unset means read-write. */
     private boolean readOnly() {
         return Boolean.parseBoolean(settings.apply("read-only"));
+    }
+
+    /** The import SSRF screen is on by default (the secure default); an internal-host migration opts out with
+     *  {@code jenesis.repository.block-private-import-hosts=false}. Read off the same settings the read-only flag
+     *  reads, so no extra dependency is threaded in - unset (or any value other than {@code false}) blocks. */
+    private boolean blockPrivateImportHosts() {
+        String value = settings.apply("block-private-import-hosts");
+        return value == null || value.isBlank() || Boolean.parseBoolean(value);
+    }
+
+    /** Whether an import URL is an {@code http(s)} URL to a host that is safe to reach: a public host, or one that
+     *  does not resolve at all (unreachable, so not an SSRF vector - the import source's own probe then rejects it).
+     *  A URL that is malformed, non-http(s), hostless, or resolves to any private/loopback/link-local/site-local/
+     *  multicast/CGNAT/unique-local address is refused. */
+    private static boolean isPublicImportUrl(String url) {
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException _) {
+            return false;
+        }
+        String scheme = uri.getScheme();
+        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+            return false;
+        }
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) {
+            return false;
+        }
+        InetAddress[] addresses;
+        try {
+            addresses = InetAddress.getAllByName(host);
+        } catch (UnknownHostException _) {
+            // A host that does not resolve cannot be reached, so it is not an SSRF vector; let the import source's own
+            // probe reject it (the documented "host that cannot answer" 400) rather than masking that here.
+            return true;
+        }
+        for (InetAddress address : addresses) {
+            if (isPrivateHost(address)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A private/loopback/link-local/site-local/multicast/CGNAT/unique-local address an import must not reach. The
+     *  JDK classifiers cover loopback, wildcard, link-local (169.254/16, fe80::/10), site-local (10/8, 172.16/12,
+     *  192.168/16) and multicast; CGNAT (100.64/10, RFC 6598) and IPv6 unique-local (fc00::/7, RFC 4193) are checked
+     *  by hand as the JDK does not recognise them. */
+    private static boolean isPrivateHost(InetAddress address) {
+        if (address.isLoopbackAddress() || address.isAnyLocalAddress() || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress() || address.isMulticastAddress()) {
+            return true;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 4) {
+            int first = bytes[0] & 0xFF, second = bytes[1] & 0xFF;
+            return first == 100 && second >= 64 && second <= 127;
+        }
+        return (bytes[0] & 0xFE) == 0xFC;
     }
 
     /** A write refused by the storage quota maps to {@code 507 Insufficient Storage} - the limit was hit before any

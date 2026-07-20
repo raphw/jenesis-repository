@@ -25,7 +25,8 @@ import java.util.function.UnaryOperator;
  * an HMAC key pair {@code JENESIS_GCS_ACCESS_KEY_ID} / {@code JENESIS_GCS_SECRET_ACCESS_KEY} (a
  * secret; issued under Cloud Storage &gt; Settings &gt; Interoperability), with an optional
  * {@code JENESIS_GCS_ENDPOINT} (default {@code https://storage.googleapis.com}; point it elsewhere
- * for an emulator) and {@code JENESIS_GCS_REGION} (the SigV4 scope region, default {@code auto} as
+ * for an emulator, but it must be {@code https} unless {@code JENESIS_GCS_ALLOW_INSECURE_ENDPOINT=true}
+ * explicitly permits a plaintext one) and {@code JENESIS_GCS_REGION} (the SigV4 scope region, default {@code auto} as
  * GCS documents). When the key pair is absent the standard AWS chain is consulted, which keeps the
  * provider drivable end to end from a test through an injected config lookup. Two SDK defaults are
  * dialled back for GCS, which does not decode aws-chunked request bodies: the flexible-checksum
@@ -61,11 +62,12 @@ public final class GcsArtifactStoreProvider implements ArtifactStoreProvider {
         if (endpoint == null || endpoint.isBlank()) {
             endpoint = "https://storage.googleapis.com";
         }
+        URI override = secureEndpoint(endpoint, config.apply("JENESIS_GCS_ALLOW_INSECURE_ENDPOINT"));
         S3Client s3 = S3Client.builder()
                 .region(Region.of(region))
                 .httpClient(UrlConnectionHttpClient.create())
                 .credentialsProvider(credentials(config))
-                .endpointOverride(URI.create(endpoint))
+                .endpointOverride(override)
                 .forcePathStyle(true)
                 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
                 .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
@@ -80,6 +82,24 @@ public final class GcsArtifactStoreProvider implements ArtifactStoreProvider {
             // bucket is truly unusable.
         }
         return new GcsArtifactStore(s3, bucket);
+    }
+
+    /**
+     * The endpoint (the {@code storage.googleapis.com} default, or an emulator override), required to be {@code https}
+     * by default so the HMAC secret and artifact bytes are not sent over a plaintext transport a MITM can read or
+     * tamper with. A plaintext {@code http} emulator endpoint is an explicit opt-out: set
+     * {@code JENESIS_GCS_ALLOW_INSECURE_ENDPOINT=true}.
+     */
+    public static URI secureEndpoint(String endpoint, String allowInsecure) {
+        URI override = URI.create(endpoint);
+        String scheme = override.getScheme();
+        boolean https = scheme != null && scheme.equalsIgnoreCase("https");
+        if (!https && !Boolean.parseBoolean(allowInsecure)) {
+            throw new IllegalStateException("JENESIS_GCS_ENDPOINT must be an https:// endpoint (got '" + endpoint
+                    + "'); set JENESIS_GCS_ALLOW_INSECURE_ENDPOINT=true to allow a plaintext endpoint, e.g. a local "
+                    + "storage emulator.");
+        }
+        return override;
     }
 
     /**

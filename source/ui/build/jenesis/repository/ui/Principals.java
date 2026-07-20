@@ -12,12 +12,19 @@ import java.util.stream.Collectors;
 
 /**
  * The single-tenant authority model: every signed-in user is a {@code USER}; a user whose provider-qualified id
- * ({@code github/<id>}, {@code oidc/<sub>}) is in the configured {@code jenesis.ui.admins} list - or every user when
- * that list is empty - is also an {@code ADMIN} (so the console is open to whoever signs in unless admins are
- * named). A deployment that needs a richer tenant-and-role membership model replaces this by contributing its own
- * bean; the seam is the same. This deliberately stays single-tenant and carries no multi-tenant machinery.
+ * ({@code github/<id>}, {@code oidc/<sub>}) is in the configured {@code jenesis.ui.admins} list is also an
+ * {@code ADMIN}. The secure default is deny: when no admins are configured, no one is an {@code ADMIN}, so an
+ * unconfigured deployment denies writes (a POST/PUT/DELETE needs {@code ROLE_ADMIN}) rather than silently granting
+ * full admin to whoever signs in - matching the enterprise console. Opening the console to every authenticated user
+ * (the old single-tenant convenience) is an <em>explicit opt-out</em>: list {@code *} in {@code jenesis.ui.admins}.
+ * A deployment that needs a richer tenant-and-role membership model replaces this by contributing its own bean; the
+ * seam is the same. This deliberately stays single-tenant and carries no multi-tenant machinery.
  */
 public class Principals {
+
+    /** The wildcard admin id: an explicit opt-out that grants {@code ADMIN} to every authenticated user, restoring
+     *  the old open single-tenant behaviour without reintroducing the empty-list-grants-everyone footgun. */
+    private static final String EVERYONE = "*";
 
     private final Set<String> admins;
 
@@ -32,7 +39,10 @@ public class Principals {
     public List<GrantedAuthority> authorities(String id) {
         List<GrantedAuthority> authorities = new ArrayList<>();
         authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
-        if (admins.isEmpty() || admins.contains(id)) {
+        // Deny by default: ADMIN only for a configured id (or when the deployment explicitly opts every user in with
+        // the * wildcard). An empty admins list therefore grants no ADMIN, so an unconfigured console cannot be
+        // written to by an arbitrary sign-in.
+        if (admins.contains(EVERYONE) || admins.contains(id)) {
             authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
         }
         return authorities;

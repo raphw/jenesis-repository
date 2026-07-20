@@ -78,6 +78,8 @@ public class S3ArtifactStoreProviderTest {
         Map<String, String> values = Map.of(
                 "JENESIS_AWS_BUCKET", bucket,
                 "JENESIS_AWS_ENDPOINT", "http://localhost:" + port,
+                // The MinIO container speaks plaintext http, so opt past the https-endpoint secure default.
+                "JENESIS_AWS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_AWS_ACCESS_KEY_ID", ACCESS_KEY,
                 "JENESIS_AWS_SECRET_ACCESS_KEY", SECRET_KEY);
         return values::get;

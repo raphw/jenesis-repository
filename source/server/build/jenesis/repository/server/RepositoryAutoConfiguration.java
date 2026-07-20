@@ -122,8 +122,30 @@ public class RepositoryAutoConfiguration {
     @ConditionalOnMissingBean(name = "upstreams")
     public Map<String, URI> upstreams(RepositoryProperties properties) {
         Map<String, URI> upstreams = new LinkedHashMap<>();
-        properties.getProxy().forEach((format, uri) -> upstreams.put(format, URI.create(uri)));
+        properties.getProxy().forEach((format, uri) -> {
+            URI upstream = URI.create(uri);
+            if (isInsecureUpstream(upstream)) {
+                // Secure-defaults principle: an insecure configuration must be loud, not silent - the same stance the
+                // authorization bean takes for anonymous mode. A non-HTTPS upstream is proxied verbatim (a build tool
+                // pulls its dependencies through it), so a MITM on that hop can inject or tamper with artifacts. Warn
+                // loudly at boot rather than refuse: a plaintext internal mirror is a legitimate explicit choice and
+                // refusing would break the documented `jenesis.repository.proxy.<format>=<url>` config shape. Point the
+                // upstream at an https:// URL to remove this warning.
+                LOGGER.warn("SECURITY: the '{}' proxy upstream {} is NOT HTTPS - artifacts are pulled through over a "
+                        + "plaintext/untrusted transport and can be tampered with in transit. This is an explicit "
+                        + "configuration; use an https:// upstream to secure it.", format, upstream);
+            }
+            upstreams.put(format, upstream);
+        });
         return upstreams;
+    }
+
+    /** Whether a proxy upstream is fetched over something other than HTTPS - a plaintext {@code http://}, or a
+     *  schemeless or otherwise non-TLS URI - the transport a MITM can tamper with, which {@link #upstreams} warns
+     *  about loudly at boot. */
+    public static boolean isInsecureUpstream(URI upstream) {
+        String scheme = upstream.getScheme();
+        return scheme == null || !scheme.equalsIgnoreCase("https");
     }
 
     @Bean
