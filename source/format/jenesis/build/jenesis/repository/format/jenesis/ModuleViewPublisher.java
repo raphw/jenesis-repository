@@ -19,4 +19,11 @@ public final class ModuleViewPublisher implements ModuleView {
         publication.link("/module/" + moduleName + "/" + version + "/" + moduleName + ".jar", hash);
         publication.link("/module/" + moduleName + "/" + moduleName + ".jar", hash);
     }
+
+    @Override
+    public void unpublish(String moduleName, String version, ArtifactStore store) throws IOException {
+        Publication publication = new Publication(store);
+        publication.unpublish("/module/" + moduleName + "/" + version + "/" + moduleName + ".jar");
+        publication.unpublish("/module/" + moduleName + "/" + moduleName + ".jar");
+    }
 }
