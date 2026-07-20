@@ -40,6 +40,7 @@ public class RepositoryAuthE2ETest {
     private String ro;
     private String bogus;
     private String releasesRo;
+    private String pathScoped;
     private String offnet;
     private String allowlisted;
 
@@ -57,6 +58,11 @@ public class RepositoryAuthE2ETest {
         authorization.grant(ro, "*", Authorization.REPOSITORY_READ);
         releasesRo = Authorization.mint("acme");
         authorization.grant(releasesRo, "releases", Authorization.REPOSITORY_READ);
+        // A credential whose ONLY grant is path-scoped: repository:read under the maven/org/scoped subtree of any
+        // repository ({@code *:<prefix>}), with no repository-wide right. It authorizes a read at or under that path
+        // and is forbidden everywhere else - which only holds if the routed path reaches the grant check.
+        pathScoped = Authorization.mint("acme");
+        authorization.grant(pathScoped, "*:maven/org/scoped", Authorization.REPOSITORY_READ);
         // Two read keys carrying a source-IP allowlist: one that excludes loopback (so a request from the test client
         // is off-net) and one that includes it (so the same request is on-net), to prove the allowlist gates the wire.
         offnet = Authorization.mint("acme");
@@ -117,6 +123,21 @@ public class RepositoryAuthE2ETest {
         assertThat(assets(releasesRo, "releases").statusCode()).isEqualTo(200);
         assertThat(assets(releasesRo, "default").statusCode()).isEqualTo(403);
         assertThat(assets(ro, "default").statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    public void a_path_scoped_key_reads_within_its_prefix_and_is_forbidden_outside_it() throws Exception {
+        // Seed one artifact inside the granted prefix and one outside it with the wildcard deploy key, so both exist
+        // and any denial is an authorization verdict, not a 404. pathScoped carries repository:read only under
+        // maven/org/scoped, so the routed path decides the outcome: a read inside the prefix is authorized (200), an
+        // otherwise-identical read outside it is forbidden (403). Before the routed path was threaded into the grant
+        // check the path-scoped grant matched nothing and even the in-prefix read was forbidden - a dead feature.
+        assertThat(put("maven/org/scoped/lib/1/lib-1.jar", ci).statusCode()).isEqualTo(201);
+        assertThat(put("maven/org/elsewhere/lib/1/lib-1.jar", ci).statusCode()).isEqualTo(201);
+        assertThat(get("maven/org/scoped/lib/1/lib-1.jar", pathScoped).statusCode())
+                .as("a read under the granted prefix is authorized").isEqualTo(200);
+        assertThat(get("maven/org/elsewhere/lib/1/lib-1.jar", pathScoped).statusCode())
+                .as("a read of an existing artifact outside the prefix is forbidden").isEqualTo(403);
     }
 
     @Test

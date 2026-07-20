@@ -38,8 +38,9 @@ public class RepositorySecurityAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(name = "repositoryAuthorizationManager")
-    public RepositoryAuthorizationManager repositoryAuthorizationManager(Authorization authorization) {
-        return new RepositoryAuthorizationManager(authorization);
+    public RepositoryAuthorizationManager repositoryAuthorizationManager(Authorization authorization,
+                                                                         RepositoryRouting routing) {
+        return new RepositoryAuthorizationManager(authorization, routing);
     }
 
     @Bean
