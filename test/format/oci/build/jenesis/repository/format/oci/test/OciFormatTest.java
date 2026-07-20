@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLDecoder;
@@ -271,6 +272,64 @@ class OciFormatTest {
                 Map.of("digest", "sha256:" + sha256(blob)), Map.of());
         format.handle(post, store);
         assertThat(post.status()).isEqualTo(201);
+    }
+
+    /** Mark a manifest's stored blob withheld through the same {@code withheld/<hash>} marker the blob and manifest
+     *  serve paths screen on, so a pull of it 404s - the setup a held-image catalog/tags/list disclosure test asserts
+     *  against. */
+    private void withhold(byte[] manifest) throws IOException {
+        store.write("withheld/" + sha256(manifest), new ByteArrayInputStream(new byte[0]));
+    }
+
+    @Test
+    void a_fully_withheld_image_is_absent_from_the_catalog_and_its_tag_from_tags_list() throws IOException {
+        byte[] kept = "{\"schemaVersion\":2,\"n\":\"kept\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] held = "{\"schemaVersion\":2,\"n\":\"held\"}".getBytes(StandardCharsets.UTF_8);
+        push("kept", "1.0", kept);
+        push("held", "1.0", held);
+
+        // The held image's only manifest is withheld: a pull by tag already 404s (the serve path's withheld screen).
+        withhold(held);
+        FakeExchange pull = new FakeExchange("GET", "/v2/held/manifests/1.0");
+        format.handle(pull, store);
+        assertThat(pull.status()).as("a withheld manifest 404s on a pull").isEqualTo(404);
+
+        // The catalog must not disclose the held image's name - it has no surviving tag - while the kept one remains.
+        FakeExchange catalog = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(catalog, store);
+        assertThat(catalog.status()).isEqualTo(200);
+        assertThat(catalog.responseText()).isEqualTo("{\"repositories\":[\"kept\"]}");
+
+        // The held image's tags/list must not disclose the withheld tag (its existence included).
+        FakeExchange heldTags = new FakeExchange("GET", "/v2/held/tags/list");
+        format.handle(heldTags, store);
+        assertThat(heldTags.status()).isEqualTo(200);
+        assertThat(heldTags.responseText()).isEqualTo("{\"name\":\"held\",\"tags\":[]}");
+
+        // The non-withheld image still lists normally.
+        FakeExchange keptTags = new FakeExchange("GET", "/v2/kept/tags/list");
+        format.handle(keptTags, store);
+        assertThat(keptTags.responseText()).isEqualTo("{\"name\":\"kept\",\"tags\":[\"1.0\"]}");
+    }
+
+    @Test
+    void a_partially_withheld_image_stays_catalogued_with_only_its_surviving_tags() throws IOException {
+        byte[] shown = "{\"schemaVersion\":2,\"t\":\"shown\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] hidden = "{\"schemaVersion\":2,\"t\":\"hidden\"}".getBytes(StandardCharsets.UTF_8);
+        push("app", "shown", shown);
+        push("app", "hidden", hidden);
+
+        // One of the image's two tags is withheld; the image keeps a surviving tag, so it stays catalogued.
+        withhold(hidden);
+
+        FakeExchange catalog = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(catalog, store);
+        assertThat(catalog.responseText()).isEqualTo("{\"repositories\":[\"app\"]}");
+
+        // tags/list shows the surviving tag but drops the withheld one.
+        FakeExchange tags = new FakeExchange("GET", "/v2/app/tags/list");
+        format.handle(tags, store);
+        assertThat(tags.responseText()).isEqualTo("{\"name\":\"app\",\"tags\":[\"shown\"]}");
     }
 
     /** A fetcher answering from {@link OciFormat#handle} itself, so the walk consumes exactly what the format
