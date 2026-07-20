@@ -1,5 +1,6 @@
 package build.jenesis.repository.server;
 
+import build.jenesis.repository.format.PrivateHosts;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.importer.ImportRequest;
@@ -23,9 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.InetAddress;
 import java.net.URI;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -381,7 +380,8 @@ public class RepositoryController {
     /** Whether an import URL is an {@code http(s)} URL to a host that is safe to reach: a public host, or one that
      *  does not resolve at all (unreachable, so not an SSRF vector - the import source's own probe then rejects it).
      *  A URL that is malformed, non-http(s), hostless, or resolves to any private/loopback/link-local/site-local/
-     *  multicast/CGNAT/unique-local address is refused. */
+     *  multicast/CGNAT/unique-local address is refused. The private-range test is the shared {@link PrivateHosts}
+     *  screen the fetcher's redirect chain applies too, so the initial URL and any 30x target are judged alike. */
     private static boolean isPublicImportUrl(String url) {
         URI uri;
         try {
@@ -397,37 +397,7 @@ public class RepositoryController {
         if (host == null || host.isBlank()) {
             return false;
         }
-        InetAddress[] addresses;
-        try {
-            addresses = InetAddress.getAllByName(host);
-        } catch (UnknownHostException _) {
-            // A host that does not resolve cannot be reached, so it is not an SSRF vector; let the import source's own
-            // probe reject it (the documented "host that cannot answer" 400) rather than masking that here.
-            return true;
-        }
-        for (InetAddress address : addresses) {
-            if (isPrivateHost(address)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** A private/loopback/link-local/site-local/multicast/CGNAT/unique-local address an import must not reach. The
-     *  JDK classifiers cover loopback, wildcard, link-local (169.254/16, fe80::/10), site-local (10/8, 172.16/12,
-     *  192.168/16) and multicast; CGNAT (100.64/10, RFC 6598) and IPv6 unique-local (fc00::/7, RFC 4193) are checked
-     *  by hand as the JDK does not recognise them. */
-    private static boolean isPrivateHost(InetAddress address) {
-        if (address.isLoopbackAddress() || address.isAnyLocalAddress() || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress() || address.isMulticastAddress()) {
-            return true;
-        }
-        byte[] bytes = address.getAddress();
-        if (bytes.length == 4) {
-            int first = bytes[0] & 0xFF, second = bytes[1] & 0xFF;
-            return first == 100 && second >= 64 && second <= 127;
-        }
-        return (bytes[0] & 0xFE) == 0xFC;
+        return !PrivateHosts.resolvesToPrivate(host);
     }
 
     /** A write refused by the storage quota maps to {@code 507 Insufficient Storage} - the limit was hit before any

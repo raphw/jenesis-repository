@@ -23,7 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class HttpFetcherHeadTest {
 
-    private final HttpFetcher fetcher = new HttpFetcher(Duration.ofSeconds(10));
+    // A permissive redirect-host screen: the loopback fixture in the cross-origin HEAD redirect test stands in for a
+    // public host, so the shipped private-range screen does not refuse the hop (that refusal is HttpFetcherRedirectTest's).
+    private final HttpFetcher fetcher = new HttpFetcher(Duration.ofSeconds(10), host -> false);
 
     @Test
     void a_head_returns_status_and_headers_without_reading_a_body() throws IOException {
