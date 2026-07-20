@@ -74,8 +74,11 @@ public final class FilesystemArtifactStore implements ArtifactStore {
     private static Path createUploadTemp(Path dir) throws IOException {
         for (int attempt = 0; ; attempt++) {
             try {
-                Files.createDirectories(dir);
-                return Files.createTempFile(dir, ".upload", ".tmp");
+                // Owner-only creation (rwx------ dir, rw------- temp), so a blob never inherits the process
+                // umask's world-readable default; the rw------- temp keeps those perms through the atomic move
+                // into its final blob/key path (rename preserves the inode's mode).
+                OwnerOnly.createDirectories(dir);
+                return OwnerOnly.createTempFile(dir, ".upload", ".tmp");
             } catch (NoSuchFileException e) {
                 if (attempt >= 4) {
                     throw e;
