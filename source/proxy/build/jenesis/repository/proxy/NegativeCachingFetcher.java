@@ -15,7 +15,8 @@ import build.jenesis.repository.observation.ObservabilitySource;
  * being transient or resolvable, and any success passes through untouched. An entry expires after the configured
  * time-to-live, so a genuinely published artifact is seen within that window. It decorates both {@link #fetch} and
  * {@link #download} - Maven proxies through {@code download}, npm and the rest through {@code fetch} - keyed by URL
- * and safe for concurrent use, with a bounded map swept of expired entries when it fills.
+ * and safe for concurrent use, with a bounded map swept of expired entries when it fills and cleared wholesale if a
+ * flood of still-live misses would otherwise push it past the bound, so the map can never exceed its cap.
  *
  * <p>It is its own {@link ObservabilitySource}: the live fetcher the distribution holds reports {@code
  * jenesis.proxy.negativecache.entries} - the upstream misses currently remembered, as a <em>bounded</em> gauge
@@ -117,6 +118,13 @@ public final class NegativeCachingFetcher implements ProxyFormat.Fetcher, Observ
         if (misses.size() >= MAX_ENTRIES) {
             Instant now = clock.instant();
             misses.values().removeIf(recordedAt -> !now.isBefore(recordedAt.plus(ttl)));
+            if (misses.size() >= MAX_ENTRIES) {
+                // A flood of distinct, still-live upstream 404s has filled the map and none could be expired away, so
+                // sweeping freed nothing. Rather than grow past the bound (the memory-exhaustion vector the cap exists
+                // to close), drop the whole map - the same clear-on-still-full guard the sibling feed cache uses. The
+                // negative cache is a best-effort optimisation, so forgetting remembered misses only costs a re-probe.
+                misses.clear();
+            }
         }
         misses.put(url, clock.instant());
     }

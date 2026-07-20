@@ -130,6 +130,7 @@ open module build.jenesis.repository.ui.test {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
     requires java.net.http;
+    requires spring.security.core;
     requires org.junit.jupiter;
     requires org.assertj.core;
 }

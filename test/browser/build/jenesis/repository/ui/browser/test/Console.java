@@ -8,9 +8,9 @@ import build.jenesis.repository.ui.Application;
  * profile, over a throwaway filesystem store, and hands back the bound base URL - reusing {@link Application#start(int)}
  * so no Spring type leaks past this helper (the browser drives the assembled app over real HTTP). The console reads its
  * {@code ArtifactStore} backend from {@code JENESIS_STORE_ROOT} and its profile from {@code spring.profiles.active}, the
- * same system properties {@code ConsoleE2ETest} sets; the session cookie already defaults to non-secure
- * ({@code JENESIS_UI_SECURE_COOKIE:false} in {@code application.properties}), so the browser keeps {@code JSESSIONID}
- * over plain-HTTP loopback and form login sticks.
+ * same system properties {@code ConsoleE2ETest} sets; the session cookie now defaults to secure (HTTPS-only), so this
+ * plain-HTTP loopback run takes the documented opt-out {@code JENESIS_UI_SECURE_COOKIE=false} - otherwise the browser
+ * would drop {@code JSESSIONID} over http and form login would not stick.
  */
 final class Console implements AutoCloseable {
 
@@ -26,6 +26,9 @@ final class Console implements AutoCloseable {
         Path store = Files.createTempDirectory("jenesis-repository-console-browser");
         System.setProperty("JENESIS_STORE_ROOT", store.toString());
         System.setProperty("spring.profiles.active", "dev");
+        // The secure-cookie default is now true; this loopback run is plain HTTP, so take the documented opt-out so
+        // the real browser keeps JSESSIONID and form login sticks.
+        System.setProperty("JENESIS_UI_SECURE_COOKIE", "false");
         Application.Running running = Application.start(0);
         return new Console(running, store);
     }
@@ -47,6 +50,7 @@ final class Console implements AutoCloseable {
         } finally {
             System.clearProperty("JENESIS_STORE_ROOT");
             System.clearProperty("spring.profiles.active");
+            System.clearProperty("JENESIS_UI_SECURE_COOKIE");
             deleteRecursively(store);
         }
     }

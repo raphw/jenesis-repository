@@ -82,6 +82,9 @@ public class MavenTreeImportTest {
         // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
         // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
         System.setProperty("jenesis.repository.auth", "false");
+        // The import SSRF screen now blocks a loopback upstream by default; this test's fake Maven host is on
+        // localhost, so pin the internal-host opt-out (the guard itself is proven by ImportHostGuardTest).
+        System.setProperty("jenesis.repository.block-private-import-hosts", "false");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port() + "/repository";
@@ -114,6 +117,7 @@ public class MavenTreeImportTest {
         upstream.stop(0);
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
+        System.clearProperty("jenesis.repository.block-private-import-hosts");
     }
 
     @Test

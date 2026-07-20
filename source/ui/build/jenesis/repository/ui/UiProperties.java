@@ -9,10 +9,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * server writes. Sign-in is optional: a GitHub OAuth client and a generic OpenID Connect provider (discovered from its
  * issuer URI) are configured here, and when neither is set the app still starts with login disabled. The admins list
  * carries provider-qualified ids ({@code github/<id>}, {@code oidc/<sub>}) that are granted the admin role; when it is
- * empty every signed-in user is an admin (the single-tenant console).
+ * empty no signed-in user is an admin (the secure default - the console denies writes until an admin is named), and
+ * the single {@code *} wildcard makes every authenticated user an admin (the explicit open-console opt-out).
  *
  *   jenesis.ui.store             the artifact-store backend name (JENESIS_STORE), default filesystem
- *   jenesis.ui.admins            comma-separated provider-qualified ids that are admins (JENESIS_UI_ADMINS)
+ *   jenesis.ui.admins            comma-separated provider-qualified admin ids, or * for everyone (JENESIS_UI_ADMINS)
  *   jenesis.ui.github.*          built-in GitHub OAuth client (JENESIS_UI_GITHUB_CLIENT_ID/SECRET)
  *   jenesis.ui.oidc.*            a generic OpenID Connect provider (JENESIS_UI_OIDC_ISSUER_URI/_CLIENT_ID/_CLIENT_SECRET/_NAME)
  */

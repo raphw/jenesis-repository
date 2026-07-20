@@ -5,6 +5,7 @@ import module jdk.httpserver;
 import module org.junit.jupiter.api;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.store.gcs.GcsArtifactStoreProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,6 +41,8 @@ public class GcsConditionalWriteTest {
         Map<String, String> values = Map.of(
                 "JENESIS_GCS_BUCKET", "repo",
                 "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.getAddress().getPort(),
+                // The in-process stub speaks plaintext http, so opt past the https-endpoint secure default.
+                "JENESIS_GCS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_GCS_ACCESS_KEY_ID", "hmac-access",
                 "JENESIS_GCS_SECRET_ACCESS_KEY", "hmac-secret");
         store = ArtifactStoreProvider.resolve("gcs", values::get).scope("acme");
@@ -147,6 +150,22 @@ public class GcsConditionalWriteTest {
     }
 
     @Test
+    public void a_plaintext_endpoint_is_refused_unless_opted_in() {
+        // The endpoint override must be https by default so the HMAC secret is never sent over plaintext; a http
+        // emulator endpoint is refused with a clear error unless JENESIS_GCS_ALLOW_INSECURE_ENDPOINT opts in.
+        assertThatThrownBy(() -> GcsArtifactStoreProvider.secureEndpoint("http://localhost:9000", null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("https")
+                .hasMessageContaining("JENESIS_GCS_ALLOW_INSECURE_ENDPOINT");
+        assertThat(GcsArtifactStoreProvider.secureEndpoint("http://localhost:9000", "true"))
+                .as("the opt-out permits a plaintext emulator endpoint")
+                .isEqualTo(URI.create("http://localhost:9000"));
+        assertThat(GcsArtifactStoreProvider.secureEndpoint("https://storage.googleapis.com", null))
+                .as("an https endpoint is always accepted")
+                .isEqualTo(URI.create("https://storage.googleapis.com"));
+    }
+
+    @Test
     public void a_missing_bucket_setting_is_a_clear_configuration_error() {
         assertThatThrownBy(() -> ArtifactStoreProvider.resolve("gcs", key -> null))
                 .isInstanceOf(IllegalStateException.class)
@@ -161,6 +180,7 @@ public class GcsConditionalWriteTest {
         Map<String, String> values = Map.of(
                 "JENESIS_GCS_BUCKET", "gone",
                 "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.getAddress().getPort(),
+                "JENESIS_GCS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_GCS_ACCESS_KEY_ID", "hmac-access",
                 "JENESIS_GCS_SECRET_ACCESS_KEY", "hmac-secret");
         ArtifactStore missing = ArtifactStoreProvider.resolve("gcs", values::get).scope("acme");
