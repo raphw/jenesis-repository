@@ -62,10 +62,12 @@ public final class OidcExchange implements TokenExchange {
     }
 
     private static boolean audienceMatches(List<String> audiences, String required) {
-        // A signed token may legitimately omit aud (getAudience() is then null); an audience-pinned trust must not
+        // The trust's audience is guaranteed non-blank (enforced at Authorization.Trust construction), so there is no
+        // "blank matches any audience" branch to fall through - a trust is always pinned to one explicit audience. A
+        // signed token may still legitimately omit aud (getAudience() is then null); an audience-pinned trust must not
         // match it, but the null must not NPE either - this check runs outside the decode try/catch, so a throw here
         // would 500 the exchange and skip every later trust that might have matched the token.
-        return required == null || required.isBlank() || (audiences != null && audiences.contains(required));
+        return audiences != null && audiences.contains(required);
     }
 
     private static boolean subjectMatches(String subject, String pattern) {
