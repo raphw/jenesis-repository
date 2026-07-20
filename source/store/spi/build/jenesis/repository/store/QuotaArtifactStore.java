@@ -234,18 +234,12 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         if (limit <= 0) {
             return delegate.writeBlob(in);
         }
-        // Refuse at the ceiling before spooling a single byte: a fresh content-addressed blob only pushes further
-        // over, and there is no need to buffer the whole body to a temp file to discover that - the check is a single
-        // counter read the streaming write need not consume the body to answer. (A blob already stored would add
-        // nothing, but its hash is unknown until the body is read; at a full store the honest answer is still to
-        // refuse, and a re-put of existing content at exactly the ceiling is the rare edge the next under-limit write
-        // deduplicates. The soft edge - a write begun under the limit completes even as it crosses - is unchanged.)
-        if (used() >= limit) {
-            throw new QuotaExceededException(limit, used());
-        }
-        // The content-addressed key is only known once the stream is digested, so buffer to a temp file while
-        // hashing, then route the stored bytes through this store's own metered write, which dedups an already-stored
-        // blob (no re-upload, no second spool) and otherwise counts it exactly as a keyed publish would.
+        // The content-addressed key is only known once the stream is digested, so buffer to a temp file (on disk, not
+        // in heap) while hashing, then route the stored bytes through this store's own metered write. That keyed write
+        // dedups an already-stored blob (no re-upload, no second spool) and otherwise counts it exactly as a keyed
+        // publish would - refusing a fresh blob at the ceiling. The ceiling check cannot be pulled ahead of the spool:
+        // the hash is unknown until the body is read, so a re-deployed (byte-identical, already-stored) blob - which
+        // adds no bytes and must be admitted even at a full store - is indistinguishable from a fresh one until then.
         Path temporary = Files.createTempFile("quota-blob-", null);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

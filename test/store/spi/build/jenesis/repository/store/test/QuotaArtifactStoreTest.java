@@ -147,19 +147,17 @@ class QuotaArtifactStoreTest {
     }
 
     @Test
-    void a_streamed_write_at_the_ceiling_is_refused_before_the_body_is_read() throws IOException {
-        // The 507 fires on a single counter read, before the (possibly large) body is buffered to a temp file - a
-        // store already at the ceiling refuses a fresh streaming write without consuming a single byte of it.
+    void a_deduped_streamed_redeploy_is_admitted_even_at_a_full_store() throws IOException {
+        // A store filled exactly to its ceiling still admits a re-deploy of already-stored content: the redeploy is
+        // byte-identical, adds no bytes, and dedupes to the stored blob. The ceiling check cannot pre-empt the body -
+        // the hash (hence the dedup) is only known once the stream is read - so a full store must not 507 a redeploy.
         QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 500);
-        store.write("blobs/aaa", bytes(500));
-        InputStream unread = new InputStream() {
-            @Override
-            public int read() {
-                throw new AssertionError("the body must not be read once the ceiling is reached");
-            }
-        };
-        assertThatThrownBy(() -> store.writeBlob(unread)).isInstanceOf(QuotaExceededException.class);
-        assertThat(store.used()).isEqualTo(500);
+        String hash = store.writeBlob(bytes(500));
+        assertThat(store.used()).as("the store is now exactly at its ceiling").isEqualTo(500);
+        assertThat(store.writeBlob(bytes(500))).as("the redeploy dedupes to the stored blob").isEqualTo(hash);
+        assertThat(store.used()).as("a deduped redeploy adds no bytes").isEqualTo(500);
+        // A fresh (different) streamed write at the same full store is still refused.
+        assertThatThrownBy(() -> store.writeBlob(bytes(1))).isInstanceOf(QuotaExceededException.class);
     }
 
     @Test
