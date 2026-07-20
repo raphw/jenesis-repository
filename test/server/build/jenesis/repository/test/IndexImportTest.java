@@ -48,6 +48,9 @@ public class IndexImportTest {
     @BeforeAll
     public void setUp() throws Exception {
         client = HttpClient.newHttpClient();
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - both servers stay unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("source-store").toString());
         source = RepositoryApplication.start(0);
         System.setProperty("JENESIS_STORE_ROOT", root.resolve("target-store").toString());
@@ -76,6 +79,7 @@ public class IndexImportTest {
             source.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

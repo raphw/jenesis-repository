@@ -87,6 +87,9 @@ public class ArtifactoryImportTest {
         // An imported coordinate has no stored maven-metadata.xml, so serving one needs the opt-in computation
         // (W5.12): its derivation fallback covers exactly this importer case.
         System.setProperty("jenesis.repository.maven-metadata-compute", "true");
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port() + "/repository";
@@ -97,6 +100,7 @@ public class ArtifactoryImportTest {
         running.close();
         artifactory.stop(0);
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.maven-metadata-compute");
     }
 

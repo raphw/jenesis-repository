@@ -42,6 +42,9 @@ public class OciFormatTest {
     @BeforeAll
     public void start() {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port();
@@ -53,6 +56,7 @@ public class OciFormatTest {
             running.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

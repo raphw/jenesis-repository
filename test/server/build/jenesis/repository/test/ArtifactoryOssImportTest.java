@@ -114,6 +114,9 @@ public class ArtifactoryOssImportTest {
                 .scope("default").scope("default");
         result = new RepositoryImport().run(new ArtifactorySource(URI.create(upstream), REPO, "maven",
                 new HttpFetcher()).withCredentials("admin", "password"), store);
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         base = "http://localhost:" + running.port() + "/repository";
     }
@@ -127,6 +130,7 @@ public class ArtifactoryOssImportTest {
             exec(60, null, "docker", "rm", "-f", container);
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

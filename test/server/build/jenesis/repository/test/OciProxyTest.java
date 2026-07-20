@@ -49,6 +49,9 @@ public class OciProxyTest {
         requireOrSkip(dockerAvailable(), "Docker is required for the OCI proxy integration test");
         requireOrSkip(reachable("registry-1.docker.io", 443), "Docker Hub must be reachable");
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0, Map.of("oci", URI.create("https://registry-1.docker.io/")));
         registry = "localhost:" + running.port();
     }
@@ -59,6 +62,7 @@ public class OciProxyTest {
             running.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

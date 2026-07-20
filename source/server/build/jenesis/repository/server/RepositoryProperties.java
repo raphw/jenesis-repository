@@ -13,7 +13,8 @@ import java.util.Map;
  * {@link #getTenant() tenant} / {@link #getRepository() repository} artifact space every request resolves to
  * (each {@code default} by default, the {@link FixedTenantRouting} specialization of the shared
  * {@code <tenant>/<repository>/...} store layout), whether the wire is
- * gated by the {@link Authorization} credential model (anonymous by default, the headless deployment), an
+ * gated by the {@link Authorization} credential model (enforced by default, the secure default; anonymous is an
+ * explicit opt-out), an
  * optional repository-wide storage {@link #getQuota() quota}, and the pull-through {@link #getProxy() proxy}
  * upstreams keyed by format name ({@code jenesis.repository.proxy.<format>}), so a format that is a
  * {@link build.jenesis.repository.format.ProxyFormat} serves a local miss from the upstream.
@@ -27,7 +28,11 @@ public class RepositoryProperties {
 
     private String repository = "default";
 
-    private boolean auth = false;
+    /** Enforce per-credential authorization. On by default - the secure default: a fresh deployment authorizes every
+     *  request against a per-credential key. Anonymous/open mode is an <em>explicit opt-out</em>: an operator sets
+     *  {@code jenesis.repository.auth=false} (env {@code JENESIS_REPOSITORY_AUTH=false}), and the server logs a loud
+     *  boot warning that it is running open so the choice is never silent. */
+    private boolean auth = true;
 
     private String quota = "";
 
