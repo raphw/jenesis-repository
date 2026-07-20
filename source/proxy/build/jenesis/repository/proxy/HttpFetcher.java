@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import build.jenesis.repository.format.PrivateHosts;
 import build.jenesis.repository.format.ProxyFormat;
 
 /**
@@ -32,6 +33,16 @@ import build.jenesis.repository.format.ProxyFormat;
  * fetch may legitimately redirect to a different origin - a presigned object-store URL, a CDN - and the operator's
  * credentials must not travel there. So a redirect that leaves the original origin drops the sensitive headers, the
  * same way a browser or {@code docker} does; a same-origin redirect keeps them.
+ *
+ * <p>Following redirects by hand is also where the SSRF screen belongs. The import trigger already refuses an
+ * operator-supplied URL to a private host up front, but that check is worthless if a public URL can 30x-redirect the
+ * fetch onward to {@code 169.254.169.254} or a loopback control plane - the redirect target is chosen by the
+ * upstream, not the operator. So every redirect target is re-judged by the shared {@link PrivateHosts} screen before
+ * it is followed, and a redirect to a private, loopback, link-local, site-local, CGNAT, multicast or IPv6
+ * unique-local host is refused with an {@link IOException} rather than fetched: the request never reaches that host,
+ * and the caller sees a visible failure rather than a silently proxied internal response. The initial URL is not
+ * re-judged here - that is the trigger's job for an import, and a proxy upstream is operator-configured - so only the
+ * upstream-chosen hops are screened.
  */
 public final class HttpFetcher implements ProxyFormat.Fetcher {
 
@@ -47,15 +58,27 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
     private final Duration requestTimeout;
+    /** The SSRF screen applied to each redirect target's host: {@code true} refuses the hop. The shipped screen is
+     *  {@link PrivateHosts#resolvesToPrivate}; a test injects a permissive one to drive redirect behaviour against a
+     *  loopback fixture. */
+    private final Predicate<String> blockedRedirectHost;
 
     /** The default fetcher: a per-request timeout from {@code jenesis.proxy.request-timeout}, or one minute. */
     public HttpFetcher() {
         this(requestTimeout());
     }
 
-    /** A fetcher with an explicit per-request timeout (the seam a test uses to drive a stalled upstream quickly). */
+    /** A fetcher with an explicit per-request timeout (the seam a test uses to drive a stalled upstream quickly),
+     *  screening redirect targets against the shipped {@link PrivateHosts} private-range guard. */
     public HttpFetcher(Duration requestTimeout) {
+        this(requestTimeout, PrivateHosts::resolvesToPrivate);
+    }
+
+    /** A fetcher with an explicit per-request timeout and redirect-host screen - the seam a test uses to exercise the
+     *  redirect chain against a loopback fixture (a permissive screen) or to drive the private-host refusal. */
+    public HttpFetcher(Duration requestTimeout, Predicate<String> blockedRedirectHost) {
         this.requestTimeout = requestTimeout;
+        this.blockedRedirectHost = blockedRedirectHost;
     }
 
     @Override
@@ -131,6 +154,10 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
                 body.close(); // release the intermediate redirect's connection before the next hop
             }
             current = current.resolve(location.get());
+            if (blockedRedirectHost.test(current.getHost())) {
+                throw new IOException("refusing to follow a redirect to a private, loopback, link-local or "
+                        + "cloud-metadata host (SSRF): " + current.getHost());
+            }
             if (!sameOrigin(origin, current)) {
                 headers.keySet().removeIf(name -> SENSITIVE.contains(name.toLowerCase(Locale.ROOT)));
             }
