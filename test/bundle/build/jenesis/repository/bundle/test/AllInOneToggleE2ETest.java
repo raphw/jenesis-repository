@@ -35,6 +35,10 @@ public class AllInOneToggleE2ETest {
 
     private AllInOne.Running boot(Map<String, String> configuration) {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
+        // Auth defaults on now; this suite's subject is the config-driven capability trim, not authorization, so pin the
+        // anonymous opt-out (registered for teardown like the rest). A configuration entry could still override it.
+        properties.add("jenesis.repository.auth");
+        System.setProperty("jenesis.repository.auth", "false");
         configuration.forEach((key, value) -> {
             properties.add(key);
             System.setProperty(key, value);
