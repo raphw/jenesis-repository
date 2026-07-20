@@ -26,7 +26,9 @@ import java.util.function.UnaryOperator;
  * {@code JENESIS_AWS_ACCESS_KEY_ID} and {@code JENESIS_AWS_SECRET_ACCESS_KEY} are both supplied through
  * the config lookup, in which case those static keys are used - the path a self-hosted S3-compatible
  * store (MinIO, Ceph) takes, and the seam that lets a test drive {@code create()} end to end against a
- * container through an injected config lookup, without touching the process environment. The blob I/O
+ * container through an injected config lookup, without touching the process environment. Every object is
+ * written server-side encrypted: SSE-S3 (AES256) by default, or {@code aws:kms} when an optional
+ * {@code JENESIS_AWS_SSE_KMS_KEY_ID} names a key - encryption cannot be turned off. The blob I/O
  * and the conditional compare-and-set semantics live in {@link S3ArtifactStore}.
  */
 public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
@@ -69,7 +71,10 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
             // The bucket may already exist or the credentials may not permit creation; the operations
             // below surface a clear error if the bucket is truly unusable.
         }
-        return new S3ArtifactStore(s3, bucket);
+        // Server-side encryption is always on: SSE-S3 (AES256) by default, upgraded to aws:kms with the operator's
+        // key when JENESIS_AWS_SSE_KMS_KEY_ID is supplied. There is no key that turns encryption off.
+        String kmsKeyId = config.apply("JENESIS_AWS_SSE_KMS_KEY_ID");
+        return new S3ArtifactStore(s3, bucket, kmsKeyId);
     }
 
     /**
