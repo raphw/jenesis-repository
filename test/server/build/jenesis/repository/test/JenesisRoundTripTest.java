@@ -75,6 +75,9 @@ public class JenesisRoundTripTest {
         seed.link("/maven/com/acme/app/1.0/app-1.0.pom", seed.storeBlob(new ByteArrayInputStream(pom)));
         seed.link("/raw/tools/installer.bin", seed.storeBlob(new ByteArrayInputStream(rawFile)));
 
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         source = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + source.port();
@@ -91,6 +94,7 @@ public class JenesisRoundTripTest {
             source.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

@@ -108,6 +108,9 @@ public class NexusImportTest {
                 .scope("default").scope("default");
         result = new RepositoryImport().run(new NexusSource(URI.create(nexus), "maven-releases", new HttpFetcher())
                 .withCredentials("admin", password), store);
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         running = RepositoryApplication.start(0);
         base = "http://localhost:" + running.port() + "/repository";
     }
@@ -121,6 +124,7 @@ public class NexusImportTest {
             exec(60, null, "docker", "rm", "-f", container);
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

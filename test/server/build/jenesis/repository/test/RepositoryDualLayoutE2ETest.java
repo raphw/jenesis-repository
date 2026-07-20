@@ -54,6 +54,9 @@ public class RepositoryDualLayoutE2ETest {
     public void boot() {
         System.setProperty("jenesis.repository.insecure", "true");
         System.setProperty("JENESIS_STORE_ROOT", store.toString());
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/repository/";
@@ -66,6 +69,7 @@ public class RepositoryDualLayoutE2ETest {
         }
         System.clearProperty("jenesis.repository.insecure");
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
     }
 
     @Test

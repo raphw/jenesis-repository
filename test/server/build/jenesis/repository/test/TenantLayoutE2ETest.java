@@ -41,6 +41,9 @@ public class TenantLayoutE2ETest {
     @Test
     public void a_publish_lands_in_the_default_default_artifact_space() throws Exception {
         System.setProperty("JENESIS_STORE_ROOT", defaultSpaceRoot.toString());
+        // Auth now defaults on; this test exercises the store layout, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the round-trip stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         RepositoryApplication.Running server = null;
         try {
             server = RepositoryApplication.start(0);
@@ -58,6 +61,7 @@ public class TenantLayoutE2ETest {
                 server.close();
             }
             System.clearProperty("JENESIS_STORE_ROOT");
+            System.clearProperty("jenesis.repository.auth");
         }
     }
 
@@ -66,6 +70,9 @@ public class TenantLayoutE2ETest {
         System.setProperty("JENESIS_STORE_ROOT", configuredSpaceRoot.toString());
         System.setProperty("jenesis.repository.tenant", "acme");
         System.setProperty("jenesis.repository.repository", "main");
+        // Auth now defaults on; this test exercises the store layout, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the round-trip stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         RepositoryApplication.Running server = null;
         try {
             server = RepositoryApplication.start(0);
@@ -86,6 +93,7 @@ public class TenantLayoutE2ETest {
                 server.close();
             }
             System.clearProperty("JENESIS_STORE_ROOT");
+            System.clearProperty("jenesis.repository.auth");
             System.clearProperty("jenesis.repository.tenant");
             System.clearProperty("jenesis.repository.repository");
         }

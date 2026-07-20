@@ -40,6 +40,9 @@ public class RepositoryRateLimitE2ETest {
     public void boot() {
         System.setProperty("JENESIS_STORE_ROOT", store.toString());
         System.setProperty("jenesis.repository.rate-limit", "5");
+        // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
+        // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
+        System.setProperty("jenesis.repository.auth", "false");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + server.port() + "/repository/";
@@ -51,6 +54,7 @@ public class RepositoryRateLimitE2ETest {
             server.close();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
+        System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.rate-limit");
     }
 
