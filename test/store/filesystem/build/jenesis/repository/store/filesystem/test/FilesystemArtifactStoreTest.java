@@ -2,6 +2,7 @@ package build.jenesis.repository.store.filesystem.test;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -11,8 +12,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -295,6 +298,37 @@ class FilesystemArtifactStoreTest {
             writer.join(30_000);
         }
         assertThat(writerFailure.get()).as("the churn writer never faulted").isNull();
+    }
+
+    @Test
+    void a_written_file_and_the_dirs_it_creates_are_owner_only_not_umask_world_readable() throws IOException {
+        // The whole point of the hardening: a blob and every container the store creates for it are owner-only
+        // (rw-------/rwx------) rather than inheriting the process umask's world-readable 022 default. POSIX
+        // permissions only model this on a POSIX filesystem, so skip the assertion where the FS cannot express it.
+        Assumptions.assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                "owner-only permission tightening is only observable on a POSIX filesystem");
+
+        store.write("a/b/c.bin", bytes("secret"));
+
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(root.resolve("a/b/c.bin"))))
+                .as("a written blob is created rw-------, never the umask's world-readable default").isEqualTo("rw-------");
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(root.resolve("a"))))
+                .as("a container directory the store creates is rwx------").isEqualTo("rwx------");
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(root.resolve("a/b"))))
+                .as("a nested container directory the store creates is rwx------").isEqualTo("rwx------");
+    }
+
+    @Test
+    void a_content_addressed_blob_is_created_owner_only() throws Exception {
+        Assumptions.assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                "owner-only permission tightening is only observable on a POSIX filesystem");
+
+        String hash = store.writeBlob(bytes("payload"));
+
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(root.resolve("blobs").resolve(hash))))
+                .as("a content-addressed blob is created rw-------").isEqualTo("rw-------");
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(root.resolve("blobs"))))
+                .as("the blobs container directory is rwx------").isEqualTo("rwx------");
     }
 
     @Test
