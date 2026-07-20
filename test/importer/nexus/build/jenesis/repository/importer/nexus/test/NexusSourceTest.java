@@ -126,6 +126,32 @@ class NexusSourceTest {
     }
 
     @Test
+    void an_absolute_asset_path_from_the_h2_datastore_is_normalised_not_dropped() throws IOException {
+        // Nexus 3.71+ (the H2/PostgreSQL datastore that replaced OrientDB) reports asset paths absolute, with a
+        // leading slash. safePath's empty-first-segment check would reject the whole asset, so the walk strips the
+        // single leading slash to the repository-relative path first - and then still imports and downloads it.
+        byte[] jar = "jar-bytes".getBytes(StandardCharsets.UTF_8);
+        String page = "{\"items\":[{\"format\":\"maven2\",\"assets\":[{\"path\":\"/org/example/lib/1.0/lib-1.0.jar\","
+                + "\"downloadUrl\":\"" + downloadUrl + "\"}]}],\"continuationToken\":null}";
+        FakeFetcher fetcher = new FakeFetcher(Map.of(
+                listUrl, ok(page),
+                downloadUrl, new ProxyFormat.Fetched(200, jar, Map.of())));
+
+        List<String> paths = new ArrayList<>();
+        List<byte[]> downloaded = new ArrayList<>();
+        new NexusSource(base, repository, fetcher).forEach((format, path, content) -> {
+            paths.add(path);
+            try (InputStream in = content.open()) {
+                downloaded.add(in.readAllBytes());
+            }
+        }, cursor -> { });
+
+        assertThat(paths).as("the absolute datastore path is normalised to repository-relative, not dropped")
+                .containsExactly("org/example/lib/1.0/lib-1.0.jar");
+        assertThat(downloaded).containsExactly(jar);
+    }
+
+    @Test
     void a_failed_listing_is_an_io_exception() {
         FakeFetcher fetcher = new FakeFetcher(Map.of(
                 listUrl, new ProxyFormat.Fetched(500, new byte[0], Map.of())));
