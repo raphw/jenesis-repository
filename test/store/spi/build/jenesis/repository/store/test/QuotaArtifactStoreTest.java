@@ -70,6 +70,50 @@ class QuotaArtifactStoreTest {
     }
 
     @Test
+    void in_flight_upload_chunks_count_toward_the_quota() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
+        store.write("oci/uploads/session/0", bytes(300));
+        store.write("oci/uploads/session/1", bytes(200));
+        assertThat(store.used()).as("staged, un-finalized chunks are stored content and count").isEqualTo(500);
+        // The session's start marker lives in its own namespace, is negligible metadata, and is not metered.
+        store.write("oci/upload-sessions/session", bytes(50));
+        assertThat(store.used()).as("the session marker is not metered").isEqualTo(500);
+    }
+
+    @Test
+    void an_open_upload_session_cannot_bypass_the_quota_and_is_refused_at_the_limit() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 500);
+        store.write("oci/uploads/session/0", bytes(500));
+        assertThatThrownBy(() -> store.write("oci/uploads/session/1", bytes(1)))
+                .as("an un-finalized session cannot grow storage past the cap")
+                .isInstanceOf(QuotaExceededException.class);
+        assertThat(store.exists("oci/uploads/session/1")).as("no partial bytes staged").isFalse();
+        assertThat(store.used()).isEqualTo(500);
+    }
+
+    @Test
+    void reaping_an_upload_session_releases_its_bytes_from_the_counter() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
+        store.write("oci/uploads/session/0", bytes(400));
+        assertThat(store.used()).isEqualTo(400);
+        store.delete("oci/uploads/session/0");
+        assertThat(store.used()).as("a reaped chunk's bytes leave the counter, converging the meter").isZero();
+    }
+
+    @Test
+    void recompute_seeds_usage_from_blobs_and_in_flight_upload_staging() throws IOException {
+        ArtifactStore raw = delegate();
+        raw.write("blobs/aaa", bytes(300));
+        raw.write("oci/uploads/s1/0", bytes(200));
+        raw.write("oci/uploads/s1/1", bytes(100));
+        raw.write("oci/uploads/s2/0", bytes(50));
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 5000);
+        assertThat(store.recompute()).as("blobs plus every staged chunk, so a reconcile keeps the staging counted")
+                .isEqualTo(650);
+        assertThat(store.used()).isEqualTo(650);
+    }
+
+    @Test
     void a_re_written_blob_does_not_double_count() throws IOException {
         QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
         store.write("blobs/aaa", bytes(300));
@@ -161,7 +205,12 @@ class QuotaArtifactStoreTest {
         QuotaArtifactStore store = new QuotaArtifactStore(new PagingDelegate(raw, pages), 3000);
         assertThat(store.recompute()).as("every live blob summed across page boundaries").isEqualTo(2001);
         assertThat(store.used()).isEqualTo(2001);
-        assertThat(pages).as("bounded pages, resumed across the namespace").hasSize(3).containsOnly(1000);
+        // Three bounded pages resume across the 2001-blob namespace, plus one bounded probe of the (here empty)
+        // oci/uploads staging the reseed also sums - every access is a page() with the bound, never an unbounded
+        // list() (PagingDelegate.list() throws), so the "never materialise as one list" guarantee still holds and
+        // now covers the staging walk too.
+        assertThat(pages).as("bounded pages only - blob namespace resumed plus the staging probe, never a list")
+                .hasSize(4).containsOnly(1000);
     }
 
     /** Forwards to a real store but fails {@link ArtifactStore#delete} for one key, standing in for a delete that
