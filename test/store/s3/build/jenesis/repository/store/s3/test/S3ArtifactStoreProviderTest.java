@@ -31,6 +31,10 @@ public class S3ArtifactStoreProviderTest {
     private static final int API_PORT = 9000;
     private static final String ACCESS_KEY = "minioadmin";
     private static final String SECRET_KEY = "minioadmin";
+    // The store server-side-encrypts every write (SSE-S3), and MinIO rejects an SSE request unless a KMS is
+    // configured ("Server side encryption specified but KMS is not configured", HTTP 501). Enable MinIO's built-in
+    // KMS with a fixed test key so the encrypted round-trips this suite drives are honored.
+    private static final String KMS_SECRET_KEY = "minio-default-key:OSMM+vkKUTCvQs9YL/CVMIMt43HFhkUpqJxTmGl6rYw=";
 
     private Docker minio;
     private int port;
@@ -38,7 +42,7 @@ public class S3ArtifactStoreProviderTest {
     @BeforeAll
     public void start() throws Exception {
         requireOrSkip(Docker.available(), "Docker is required for the S3 (MinIO) provider integration test");
-        minio = Docker.start(IMAGE, API_PORT, "server", "/data");
+        minio = Docker.start(IMAGE, API_PORT, Map.of("MINIO_KMS_SECRET_KEY", KMS_SECRET_KEY), "server", "/data");
         port = minio.hostPort(API_PORT);
         awaitReady();
     }

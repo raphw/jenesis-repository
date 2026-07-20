@@ -9,8 +9,10 @@ import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 
 /**
  * An {@link ArtifactStore} backed by an S3-compatible bucket (AWS S3, GCS via the XML API, MinIO,
@@ -25,23 +27,69 @@ import software.amazon.awssdk.services.s3.model.S3Object;
  */
 public final class S3ArtifactStore implements ArtifactStore {
 
+    /** Owner-only (0600) permissions for the upload spool file - see {@link #spool()}. */
+    private static final Set<PosixFilePermission> OWNER_ONLY = PosixFilePermissions.fromString("rw-------");
+
     private final S3Client s3;
     private final String bucket;
     private final String keyPrefix;
+    /** The KMS key id for {@code aws:kms} encryption, or {@code null} for the SSE-S3 (AES256) default. */
+    private final String kmsKeyId;
 
     public S3ArtifactStore(S3Client s3, String bucket) {
-        this(s3, bucket, "");
+        this(s3, bucket, null);
     }
 
-    private S3ArtifactStore(S3Client s3, String bucket, String keyPrefix) {
+    public S3ArtifactStore(S3Client s3, String bucket, String kmsKeyId) {
+        this(s3, bucket, "", kmsKeyId);
+    }
+
+    private S3ArtifactStore(S3Client s3, String bucket, String keyPrefix, String kmsKeyId) {
         this.s3 = s3;
         this.bucket = bucket;
         this.keyPrefix = keyPrefix;
+        this.kmsKeyId = kmsKeyId;
     }
 
     @Override
     public ArtifactStore scope(String tenant) {
-        return new S3ArtifactStore(s3, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/");
+        return new S3ArtifactStore(s3, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/", kmsKeyId);
+    }
+
+    /**
+     * Applies the store's server-side encryption to an object write. Every {@code PutObject} the store issues -
+     * plain, content-addressed or conditional - is built through here, so an object is never written unencrypted:
+     * SSE-S3 ({@link ServerSideEncryption#AES256}) by default, or {@code aws:kms} with {@code kmsKeyId} when one is
+     * configured ({@code JENESIS_AWS_SSE_KMS_KEY_ID}). There is deliberately no way to switch encryption off - a
+     * blank or absent key simply falls back to the AES256 default rather than disabling it.
+     */
+    public static PutObjectRequest.Builder encrypt(PutObjectRequest.Builder builder, String kmsKeyId) {
+        if (kmsKeyId != null && !kmsKeyId.isBlank()) {
+            return builder.serverSideEncryption(ServerSideEncryption.AWS_KMS).ssekmsKeyId(kmsKeyId);
+        }
+        return builder.serverSideEncryption(ServerSideEncryption.AES256);
+    }
+
+    /**
+     * A temp file for spooling an artifact body, readable and writable only by its owner. A blob is buffered here to
+     * learn its length (and, for a content-addressed write, its SHA-256) before the length-prefixed S3 {@code PutObject}
+     * - the body cannot stream straight through the sync client without its length up front. A shared {@code /tmp}
+     * spool would leave the plaintext artifact bytes world-readable for the life of the upload, so on a POSIX
+     * filesystem the file is created {@code 0600} at open time (never briefly world-readable). A non-POSIX filesystem
+     * that cannot express owner-only permissions at create time falls back to a default temp file, then tightens it
+     * best-effort through the {@link File} API.
+     */
+    private static Path spool() throws IOException {
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            return Files.createTempFile("s3-artifact-", null, PosixFilePermissions.asFileAttribute(OWNER_ONLY));
+        }
+        Path temporary = Files.createTempFile("s3-artifact-", null);
+        File file = temporary.toFile();
+        file.setReadable(false, false);
+        file.setWritable(false, false);
+        file.setReadable(true, true);
+        file.setWritable(true, true);
+        return temporary;
     }
 
     @Override
@@ -101,12 +149,12 @@ public final class S3ArtifactStore implements ArtifactStore {
 
     @Override
     public void write(String key, InputStream in) throws IOException {
-        // S3 PutObject needs the content length up front, so buffer the (possibly large) body to a
+        // S3 PutObject needs the content length up front, so buffer the (possibly large) body to an owner-only
         // temp file rather than into memory, then upload from the file.
-        Path temporary = Files.createTempFile("s3-artifact-", null);
+        Path temporary = spool();
         try {
             Files.copy(in, temporary, StandardCopyOption.REPLACE_EXISTING);
-            s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key), RequestBody.fromFile(temporary));
+            s3.putObject(b -> encrypt(b.bucket(bucket).key(keyPrefix + key), kmsKeyId), RequestBody.fromFile(temporary));
         } catch (S3Exception e) {
             throw new IOException("Could not write " + key, e);
         } finally {
@@ -119,7 +167,7 @@ public final class S3ArtifactStore implements ArtifactStore {
         // S3 PutObject needs the content length and the key up front, but a content-addressed key is the hash of
         // the very bytes being written; buffer the (possibly large) body to a temp file while digesting it, then
         // upload from the file under blobs/<hash> - never holding the whole artifact in memory.
-        Path temporary = Files.createTempFile("s3-artifact-", null);
+        Path temporary = spool();
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (OutputStream out = Files.newOutputStream(temporary)) {
@@ -127,7 +175,7 @@ public final class S3ArtifactStore implements ArtifactStore {
             }
             String key = "blobs/" + HexFormat.of().formatHex(digest.digest());
             if (!exists(key)) {
-                s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key), RequestBody.fromFile(temporary));
+                s3.putObject(b -> encrypt(b.bucket(bucket).key(keyPrefix + key), kmsKeyId), RequestBody.fromFile(temporary));
             }
             return key.substring("blobs/".length());
         } catch (NoSuchAlgorithmException e) {
@@ -264,9 +312,9 @@ public final class S3ArtifactStore implements ArtifactStore {
     public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
         try {
             if (expected == null) {
-                s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key).ifNoneMatch("*"), RequestBody.fromBytes(content));
+                s3.putObject(b -> encrypt(b.bucket(bucket).key(keyPrefix + key).ifNoneMatch("*"), kmsKeyId), RequestBody.fromBytes(content));
             } else {
-                s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key).ifMatch((String) expected), RequestBody.fromBytes(content));
+                s3.putObject(b -> encrypt(b.bucket(bucket).key(keyPrefix + key).ifMatch((String) expected), kmsKeyId), RequestBody.fromBytes(content));
             }
             return true;
         } catch (S3Exception e) {
