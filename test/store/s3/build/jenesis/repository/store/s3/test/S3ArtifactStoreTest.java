@@ -155,6 +155,35 @@ public class S3ArtifactStoreTest {
     }
 
     @Test
+    public void write_batch_commits_disjoint_keys_and_classifies_conflicts_like_write_versioned() throws IOException {
+        // The object-store override issues the conditional PUTs bounded-parallel; against a real S3 API this proves
+        // it lands disjoint keys and maps a stale-token precondition rejection to a per-key CONFLICTED - the same
+        // 412/409/404 classification writeVersioned makes - while the committed keys in the same batch still land.
+        List<ArtifactStore.BatchOutcome> created = store.writeBatch(List.of(
+                new ArtifactStore.BatchWrite("batch/a", "A".getBytes(StandardCharsets.UTF_8), null),
+                new ArtifactStore.BatchWrite("batch/b", "B".getBytes(StandardCharsets.UTF_8), null),
+                new ArtifactStore.BatchWrite("batch/c", "C".getBytes(StandardCharsets.UTF_8), null)));
+        assertThat(created).extracting(ArtifactStore.BatchOutcome::key).containsExactly("batch/a", "batch/b", "batch/c");
+        assertThat(created).extracting(ArtifactStore.BatchOutcome::status)
+                .containsOnly(ArtifactStore.BatchOutcome.Status.COMMITTED);
+        assertThat(new String(store.readVersioned("batch/a").orElseThrow().content(), StandardCharsets.UTF_8)).isEqualTo("A");
+
+        Object tokenB = store.readVersioned("batch/b").orElseThrow().token();
+        List<ArtifactStore.BatchOutcome> mixed = store.writeBatch(List.of(
+                new ArtifactStore.BatchWrite("batch/b", "B2".getBytes(StandardCharsets.UTF_8), tokenB),          // update on token
+                new ArtifactStore.BatchWrite("batch/c", "C2".getBytes(StandardCharsets.UTF_8), "\"stale-etag\""),// stale -> conflict
+                new ArtifactStore.BatchWrite("batch/d", "D".getBytes(StandardCharsets.UTF_8), null)));           // create
+        assertThat(mixed).extracting(ArtifactStore.BatchOutcome::status).containsExactly(
+                ArtifactStore.BatchOutcome.Status.COMMITTED,
+                ArtifactStore.BatchOutcome.Status.CONFLICTED,
+                ArtifactStore.BatchOutcome.Status.COMMITTED);
+        assertThat(new String(store.readVersioned("batch/b").orElseThrow().content(), StandardCharsets.UTF_8)).isEqualTo("B2");
+        assertThat(new String(store.readVersioned("batch/c").orElseThrow().content(), StandardCharsets.UTF_8))
+                .as("the conflicted key kept its original value").isEqualTo("C");
+        assertThat(store.exists("batch/d")).isTrue();
+    }
+
+    @Test
     public void scopes_are_isolated() throws IOException {
         ArtifactStore other = new S3ArtifactStore(s3, "repo").scope("globex");
         store.write("isolate/x", new ByteArrayInputStream(new byte[]{7}));

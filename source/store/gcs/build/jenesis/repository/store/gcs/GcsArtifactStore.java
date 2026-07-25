@@ -296,4 +296,13 @@ public final class GcsArtifactStore implements ArtifactStore {
             throw new IOException("Could not write " + key, e);
         }
     }
+
+    @Override
+    public List<BatchOutcome> writeBatch(List<BatchWrite> writes) throws IOException {
+        // Best-effort, per-key CAS, not a transaction (GCS has no multi-object atomicity): issue the conditional
+        // if-generation-match uploads bounded-parallel so a k-write commit is ~1 round-trip instead of k, classifying
+        // each 412/409/404 conflict exactly as writeVersioned. The shared helper keeps input order and never overlaps
+        // two writes to one key.
+        return ArtifactStore.writeBatchParallel(this, writes);
+    }
 }

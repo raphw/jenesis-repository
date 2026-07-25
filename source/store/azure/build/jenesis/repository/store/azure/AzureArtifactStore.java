@@ -290,4 +290,13 @@ public final class AzureArtifactStore implements ArtifactStore {
             throw new IOException("Could not write " + key, e);
         }
     }
+
+    @Override
+    public List<BatchOutcome> writeBatch(List<BatchWrite> writes) throws IOException {
+        // Best-effort, per-key CAS, not a transaction (Azure has no multi-blob atomicity): issue the conditional
+        // If-Match / If-None-Match uploads bounded-parallel so a k-write commit is ~1 round-trip instead of k,
+        // classifying each 412/409/404 conflict exactly as writeVersioned. The shared helper keeps input order and
+        // never overlaps two writes to one key.
+        return ArtifactStore.writeBatchParallel(this, writes);
+    }
 }
