@@ -165,9 +165,9 @@ public class RepositoryController {
      * {@link FormatDispatcher}. More specific routes ({@code /repository/admin/import}) and the Actuator endpoints win in
      * Spring, so this only sees a format's own paths; an unclaimed one is a {@code 404}. A format with a configured
      * upstream that is a {@link ProxyFormat} serves a local miss through the {@link PullThroughCache}. A write
-     * carrying the batch explode header is walked entry by entry by {@link BatchIngestion} - each member dispatched
-     * as its own publish through the same loop - when the feature is enabled; otherwise the header is inert and the
-     * body is a plain single upload.
+     * carrying the batch explode header is walked entry by entry by {@link BatchIngestion} - each member screened at
+     * the same {@link ScreenedDispatch} ingress edge a single deploy uses - when the feature is enabled; otherwise the
+     * header is inert and the body is a plain single upload.
      */
     @RequestMapping(value = {"/repository/**", "/v2", "/v2/**"}, method = {RequestMethod.GET, RequestMethod.HEAD,
             RequestMethod.PUT, RequestMethod.POST, RequestMethod.PATCH, RequestMethod.DELETE})
@@ -182,7 +182,10 @@ public class RepositoryController {
             return;
         }
         if (batch != null && batch.claims(exchange)) {
-            batch.explode(exchange, route.store(), dispatcher);
+            // Each exploded entry is screened at the same ingress edge a single deploy uses (the shared
+            // ScreenedDispatch, carrying this controller's EdgeHooks), so a batch upload is screened exactly like a
+            // series of individual deploys - one screening implementation, EdgeHooks and all.
+            batch.explode(exchange, route.store(), screened);
             return;
         }
         // A read of a routed repository (a proxy of an upstream, or a group view over members) is served across its
