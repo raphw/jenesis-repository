@@ -10,6 +10,14 @@ import module java.base;
  * which is how a republish is just a pointer update. This primitive knows nothing of any layout: a format decides what
  * to publish where, and cross-publishing one layout's view into another's is a concern of the format modules, not of
  * this storage primitive.
+ *
+ * <p>The upload choreography runs at an ingress <em>edge</em> (a deploy controller, a batch explode, an import walk),
+ * not inside a format: {@link #screen} stores the streamed body content-addressed and runs the discovered
+ * {@link PublishInterceptor} chain once, and on {@code ACCEPT} the edge restreams the stored blob into the claiming
+ * format, which lays out its own namespace with {@link #storeBlob}/{@link #link} (a {@code publish/} pointer) or a
+ * {@code Blobs} write, then calls {@link #published} so the after-commit {@link PublicationObserver}s ride the accepted
+ * publish. Screening a body inside a format (a second, format-embedded chain run over already-screened bytes) is not
+ * this model; the {@code screen} + layout + {@code published} split is the one documented idiom.
  */
 public final class Publication {
 
@@ -144,6 +152,18 @@ public final class Publication {
         notifyDeleted(removed);
     }
 
+    /** Notify every observer of an accepted artifact this primitive did not lay out - the seam an ingress edge calls
+     *  once per artifact it has screened to {@code ACCEPT} and laid out into a format's namespace (through
+     *  {@link #screen} then the format's own {@link #storeBlob}/{@link #link} or {@code Blobs} writes), so an
+     *  edge-screened publish is observed exactly like the pointer-linking {@link #publish} does inline. The mirror of
+     *  {@link #deleted}: the caller already stored and linked the artifact and describes it, so nothing is read or
+     *  written here. Failures are logged and contained like every observer notification, never failing the caller's
+     *  already-completed publish. The seam that carries {@link PublicationObserver#onPublished} once the screen+link
+     *  choreography moves to the edges, so a blobs-namespace deploy that never fired an observer before now does. */
+    public void published(ArtifactDescriptor published) {
+        notifyPublished(published);
+    }
+
     /** Whether a pointer's content is the lower-case SHA-256 hex a {@link #link} writes - the only shape carried
      *  into a removal descriptor's blob identity, so a corrupt pointer never masquerades as a hash. */
     private static boolean hash(String value) {
@@ -166,6 +186,17 @@ public final class Publication {
             } catch (Exception exception) {
                 LOGGER.log(System.Logger.Level.WARNING, "publication observer "
                         + observer.getClass().getName() + " failed for removal of " + removed.path(), exception);
+            }
+        }
+    }
+
+    private void notifyPublished(ArtifactDescriptor published) {
+        for (PublicationObserver observer : observers) {
+            try {
+                observer.onPublished(published, store);
+            } catch (Exception exception) {
+                LOGGER.log(System.Logger.Level.WARNING, "publication observer "
+                        + observer.getClass().getName() + " failed for " + published.path(), exception);
             }
         }
     }
@@ -229,14 +260,7 @@ public final class Publication {
             interceptor.committed(stored, disposition, store);
         }
         if (publish && disposition == PublishInterceptor.Disposition.ACCEPT) {
-            for (PublicationObserver observer : observers) {
-                try {
-                    observer.onPublished(stored, store);
-                } catch (Exception exception) {
-                    LOGGER.log(System.Logger.Level.WARNING, "publication observer "
-                            + observer.getClass().getName() + " failed for " + stored.path(), exception);
-                }
-            }
+            notifyPublished(stored);
         }
         return new Published(disposition, hash);
     }

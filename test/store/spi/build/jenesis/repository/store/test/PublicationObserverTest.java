@@ -195,6 +195,37 @@ class PublicationObserverTest {
     }
 
     @Test
+    void the_published_seam_notifies_a_layout_the_edge_laid_out_itself() throws IOException {
+        List<ArtifactDescriptor> observed = new ArrayList<>();
+        Publication publication = new Publication(store, List.of(), List.of((artifact, store) -> observed.add(artifact)));
+
+        // The edge stores + lays out the artifact itself (as a demoted format does), then fires the seam - no
+        // Publication.publish, so this is the notification path that survives publish()'s removal.
+        publication.published(new ArtifactDescriptor("npm", "lodash", "4.17.21",
+                "npm/lodash/-/lodash-4.17.21.tgz", null, false, "a".repeat(64), 7L));
+
+        assertThat(observed).as("a blobs-namespace layout the edge laid out now fires an observer").hasSize(1);
+        assertThat(observed.getFirst().path()).isEqualTo("npm/lodash/-/lodash-4.17.21.tgz");
+        assertThat(observed.getFirst().coordinate()).as("the edge's layout knowledge rides the event")
+                .isEqualTo("lodash");
+    }
+
+    @Test
+    void a_failing_published_observer_is_contained_and_later_observers_still_run() throws IOException {
+        List<String> reached = new ArrayList<>();
+        Publication publication = new Publication(store, List.of(), List.of(
+                (artifact, store) -> {
+                    throw new IOException("webhook target down");
+                },
+                (artifact, store) -> reached.add(artifact.path())));
+
+        publication.published(ArtifactDescriptor.at("raw", "/raw/edge-laid-out"));
+
+        assertThat(reached).as("a failing observer never blocks the seam; later observers still run")
+                .containsExactly("/raw/edge-laid-out");
+    }
+
+    @Test
     void an_observer_records_through_the_published_scope() throws IOException {
         ArtifactStore scoped = store.scope("acme").scope("main");
         PublicationObserver outbox = (artifact, target) ->
