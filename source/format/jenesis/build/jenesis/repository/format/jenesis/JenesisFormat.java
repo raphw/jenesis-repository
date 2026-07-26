@@ -1,9 +1,7 @@
 package build.jenesis.repository.format.jenesis;
 
 import module java.base;
-import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
-import build.jenesis.repository.store.PublishInterceptor;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
@@ -32,12 +30,12 @@ public final class JenesisFormat implements RepositoryFormat {
         String path = exchange.path();
         Publication publication = new Publication(store);
         if (exchange.method().equals("PUT")) {
-            // Route through the interceptor chain, not a raw store-then-link, so a module jar is screened by any
-            // installed compliance gate exactly as every other hosted PUT is: ACCEPT links and serves, QUARANTINE/REJECT
-            // withholds and located() answers 404. Streamed, never buffered (publish hashes the body on the fly). With
-            // the default empty chain this is exactly the prior store-then-link, a 201.
-            exchange.respond(status(publication.publish(
-                    ArtifactDescriptor.at("jenesis", path), exchange.requestStream()).disposition()));
+            // Layout-only (EPIC 26): screening rides the ingress edge, which screens the body to ACCEPT and restreams
+            // the stored blob into this format, so this branch stores the body content-addressed (streamed, never
+            // buffered) and links its path, then responds 201 - verdicts are the edge's business, not the format's.
+            String hash = publication.storeBlob(exchange.requestStream());
+            publication.link(path, hash);
+            exchange.respond(201);
             return;
         }
         Optional<String> key = publication.located(path);
@@ -56,15 +54,5 @@ public final class JenesisFormat implements RepositoryFormat {
         try (OutputStream out = exchange.respond(200, size)) {
             store.read(key.get(), out);
         }
-    }
-
-    /** Map an upload disposition to the HTTP status a client sees: accepted is a created, quarantined is accepted (held
-     *  for review), rejected is unprocessable. With the default empty interceptor chain this is always 201. */
-    private static int status(PublishInterceptor.Disposition disposition) {
-        return switch (disposition) {
-            case ACCEPT -> 201;
-            case QUARANTINE -> 202;
-            case REJECT -> 422;
-        };
     }
 }

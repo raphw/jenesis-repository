@@ -7,7 +7,7 @@ import build.jenesis.repository.store.ArtifactStore;
 /**
  * Imports a Maven repository (Nexus {@code maven2}, Artifactory {@code maven}) from an incumbent manager: each asset
  * path is a Maven coordinate, so it is published under {@code /maven/...} exactly as a deploy would - storing the blob
- * content-addressed through {@link MavenFormat#publish} and, for a jar that carries a module name, cross-publishing
+ * content-addressed through {@link MavenFormat#layout} and, for a jar that carries a module name, cross-publishing
  * its module view. {@code maven-metadata.xml} and its checksums are skipped: the repository generates them on read
  * from the imported version folders ({@link MavenMetadata}), so importing the source's copies would only shadow the
  * generated ones.
@@ -26,8 +26,8 @@ public final class MavenImporter implements RepositoryImporter {
         if (name.startsWith("maven-metadata.xml")) {
             return;
         }
-        // A modular jar is cross-published into the module layout, which needs the jar's module name; publish streams
+        // A modular jar is cross-published into the module layout, which needs the jar's module name; layout streams
         // the content to storage and reads the module name back from there, so the importer never buffers it.
-        MavenFormat.publish(store, "/maven/" + relative, content);
+        MavenFormat.layout(store, "/maven/" + relative, content);
     }
 }

@@ -36,8 +36,4 @@ open module build.jenesis.repository.format.jenesis.test {
     requires build.jenesis.repository.store.filesystem;
     requires org.junit.jupiter;
     requires org.assertj.core;
-    // A test-only screen discovered on the publish chain, so a format-level test can assert JenesisFormat routes its
-    // hosted PUT through the gate (withhold + 202 on QUARANTINE, nothing linked + 422 on REJECT). Inert otherwise.
-    provides build.jenesis.repository.store.PublishInterceptor
-            with build.jenesis.repository.format.jenesis.test.MarkerInterceptor;
 }

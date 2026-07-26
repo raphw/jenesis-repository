@@ -3,7 +3,6 @@ package build.jenesis.repository.format.maven;
 import module java.base;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
-import build.jenesis.repository.store.PublishInterceptor;
 import build.jenesis.repository.format.ArtifactLayout;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
@@ -118,7 +117,10 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         if (exchange.method().equals("PUT")) {
             // W5.12(1): a maven-metadata.xml (and its checksum siblings) is stored verbatim like any artifact rather
             // than dropped, so a publisher-authored document round-trips even when the server does not derive one.
-            exchange.respond(status(publish(store, path, exchange.requestStream()).disposition()));
+            // Screening rides the ingress edge now (EPIC 26): this branch only lays the body out and responds 201 -
+            // the body reaching here has already been screened to ACCEPT, so verdicts are no longer the format's call.
+            layout(store, path, exchange.requestStream());
+            exchange.respond(201);
             return;
         }
         boolean head = exchange.method().equals("HEAD");
@@ -166,41 +168,33 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         return Boolean.parseBoolean(exchange.setting(MavenMetadata.COMPUTE_SETTING));
     }
 
-    /** Store the artifact through the gated {@link Publication#publish} (streamed straight to storage, then the upload
-     *  post-processing chain decides accept/quarantine/reject), and - only when it is accepted and is a modular jar -
-     *  cross-publish its module view through the Jenesis layout, reading the module name back from the just-stored blob
-     *  rather than buffering the jar in memory. A quarantined or rejected jar never gains a module-view pointer, so it
-     *  does not resolve by module name either. Returns the publish outcome so the caller maps it to an HTTP status. */
-    public static Publication.Published publish(ArtifactStore store, String path, InputStream body) throws IOException {
+    /** Lay an already-screened body out into the Maven namespace: store it content-addressed ({@link
+     *  Publication#storeBlob}, streamed straight to storage, never buffered whole) and point its {@code /maven/} path
+     *  at the blob ({@link Publication#link}) - and, only when it is a modular jar, cross-publish its module view
+     *  through the Jenesis layout, reading the module name back from the just-stored blob rather than holding the jar
+     *  in memory. Screening no longer happens here (EPIC 26): the ingress edge screens the body to ACCEPT and restreams
+     *  the stored blob into this layout, so a body reaching {@code layout} is already accepted and there is no verdict
+     *  to map - the redundant format-embedded screen pass is dropped, the essential link (what {@link #located} serves
+     *  over) is kept. The restreamed body dedupes to the same {@code blobs/<hash>}, so reading the module name back is
+     *  identical to before. */
+    public static void layout(ArtifactStore store, String path, InputStream body) throws IOException {
         Publication publication = new Publication(store);
-        ArtifactDescriptor descriptor = descriptor(path).orElseGet(() -> ArtifactDescriptor.at(ECOSYSTEM, path));
-        Publication.Published published = publication.publish(descriptor, body);
+        String hash = publication.storeBlob(body);
+        publication.link(path, hash);
         String[] coordinate = JavaLayout.mavenCoordinate(path);
-        if (published.disposition() != PublishInterceptor.Disposition.ACCEPT
-                || !path.endsWith(".jar") || coordinate == null) {
-            return published;
+        if (!path.endsWith(".jar") || coordinate == null) {
+            return;
         }
         String module;
-        try (InputStream in = store.open("blobs/" + published.hash())) {
+        try (InputStream in = store.open("blobs/" + hash)) {
             module = JavaLayout.moduleName(in);
         }
         if (module == null) {
-            return published;
+            return;
         }
         for (ModuleView view : MODULE_VIEWS) {
-            view.publish(module, coordinate[2], published.hash(), store);
+            view.publish(module, coordinate[2], hash, store);
         }
-        return published;
-    }
-
-    /** Map an upload disposition to the HTTP status a client sees: accepted is a created, quarantined is accepted (held
-     *  for review), rejected is unprocessable. With the default empty interceptor chain this is always 201. */
-    private static int status(PublishInterceptor.Disposition disposition) {
-        return switch (disposition) {
-            case ACCEPT -> 201;
-            case QUARANTINE -> 202;
-            case REJECT -> 422;
-        };
     }
 
     @Override
@@ -260,13 +254,13 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
                 return false;
             }
             if (isChecksum(rest)) {
-                publish(store, path, download.body());
+                layout(store, path, download.body());
             } else {
                 // Verify a proxied artifact against the upstream-published SHA-1, so a body corrupted or tampered
                 // between the upstream and here is never left cached and served. The digest is computed as the blob
                 // streams to storage; the tiny checksum sibling is fetched afterwards, so it never delays the artifact.
                 MessageDigest sha1 = sha1();
-                publish(store, path, new DigestInputStream(download.body(), sha1));
+                layout(store, path, new DigestInputStream(download.body(), sha1));
                 String expected = upstreamSha1(fetcher, URI.create(prefix + rest + ".sha1"));
                 if (expected != null && !expected.equalsIgnoreCase(HexFormat.of().formatHex(sha1.digest()))) {
                     new Publication(store).unpublish(path);

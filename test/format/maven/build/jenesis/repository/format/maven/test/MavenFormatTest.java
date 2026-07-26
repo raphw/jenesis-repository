@@ -149,6 +149,24 @@ class MavenFormatTest {
         assertThat(format.paths("no-colon", "1.0")).isEmpty();
     }
 
+    @Test
+    void layout_lays_out_a_modular_jar_and_cross_publishes_its_module_view() throws IOException {
+        // Drive the layout-only seam directly (EPIC 26: the ingress edge screens the body to ACCEPT and restreams the
+        // stored blob into layout, so layout never screens - it only lays out). A modular jar is stored, its /maven/
+        // path linked, and its module name read back from the just-stored blob to cross-publish the module view. The
+        // ModuleView provider (the Jenesis format) is not on this unit module's path, so the /module/ pointer is not
+        // linked here (the server suite covers that end to end) - but paths() reads the module name off the jar layout
+        // just linked and surfaces the /module/<name>/<version> mirror, proving the jar was stored and read back.
+        MavenFormat.layout(store, "/maven/org/example/lib/1.0/lib-1.0.jar",
+                new java.io.ByteArrayInputStream(automaticModuleJar("org.example.lib")));
+
+        assertThat(publication.located("/maven/org/example/lib/1.0/lib-1.0.jar"))
+                .as("the modular jar is laid out and serves").isPresent();
+        assertThat(format.paths("org.example:lib", "1.0", store))
+                .as("its module view is cross-published, read from the stored blob")
+                .containsExactlyInAnyOrder("/maven/org/example/lib/1.0", "/module/org.example.lib/1.0");
+    }
+
     private static byte[] automaticModuleJar(String moduleName) throws IOException {
         java.util.jar.Manifest manifest = new java.util.jar.Manifest();
         manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
