@@ -3,10 +3,11 @@ package build.jenesis.repository.store;
 import module java.base;
 
 /**
- * An after-commit observer of {@link Publication#publish} and {@link Publication#unpublish} - the second hook class
+ * An after-commit observer of {@link Publication#published} and {@link Publication#unpublish} - the second hook class
  * beside the verdict-bearing {@link PublishInterceptor}. Discovered with {@link java.util.ServiceLoader} like the
- * screens, but notified only once an accepted artifact's pointer is linked and serving - a quarantined or rejected
- * publish is never observed - or once a serving pointer is removed, and an observer has no say in either disposition.
+ * screens, but notified only once an ingress edge has screened an accepted artifact and laid it out and fires the
+ * {@link Publication#published} seam - a quarantined or rejected publish is never observed - or once a serving pointer
+ * is removed, and an observer has no say in either disposition.
  * This is the seam for what rides a publication change without sitting in its verdict path - forwarding to another
  * repository, a webhook, replication, handing a deeper scan to a worker: an observer's failure is logged and contained
  * (it never unlinks the artifact, fails the upload or blocks the removal), and anything slow belongs in a background

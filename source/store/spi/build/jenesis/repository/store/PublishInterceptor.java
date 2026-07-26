@@ -5,8 +5,8 @@ import module java.base;
 /**
  * The verdict-bearing screen over an artifact publication, format-neutral. Discovered with
  * {@link java.util.ServiceLoader} - like the formats, the storage backends and the module-view bridge - and run as an
- * {@link #order() ordered} chain by {@link Publication#publish}: once the blob is stored content-addressed but before
- * its pointer is linked, every screen {@link #assess assesses} the neutral {@link ArtifactDescriptor}; the publication
+ * {@link #order() ordered} chain by {@link Publication#screen}: once the blob is stored content-addressed but before
+ * any pointer is linked, every screen {@link #assess assesses} the neutral {@link ArtifactDescriptor}; the publication
  * is routed by the strongest {@link Disposition} across the chain, then each screen is {@link #committed notified} of
  * the outcome. The screen also holds the quarantine read side: {@link Publication#located} asks the chain whether a
  * published path is {@link #withheld}, so a verdict that changes after the fact retracts an already-linked artifact

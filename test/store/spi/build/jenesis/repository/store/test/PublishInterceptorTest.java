@@ -21,11 +21,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The upload post-processing gate on {@link Publication#publish}: the blob is always stored content-addressed, then the
- * interceptor chain's strongest {@link PublishInterceptor.Disposition} routes the pointer - an accepted path links and
- * serves, a quarantined one diverts to the {@code /quarantine} view (stored but not served), a rejected one links
- * nothing - and every interceptor is notified of the outcome. Interceptors are passed explicitly here, since the free
- * edition's ServiceLoader-discovered chain is empty.
+ * The upload post-processing gate on {@link Publication#screen}: the blob is always stored content-addressed, then the
+ * interceptor chain's strongest {@link PublishInterceptor.Disposition} routes it - an accepted upload links no pointer
+ * of its own (the screening edge owns the accepted write and links it), a quarantined one diverts to the
+ * {@code /quarantine} view (stored but not served), a rejected one links nothing - and every interceptor is notified of
+ * the outcome. Interceptors are passed explicitly here, since the free edition's ServiceLoader-discovered chain is empty.
  */
 class PublishInterceptorTest {
 
@@ -72,13 +72,17 @@ class PublishInterceptorTest {
     }
 
     @Test
-    void an_empty_chain_accepts_and_links_the_artifact() throws IOException {
+    void an_empty_chain_accepts_and_the_caller_links_the_artifact() throws IOException {
         Publication publication = new Publication(store, List.of());
-        Publication.Published published = publication.publish(descriptor("/raw/a"), bytes("payload"));
+        Publication.Published screened = publication.screen(descriptor("/raw/a"), bytes("payload"));
 
-        assertThat(published.disposition()).isEqualTo(PublishInterceptor.Disposition.ACCEPT);
-        assertThat(store.exists("blobs/" + published.hash())).isTrue();
-        assertThat(publication.located("/raw/a")).contains("blobs/" + published.hash());
+        assertThat(screened.disposition()).isEqualTo(PublishInterceptor.Disposition.ACCEPT);
+        assertThat(store.exists("blobs/" + screened.hash())).isTrue();
+        assertThat(publication.located("/raw/a")).as("screen links nothing itself").isEmpty();
+
+        publication.link("/raw/a", screened.hash());
+        assertThat(publication.located("/raw/a")).as("the accepted write is the caller's link")
+                .contains("blobs/" + screened.hash());
     }
 
     @Test
@@ -86,7 +90,7 @@ class PublishInterceptorTest {
         Fixed interceptor = new Fixed(PublishInterceptor.Disposition.QUARANTINE);
         Publication publication = new Publication(store, List.of(interceptor));
 
-        Publication.Published published = publication.publish(descriptor("/raw/held"), bytes("suspect"));
+        Publication.Published published = publication.screen(descriptor("/raw/held"), bytes("suspect"));
 
         assertThat(published.disposition()).isEqualTo(PublishInterceptor.Disposition.QUARANTINE);
         assertThat(store.exists("blobs/" + published.hash())).as("the blob is stored").isTrue();
@@ -127,7 +131,7 @@ class PublishInterceptorTest {
     void a_reject_verdict_stores_the_blob_but_links_no_pointer() throws IOException {
         Publication publication = new Publication(store, List.of(new Fixed(PublishInterceptor.Disposition.REJECT)));
 
-        Publication.Published published = publication.publish(descriptor("/raw/bad"), bytes("malware"));
+        Publication.Published published = publication.screen(descriptor("/raw/bad"), bytes("malware"));
 
         assertThat(published.disposition()).isEqualTo(PublishInterceptor.Disposition.REJECT);
         assertThat(store.exists("blobs/" + published.hash())).as("the orphan blob is left for GC").isTrue();
@@ -142,7 +146,7 @@ class PublishInterceptorTest {
                 new Fixed(PublishInterceptor.Disposition.QUARANTINE),
                 new Fixed(PublishInterceptor.Disposition.ACCEPT)));
 
-        Publication.Published published = publication.publish(descriptor("/raw/mixed"), bytes("x"));
+        Publication.Published published = publication.screen(descriptor("/raw/mixed"), bytes("x"));
 
         assertThat(published.disposition()).isEqualTo(PublishInterceptor.Disposition.QUARANTINE);
     }
@@ -173,7 +177,7 @@ class PublishInterceptorTest {
         Publication publication = new Publication(store, List.of(
                 new Positioned("last", 10), new Positioned("first", -10), new Positioned("middle", 0)));
 
-        publication.publish(descriptor("/raw/ordered"), bytes("x"));
+        publication.screen(descriptor("/raw/ordered"), bytes("x"));
 
         assertThat(sequence).containsExactly("first", "middle", "last");
     }
@@ -181,8 +185,9 @@ class PublishInterceptorTest {
     @Test
     void a_withholding_screen_retracts_a_published_path_from_serving() throws IOException {
         Publication publication = new Publication(store, List.of());
-        publication.publish(descriptor("/raw/served"), bytes("fine"));
-        publication.publish(descriptor("/raw/retracted"), bytes("later-flagged"));
+        publication.link("/raw/served", publication.screen(descriptor("/raw/served"), bytes("fine")).hash());
+        publication.link("/raw/retracted",
+                publication.screen(descriptor("/raw/retracted"), bytes("later-flagged")).hash());
 
         Publication screened = new Publication(store, List.of(new PublishInterceptor() {
             @Override
@@ -198,7 +203,8 @@ class PublishInterceptorTest {
 
     @Test
     void the_content_view_reads_the_just_stored_blob_and_a_published_sibling() throws IOException {
-        new Publication(store, List.of()).publish(descriptor("/raw/pom"), bytes("the-pom"));
+        Publication seed = new Publication(store, List.of());
+        seed.link("/raw/pom", seed.screen(descriptor("/raw/pom"), bytes("the-pom")).hash());
 
         List<String> seenSibling = new ArrayList<>();
         PublishInterceptor reader = new PublishInterceptor() {
@@ -211,7 +217,7 @@ class PublishInterceptorTest {
                 return Disposition.ACCEPT;
             }
         };
-        new Publication(store, List.of(reader)).publish(descriptor("/raw/jar"), bytes("the-jar"));
+        new Publication(store, List.of(reader)).screen(descriptor("/raw/jar"), bytes("the-jar"));
 
         assertThat(seenSibling).containsExactly("the-pom");
     }
@@ -221,8 +227,9 @@ class PublishInterceptorTest {
         // A sibling read is small published metadata a gate inspects beside the artifact (a jar reading its POM);
         // it must never be turned into a lever to buffer an arbitrarily large blob into the heap. An over-cap
         // sibling fails loudly instead of materialising, and the cap read never buffers more than the ceiling.
-        new Publication(store, List.of()).publish(descriptor("/raw/huge"),
-                new ByteArrayInputStream(new byte[9 * 1024 * 1024]));
+        Publication seed = new Publication(store, List.of());
+        seed.link("/raw/huge",
+                seed.screen(descriptor("/raw/huge"), new ByteArrayInputStream(new byte[9 * 1024 * 1024])).hash());
 
         PublishInterceptor reader = new PublishInterceptor() {
             @Override
@@ -232,7 +239,7 @@ class PublishInterceptorTest {
             }
         };
         assertThatThrownBy(() -> new Publication(store, List.of(reader))
-                .publish(descriptor("/raw/jar"), bytes("the-jar")))
+                .screen(descriptor("/raw/jar"), bytes("the-jar")))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("sibling");
     }

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -20,10 +21,13 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The after-commit hook class on {@link Publication#publish}: a {@link PublicationObserver} is notified only once an
- * accepted artifact's pointer is linked - never for a quarantined or rejected publish - and rides outside the verdict
- * path, so a failing observer is contained and the publish it observed stays linked and served. Observers are passed
- * explicitly here, since the free edition's ServiceLoader-discovered chain is empty.
+ * The after-commit hook class on the {@link Publication#published} seam the ingress edges fire: a
+ * {@link PublicationObserver} is notified only once an accepted artifact has been screened and laid out and the edge
+ * fires {@link Publication#published} - never for a quarantined or rejected screen - and rides outside the verdict
+ * path, so a failing observer is contained and the publish it observed stays linked and served. Each test drives the
+ * same {@code screen} &rarr; (ACCEPT) {@code link} + {@code published} choreography {@code ScreenedDispatch} and
+ * {@code OciManifests} run through {@link #edgePublish}. Observers are passed explicitly here, since the free edition's
+ * ServiceLoader-discovered chain is empty.
  */
 class PublicationObserverTest {
 
@@ -42,6 +46,21 @@ class PublicationObserverTest {
         return new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
     }
 
+    /** The ingress edge choreography the observers now ride: {@link Publication#screen screen} the body, and only on
+     *  {@code ACCEPT} link the accepted artifact and fire the {@link Publication#published} seam with the blob's
+     *  identity - exactly what {@code ScreenedDispatch} and {@code OciManifests} do - so a quarantined or rejected
+     *  screen never reaches an observer. Returns the screen outcome so a test can assert on the disposition and hash. */
+    private static Publication.Published edgePublish(Publication publication, ArtifactStore store,
+                                                     ArtifactDescriptor descriptor, InputStream content)
+            throws IOException {
+        Publication.Published screened = publication.screen(descriptor, content);
+        if (screened.disposition() == PublishInterceptor.Disposition.ACCEPT) {
+            publication.link(descriptor.path(), screened.hash());
+            publication.published(descriptor.withBlob(screened.hash(), store.size("blobs/" + screened.hash())));
+        }
+        return screened;
+    }
+
     /** A screen answering a fixed verdict, to drive the quarantine and reject outcomes past the observers. */
     private static PublishInterceptor verdict(PublishInterceptor.Disposition disposition) {
         return new PublishInterceptor() {
@@ -57,14 +76,14 @@ class PublicationObserverTest {
         List<ArtifactDescriptor> observed = new ArrayList<>();
         PublicationObserver observer = (artifact, store) -> observed.add(artifact);
 
-        new Publication(store, List.of(verdict(PublishInterceptor.Disposition.QUARANTINE)), List.of(observer))
-                .publish(ArtifactDescriptor.at("raw", "/raw/held"), bytes("suspect"));
-        new Publication(store, List.of(verdict(PublishInterceptor.Disposition.REJECT)), List.of(observer))
-                .publish(ArtifactDescriptor.at("raw", "/raw/bad"), bytes("malware"));
+        edgePublish(new Publication(store, List.of(verdict(PublishInterceptor.Disposition.QUARANTINE)), List.of(observer)),
+                store, ArtifactDescriptor.at("raw", "/raw/held"), bytes("suspect"));
+        edgePublish(new Publication(store, List.of(verdict(PublishInterceptor.Disposition.REJECT)), List.of(observer)),
+                store, ArtifactDescriptor.at("raw", "/raw/bad"), bytes("malware"));
         assertThat(observed).as("a quarantined or rejected publish is never observed").isEmpty();
 
-        Publication.Published published = new Publication(store, List.of(), List.of(observer))
-                .publish(ArtifactDescriptor.at("raw", "/raw/good"), bytes("payload"));
+        Publication.Published published = edgePublish(new Publication(store, List.of(), List.of(observer)),
+                store, ArtifactDescriptor.at("raw", "/raw/good"), bytes("payload"));
         assertThat(observed).hasSize(1);
         assertThat(observed.getFirst().path()).isEqualTo("/raw/good");
         assertThat(observed.getFirst().hash()).as("the descriptor carries the linked blob identity")
@@ -81,7 +100,8 @@ class PublicationObserverTest {
                 },
                 (artifact, store) -> reached.add(artifact.path())));
 
-        Publication.Published published = publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+        Publication.Published published = edgePublish(publication, store,
+                ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
 
         assertThat(published.disposition()).isEqualTo(PublishInterceptor.Disposition.ACCEPT);
         assertThat(publication.located("/raw/a")).as("the failure never unlinks the artifact")
@@ -103,8 +123,9 @@ class PublicationObserverTest {
             }
         };
         Publication publication = new Publication(store, List.of(), List.of(observer));
-        Publication.Published published = publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
-        publication.publish(ArtifactDescriptor.at("raw", "/raw/b"), bytes("y"));
+        Publication.Published published = edgePublish(publication, store,
+                ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+        edgePublish(publication, store, ArtifactDescriptor.at("raw", "/raw/b"), bytes("y"));
 
         publication.unpublish("/raw/a");
         publication.unpublish("/raw/never-published");
@@ -132,8 +153,8 @@ class PublicationObserverTest {
             }
         };
         Publication publication = new Publication(store, List.of(), List.of(observer));
-        Publication.Published published = publication
-                .publish(ArtifactDescriptor.at("maven", "/com/acme/app/1.0/app-1.0.jar"), bytes("jar bytes"));
+        Publication.Published published = edgePublish(publication, store,
+                ArtifactDescriptor.at("maven", "/com/acme/app/1.0/app-1.0.jar"), bytes("jar bytes"));
 
         publication.unpublish(new ArtifactDescriptor("maven", "com.acme:app", "1.0",
                 "/com/acme/app/1.0/app-1.0.jar", null, false, null, -1L));
@@ -154,7 +175,7 @@ class PublicationObserverTest {
     void a_publish_only_observer_rides_a_removal_through_the_default_no_op() throws IOException {
         List<ArtifactDescriptor> observed = new ArrayList<>();
         Publication publication = new Publication(store, List.of(), List.of((artifact, store) -> observed.add(artifact)));
-        publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+        edgePublish(publication, store, ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
 
         publication.unpublish("/raw/a");
 
@@ -186,7 +207,7 @@ class PublicationObserverTest {
             }
         };
         Publication publication = new Publication(store, List.of(), List.of(failing, recording));
-        publication.publish(ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
+        edgePublish(publication, store, ArtifactDescriptor.at("raw", "/raw/a"), bytes("x"));
 
         publication.unpublish("/raw/a");
 
@@ -231,8 +252,8 @@ class PublicationObserverTest {
         PublicationObserver outbox = (artifact, target) ->
                 target.writeVersioned("outbox/" + artifact.hash(), artifact.path().getBytes(StandardCharsets.UTF_8), null);
 
-        new Publication(scoped, List.of(), List.of(outbox))
-                .publish(ArtifactDescriptor.at("raw", "/raw/forward-me"), bytes("payload"));
+        edgePublish(new Publication(scoped, List.of(), List.of(outbox)), scoped,
+                ArtifactDescriptor.at("raw", "/raw/forward-me"), bytes("payload"));
 
         List<String> entries = scoped.list("outbox");
         assertThat(entries).as("the follow-up note lands under the space the artifact did").hasSize(1);

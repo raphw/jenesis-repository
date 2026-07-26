@@ -30,7 +30,7 @@ public final class Publication {
     private static final int LARGEST_SIBLING = 8 * 1024 * 1024;
 
     /** The screen chain, discovered once at class load like {@code MavenFormat.MODULE_VIEWS} - empty in the free
-     *  edition (no provider on the module path), so {@link #publish} is a plain store-then-link there. */
+     *  edition (no provider on the module path), so {@link #screen} is a plain store-and-accept there. */
     private static final List<PublishInterceptor> DISCOVERED = ServiceLoader.load(PublishInterceptor.class)
             .stream().map(ServiceLoader.Provider::get).toList();
 
@@ -155,11 +155,11 @@ public final class Publication {
     /** Notify every observer of an accepted artifact this primitive did not lay out - the seam an ingress edge calls
      *  once per artifact it has screened to {@code ACCEPT} and laid out into a format's namespace (through
      *  {@link #screen} then the format's own {@link #storeBlob}/{@link #link} or {@code Blobs} writes), so an
-     *  edge-screened publish is observed exactly like the pointer-linking {@link #publish} does inline. The mirror of
+     *  edge-screened publish is observed exactly once the edge has linked the accepted artifact. The mirror of
      *  {@link #deleted}: the caller already stored and linked the artifact and describes it, so nothing is read or
      *  written here. Failures are logged and contained like every observer notification, never failing the caller's
-     *  already-completed publish. The seam that carries {@link PublicationObserver#onPublished} once the screen+link
-     *  choreography moves to the edges, so a blobs-namespace deploy that never fired an observer before now does. */
+     *  already-completed publish. This is the sole seam that carries {@link PublicationObserver#onPublished}: with the
+     *  screen+layout choreography living at the ingress edges, a blobs-namespace deploy fires its observer through here. */
     public void published(ArtifactDescriptor published) {
         notifyPublished(published);
     }
@@ -201,41 +201,32 @@ public final class Publication {
         }
     }
 
-    /** The outcome of a gated publish: the disposition the interceptor chain reached and the SHA-256 the blob was
+    /** The outcome of a screened upload: the disposition the interceptor chain reached and the SHA-256 the blob was
      *  stored under - present whatever the disposition, since the blob is written content-addressed before the gate. */
     public record Published(PublishInterceptor.Disposition disposition, String hash) {
     }
 
     /**
-     * Store an artifact streamed content-addressed, run the {@link PublishInterceptor} chain over its neutral
-     * {@link ArtifactDescriptor}, and route its pointer by the strongest {@link PublishInterceptor.Disposition} across
-     * the chain: {@code ACCEPT} links {@code artifact.path()}, {@code QUARANTINE} links {@code "/quarantine" + path}
-     * (stored but not served), {@code REJECT} links nothing (the orphaned blob is left for garbage collection). The
-     * blob is inert until a pointer references it, so the chain gates before the first link - nothing is buffered and
-     * there is no published-then-retracted window. With the default empty chain this is exactly a
-     * {@link #storeBlob} followed by a {@link #link}. Once an accepted artifact is linked, every discovered
-     * {@link PublicationObserver} is notified - only then, so an observer never sees a quarantined or rejected
-     * publish - with any observer failure logged and contained, never unlinking the artifact or failing the upload.
-     */
-    public Published publish(ArtifactDescriptor artifact, InputStream content) throws IOException {
-        return route(artifact, content, true);
-    }
-
-    /**
      * Store an upload content-addressed and run the {@link PublishInterceptor} chain over its neutral
-     * {@link ArtifactDescriptor} <em>without publishing it</em>: an accepted upload links no pointer - the caller
-     * owns the accepted write, storing the content into its own layout from the returned hash - while a quarantined
-     * one is still diverted to the {@code /quarantine} view for review and a rejected one leaves only the
-     * unreferenced blob for garbage collection. This is the seam for a format-external gate choreography (a serving
-     * surface screening an upload before it hands the stored body to the format that lays it out). The interceptors'
-     * {@link PublishInterceptor#committed} notifications fire; the after-commit {@link PublicationObserver}s do not,
-     * since nothing was published yet - they ride the actual publish, if the caller makes one.
+     * {@link ArtifactDescriptor} <em>without linking any serving pointer of its own</em>: an accepted upload links no
+     * pointer - the caller owns the accepted write, laying the content out in its own layout from the returned hash -
+     * while a quarantined one is still diverted to the {@code /quarantine} view for review and a rejected one leaves
+     * only the unreferenced blob for garbage collection. The blob is inert until a pointer references it, so the chain
+     * gates before any link - nothing is buffered and there is no published-then-retracted window. With the default
+     * empty chain this is exactly a {@link #storeBlob} that always {@code ACCEPT}s.
+     *
+     * <p>This is the single sanctioned screen seam. An ingress edge (the deploy edge {@code ScreenedDispatch}, the
+     * batch explode, the import walk, or OCI's manifest choke point) screens an upload here, then - on {@code ACCEPT} -
+     * lays the stored body out in a format's namespace with {@link #storeBlob}/{@link #link} (or a {@code Blobs} write)
+     * and fires {@link #published} so the after-commit {@link PublicationObserver}s ride the accepted publish. The
+     * interceptors' {@link PublishInterceptor#committed} notifications fire here; the after-commit observers do not -
+     * they ride the {@link #published} seam the edge calls once it has laid the accepted artifact out.
      */
     public Published screen(ArtifactDescriptor artifact, InputStream content) throws IOException {
-        return route(artifact, content, false);
+        return route(artifact, content);
     }
 
-    private Published route(ArtifactDescriptor artifact, InputStream content, boolean publish) throws IOException {
+    private Published route(ArtifactDescriptor artifact, InputStream content) throws IOException {
         String hash = storeBlob(content);
         ArtifactDescriptor stored = artifact.withBlob(hash, store.size("blobs/" + hash));
         PublishInterceptor.Content access = access(hash);
@@ -247,20 +238,18 @@ public final class Publication {
             }
         }
         switch (disposition) {
+            // ACCEPT links no pointer of its own: the screening edge owns the accepted write and lays the stored blob
+            // out in its own format namespace from the returned hash, then fires published() for the observers.
             case ACCEPT -> {
-                if (publish) {
-                    link(artifact.path(), hash);
-                }
             }
+            // QUARANTINE still diverts to the quarantine view (stored but not served) for review.
             case QUARANTINE -> link("/quarantine" + artifact.path(), hash);
+            // REJECT links nothing; the orphaned blob is left for garbage collection.
             case REJECT -> {
             }
         }
         for (PublishInterceptor interceptor : interceptors) {
             interceptor.committed(stored, disposition, store);
-        }
-        if (publish && disposition == PublishInterceptor.Disposition.ACCEPT) {
-            notifyPublished(stored);
         }
         return new Published(disposition, hash);
     }
