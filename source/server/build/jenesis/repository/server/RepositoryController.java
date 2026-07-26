@@ -64,6 +64,7 @@ public class RepositoryController {
 
     private final RepositoryRouting routing;
     private final FormatDispatcher dispatcher;
+    private final ScreenedDispatch screened;
     private final List<ImportSourceProvider> importSources;
     private final ProxyFormat.Fetcher fetcher;
     private final BatchIngestion batch;
@@ -131,6 +132,7 @@ public class RepositoryController {
                                 RoutedServing routed) {
         this.routing = routing;
         this.dispatcher = dispatcher;
+        this.screened = new ScreenedDispatch(dispatcher);
         this.importSources = importSources;
         this.fetcher = fetcher;
         this.batch = batch;
@@ -174,7 +176,12 @@ public class RepositoryController {
             }
             return;
         }
-        if (!dispatcher.dispatch(exchange, route.store())) {
+        // A claimed single-body write (PUT/POST/PATCH on a screened() format) is screened at this ingress edge before
+        // the format lays it out: the body is stored and the discovered interceptor chain runs once, then an accepted
+        // blob is restreamed into the format for pure layout (QUARANTINE -> 202, REJECT -> 422). An unscreened format
+        // (OCI) and every read/delete dispatch through the normal loop untouched. With the free edition's empty chain
+        // this is byte-for-byte a direct dispatch; it carries the full ComplianceScreen chain under fixed tenancy.
+        if (!screened.dispatch(exchange, route.store())) {
             response.setStatus(404);
         }
     }

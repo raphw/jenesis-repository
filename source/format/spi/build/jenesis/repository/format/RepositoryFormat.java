@@ -30,6 +30,23 @@ public interface RepositoryFormat {
     void handle(FormatExchange exchange, ArtifactStore store) throws IOException;
 
     /**
+     * Whether this format's single-body writes are screened at the ingress edge (the default). {@code true} means an
+     * edge (the free {@link build.jenesis.repository.store.Publication}-driven write path, the enterprise deploy edge)
+     * stores and runs the discovered {@link build.jenesis.repository.store.PublishInterceptor} chain over a claimed
+     * {@code PUT}/{@code POST}/{@code PATCH} body <em>before</em> {@link #handle} sees it, then restreams the accepted
+     * blob into {@link #handle}, whose job is now pure layout - lay the bytes out in this format's namespace, no
+     * screening of its own. {@code false} means the format owns its whole screening choreography and the edge dispatches
+     * its writes unscreened: the body never reaches the edge screen as one atomic upload, so the format screens where it
+     * can. Only the OCI/Docker format overrides this to {@code false} - its {@code /v2/} protocol splits one artifact
+     * across many requests (blob-upload sessions, then a manifest), which no single-body edge screen can gate, so it
+     * screens at its own manifest choke point instead. This is the correct default for a single-body format, not a
+     * back-compat shim; a new format inherits edge screening for free by leaving it alone.
+     */
+    default boolean screened() {
+        return true;
+    }
+
+    /**
      * The format's mark as a small SVG {@link IconResource} embedded in this module, or empty when it ships none.
      * The console renders it beside the format's repositories and browse rows, and a server icon endpoint serves it
      * (immutable, cached) with a neutral fallback for a format that returns empty. A {@code default} so no existing

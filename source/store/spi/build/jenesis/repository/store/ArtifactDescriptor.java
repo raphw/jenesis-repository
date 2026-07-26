@@ -26,8 +26,9 @@ public record ArtifactDescriptor(String ecosystem,
 
     /** The same descriptor with the content-addressed identity {@link Publication} assigns once the blob is stored -
      *  the SHA-256 it landed under ({@code blobs/<hash>}) and its stored byte length - which is what an interceptor
-     *  sees. */
-    ArtifactDescriptor withBlob(String hash, long size) {
+     *  sees, and what an ingress edge stamps onto the descriptor it hands {@link Publication#published} so an
+     *  after-commit observer gets the accepted blob's identity. */
+    public ArtifactDescriptor withBlob(String hash, long size) {
         return new ArtifactDescriptor(ecosystem, coordinate, version, path, contentType, prerelease, hash, size);
     }
 }

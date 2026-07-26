@@ -38,6 +38,18 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         return path.equals("/v2") || path.equals("/v2/") || path.startsWith("/v2/");
     }
 
+    /**
+     * The OCI protocol pushes one image across many requests - a session of blob uploads (a {@code POST} then chunked
+     * {@code PATCH}es and a finalising {@code PUT}), then a manifest {@code PUT} that references them by digest - so no
+     * single request carries the whole artifact for an ingress edge to screen as one body. This format therefore owns
+     * its own screening choreography (a manifest-time choke point) and opts out of the edge screen, which would
+     * otherwise store and gate each transport-level fragment as if it were a standalone publish.
+     */
+    @Override
+    public boolean screened() {
+        return false;
+    }
+
     @Override
     public void handle(FormatExchange exchange, ArtifactStore store) throws IOException {
         String path = exchange.path();

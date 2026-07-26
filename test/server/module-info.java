@@ -115,5 +115,6 @@ open module build.jenesis.repository.test {
     requires org.junit.jupiter;
     requires org.assertj.core;
     provides build.jenesis.repository.store.PublishInterceptor
-            with build.jenesis.repository.test.MarkerInterceptor;
+            with build.jenesis.repository.test.MarkerInterceptor,
+                    build.jenesis.repository.test.CountingInterceptor;
 }
