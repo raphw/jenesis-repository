@@ -36,8 +36,4 @@ open module build.jenesis.repository.format.raw.test {
     requires build.jenesis.repository.store.filesystem;
     requires org.junit.jupiter;
     requires org.assertj.core;
-    // A test-only screen discovered on the publish chain, so a format-level test can assert RawFormat routes its PUT /
-    // proxy / import through the gate (withhold on QUARANTINE, link nothing on REJECT). Inert for every non-marker path.
-    provides build.jenesis.repository.store.PublishInterceptor
-            with build.jenesis.repository.format.raw.test.MarkerInterceptor;
 }

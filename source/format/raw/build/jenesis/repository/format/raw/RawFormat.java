@@ -1,9 +1,7 @@
 package build.jenesis.repository.format.raw;
 
 import module java.base;
-import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
-import build.jenesis.repository.store.PublishInterceptor;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
@@ -41,8 +39,14 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         Publication publication = new Publication(store);
         String path = exchange.path();
         switch (exchange.method()) {
-            case "PUT" -> exchange.respond(status(
-                    publication.publish(ArtifactDescriptor.at("raw", path), exchange.requestStream()).disposition()));
+            case "PUT" -> {
+                // Layout-only (EPIC 26): screening rides the ingress edge, which screens the body to ACCEPT and
+                // restreams the stored blob into this format. Store content-addressed (streamed, never buffered) and
+                // link the path, then respond 201 - verdicts are the edge's business, not the format's.
+                String hash = publication.storeBlob(exchange.requestStream());
+                publication.link(path, hash);
+                exchange.respond(201);
+            }
             case "DELETE" -> {
                 publication.unpublish(path);
                 exchange.respond(204);
@@ -88,24 +92,14 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
             if (download.status() != 200) {
                 return false;
             }
-            // Publish through the interceptor chain, not a raw link, so a proxied artifact is screened by any installed
-            // compliance gate exactly as a PUT is. On ACCEPT it is linked and the handle() re-dispatch serves it; on
-            // QUARANTINE/REJECT it is withheld, so located() is empty and the re-dispatch answers 404. Streamed, never
-            // buffered (publish hashes the body on the fly).
-            publication.publish(ArtifactDescriptor.at("raw", path), download.body());
+            // Layout-only (EPIC 26): screening rides the ingress edge (under enterprise the proxy ingress is already
+            // screened by ProxyScreen/harden), so this lays the fetched body out - store it content-addressed
+            // (streamed, never buffered) and link the path - and the handle() re-dispatch serves it.
+            String hash = publication.storeBlob(download.body());
+            publication.link(path, hash);
         }
         handle(exchange, store);
         return true;
-    }
-
-    /** Map an upload disposition to the HTTP status a client sees: accepted is a created, quarantined is accepted (held
-     *  for review), rejected is unprocessable. With the default empty interceptor chain this is always 201. */
-    private static int status(PublishInterceptor.Disposition disposition) {
-        return switch (disposition) {
-            case ACCEPT -> 201;
-            case QUARANTINE -> 202;
-            case REJECT -> 422;
-        };
     }
 
     private void listing(String path, ArtifactStore store, FormatExchange exchange) throws IOException {

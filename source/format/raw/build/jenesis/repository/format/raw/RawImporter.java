@@ -1,7 +1,6 @@
 package build.jenesis.repository.format.raw;
 
 import module java.base;
-import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactStore;
@@ -25,9 +24,10 @@ public final class RawImporter implements RepositoryImporter {
     public void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException {
         String relative = path.startsWith("/") ? path.substring(1) : path;
         Publication publication = new Publication(store);
-        // Publish through the interceptor chain, not a raw link, so an imported asset is screened by any installed
-        // compliance gate exactly as a PUT is: ACCEPT links and serves, QUARANTINE/REJECT withholds it for review.
-        // Streamed, never buffered (publish hashes the body on the fly).
-        publication.publish(ArtifactDescriptor.at("raw", "/raw/" + relative), content);
+        // Layout-only (EPIC 26): screening rides the ingress edge (the import walk screens each asset before handing it
+        // here), so this lays the asset out - store it content-addressed (streamed, never buffered) and link its
+        // /raw/ path.
+        String hash = publication.storeBlob(content);
+        publication.link("/raw/" + relative, hash);
     }
 }
