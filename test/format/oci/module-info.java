@@ -35,7 +35,10 @@
 open module build.jenesis.repository.format.oci.test {
     requires build.jenesis.repository.format.oci;
     requires build.jenesis.repository.format;
+    requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
     requires org.junit.jupiter;
     requires org.assertj.core;
+    provides build.jenesis.repository.store.PublishInterceptor
+            with build.jenesis.repository.format.oci.test.OciScreenInterceptor;
 }

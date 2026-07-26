@@ -52,14 +52,11 @@ public final class OciImporter implements RepositoryImporter {
     }
 
     private void manifest(String name, String reference, byte[] content, ArtifactStore store) throws IOException {
-        String hex = sha256(content);
-        if (!store.exists("blobs/" + hex)) {
-            store.write("blobs/" + hex, new ByteArrayInputStream(content));
-        }
-        store.write("oci/types/" + hex, new ByteArrayInputStream(mediaType(content).getBytes(StandardCharsets.UTF_8)));
-        if (!reference.startsWith("sha256:")) {
-            OciFormat.linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
-        }
+        // Route the import manifest through the shared OCI choke point (EPIC 26), so an import screens its manifests
+        // exactly as a push and a proxy do - what OciImporter.describe() returning empty (an unscreened import edge)
+        // deferred to this manifest gate. The media type is read from the manifest's own field (an import carries no
+        // response headers); a withheld verdict lays out no sidecar or tag pointer, so the manifest never serves.
+        OciManifests.ingest(name, reference, content, mediaType(content), store);
     }
 
     private static String mediaType(byte[] manifest) {
@@ -67,14 +64,6 @@ public final class OciImporter implements RepositoryImporter {
             return JSON.readTree(new String(manifest, StandardCharsets.UTF_8)).path("mediaType").asString(OCI_MANIFEST);
         } catch (RuntimeException _) {
             return OCI_MANIFEST;
-        }
-    }
-
-    private static String sha256(byte[] content) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
         }
     }
 }

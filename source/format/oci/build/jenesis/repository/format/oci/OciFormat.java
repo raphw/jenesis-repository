@@ -223,18 +223,31 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
                 exchange.respond(400);
                 return;
             }
-            // writeBlob stores the manifest under blobs/<hex> and returns its digest, so even the manifest goes to
-            // storage as a stream rather than being read into memory to be hashed.
-            String hex = store.writeBlob(exchange.requestStream());
-            String type = exchange.requestHeader("Content-Type");
-            store.write("oci/types/" + hex, new ByteArrayInputStream(
-                    (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
-            if (!reference.startsWith("sha256:")) {
-                linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
+            // Route the manifest through the OCI choke point (EPIC 26): OciManifests.ingest screens it against its
+            // neutral oci coordinate and maps the verdict onto the native withheld/<hex> marker. The manifest is small
+            // metadata, so buffering it here (never a layer blob) to hand the same bytes to the screen is fine.
+            OciManifests.Ingested ingested = OciManifests.ingest(
+                    name, reference, exchange.requestStream().readAllBytes(),
+                    exchange.requestHeader("Content-Type"), store);
+            String hex = ingested.hex();
+            switch (ingested.disposition()) {
+                case ACCEPT -> {
+                    exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
+                    exchange.setResponseHeader("Location", "/v2/" + name + "/manifests/sha256:" + hex);
+                    exchange.respond(201);
+                }
+                case QUARANTINE -> {
+                    // Held for review: accepted onto the registry as a 202, but withheld from serving until released.
+                    exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
+                    exchange.respond(202);
+                }
+                case REJECT -> {
+                    // Denied outright with the Distribution error envelope, so `docker push` surfaces the refusal.
+                    exchange.setResponseHeader("Content-Type", "application/json");
+                    exchange.respond(403, ("{\"errors\":[{\"code\":\"DENIED\",\"message\":"
+                            + "\"manifest withheld by the compliance screen\"}]}").getBytes(StandardCharsets.UTF_8));
+                }
             }
-            exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
-            exchange.setResponseHeader("Location", "/v2/" + name + "/manifests/sha256:" + hex);
-            exchange.respond(201);
             return;
         }
         String hex;
@@ -400,16 +413,13 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         if (reference.startsWith("sha256:") && !hex.equals(hex(reference))) {
             return false;
         }
-        store.write("blobs/" + hex, new ByteArrayInputStream(body));
-        String type = fetched.get().header("Content-Type");
-        store.write("oci/types/" + hex, new ByteArrayInputStream(
-                (type == null ? OCI_MANIFEST : type).getBytes(StandardCharsets.UTF_8)));
-        if (!reference.startsWith("sha256:")) {
-            if (!isTag(reference)) {
-                return false; // a non-tag reference must not become a tags/ store key - let the local 404 stand
-            }
-            linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
+        if (!reference.startsWith("sha256:") && !isTag(reference)) {
+            return false; // a non-tag reference must not become a tags/ store key - let the local 404 stand
         }
+        // Screen a proxied manifest through the same OCI choke point a push takes (EPIC 26): a withheld upstream
+        // manifest gets its withheld/<hex> marker set, so the handle() serve below 404s it by digest and by tag. There
+        // is no separate proxy client response - the local serve is the response.
+        OciManifests.ingest(name, reference, body, fetched.get().header("Content-Type"), store);
         handle(exchange, store);
         return true;
     }
