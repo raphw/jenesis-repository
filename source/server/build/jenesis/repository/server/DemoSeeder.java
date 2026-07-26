@@ -5,6 +5,7 @@ import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,13 +33,23 @@ public final class DemoSeeder {
 
     private final List<RepositoryFormat> formats;
     private final ProxyFormat.Fetcher fetcher;
+    private final PullThroughHooks hooks;
 
     /** @param formats the installed formats (their {@code demoArtifacts()} are collected and their
      *  {@code defaultUpstream()} drives the pull-through), and {@code fetcher} the upstream fetcher the demo pulls
      *  through - the real HTTP fetcher in a deployment, a stub over canned bytes in a test. */
     public DemoSeeder(List<RepositoryFormat> formats, ProxyFormat.Fetcher fetcher) {
+        this(formats, fetcher, PullThroughHooks.NONE);
+    }
+
+    /** As {@link #DemoSeeder(List, ProxyFormat.Fetcher)}, binding an edition's {@link PullThroughHooks} into the
+     *  {@link FormatDispatcher} {@link #seed} builds - the injection point for the dispatcher-direct demo leg, which
+     *  does not pass through the routed gateway's own screening. The other constructor delegates here with
+     *  {@link PullThroughHooks#NONE}, so the free demo seed pulls through exactly as before. */
+    public DemoSeeder(List<RepositoryFormat> formats, ProxyFormat.Fetcher fetcher, PullThroughHooks hooks) {
         this.formats = List.copyOf(formats);
         this.fetcher = fetcher;
+        this.hooks = hooks;
     }
 
     /** Every installed format's suggested demo request paths, gathered in format-then-declaration order. */
@@ -81,7 +92,8 @@ public final class DemoSeeder {
                 proxy.defaultUpstream().ifPresent(upstream -> upstreams.put(format.name(), upstream));
             }
         }
-        FormatDispatcher dispatcher = new FormatDispatcher(formats, upstreams, fetcher);
+        FormatDispatcher dispatcher =
+                new FormatDispatcher(formats, upstreams, fetcher, ObservationRegistry.NOOP, hooks);
         List<String> suggestions = suggestions();
         int seeded = 0;
         int unavailable = 0;

@@ -28,14 +28,29 @@ public final class PullThroughCache {
 
     private final ProxyFormat.Fetcher fetcher;
     private final ObservationRegistry observations;
+    private final PullThroughHooks hooks;
 
     public PullThroughCache(ProxyFormat.Fetcher fetcher) {
         this(fetcher, ObservationRegistry.NOOP);
     }
 
+    public PullThroughCache(ProxyFormat.Fetcher fetcher, PullThroughHooks hooks) {
+        this(fetcher, ObservationRegistry.NOOP, hooks);
+    }
+
     public PullThroughCache(ProxyFormat.Fetcher fetcher, ObservationRegistry observations) {
+        this(fetcher, observations, PullThroughHooks.NONE);
+    }
+
+    /**
+     * Bind an edition's {@link PullThroughHooks} into the loop. The other constructors delegate here with
+     * {@link PullThroughHooks#NONE} (the {@link EdgeHooks} convenience-constructor idiom), so an existing call site is
+     * unchanged and serves byte-for-byte as before.
+     */
+    public PullThroughCache(ProxyFormat.Fetcher fetcher, ObservationRegistry observations, PullThroughHooks hooks) {
         this.fetcher = fetcher;
         this.observations = observations;
+        this.hooks = hooks;
     }
 
     public void serve(RepositoryFormat format,
@@ -49,13 +64,31 @@ public final class PullThroughCache {
         }
         Observations.observe(observations, "jenesis.proxy.fetch", null, null, observation -> {
             observation.lowCardinalityKeyValue("format", format.name());
+            // Consult the edition BEFORE the local-first serve, so a cached hit is verified against the current gate
+            // before any byte is written. The free NONE hook returns serveThrough with no store read, so the hit path
+            // below is byte-for-byte as before; the decision is made ahead of serving, never by wrapping the stream.
+            PullThroughHooks.HitDecision decision = hooks.verifyHit(format, exchange.path(), store);
+            if (decision instanceof PullThroughHooks.HitDecision.Withhold) {
+                // A now-retracted/rejected artifact the current gate refuses: 404 without serving the local bytes and
+                // without a miss-leg re-fetch (the caveat's "false must not dump to the miss leg").
+                observation.lowCardinalityKeyValue("outcome", "withheld");
+                exchange.respond(404);
+                return null;
+            }
+            if (decision instanceof PullThroughHooks.HitDecision.ServeLocal serveLocal) {
+                // The edition serves the local bytes itself, fail-closed over the local blob (no upstream fetch).
+                observation.lowCardinalityKeyValue("outcome", "verified");
+                serveLocal.serve().serve(format, exchange, store);
+                return null;
+            }
+            // serveThrough (the free default): the local-first serve runs exactly as today.
             Deferred deferred = new Deferred(exchange);
             format.handle(deferred, store);
             if (!deferred.missed()) {
                 observation.lowCardinalityKeyValue("outcome", "hit");
                 return null;
             }
-            if (proxy.proxy(exchange, store, upstream, fetcher)) {
+            if (proxy.proxy(exchange, store, upstream, hooks.screenFetch(exchange.path(), fetcher))) {
                 observation.lowCardinalityKeyValue("outcome", "miss");
                 observePublish(format, exchange.path(), store);
             } else {

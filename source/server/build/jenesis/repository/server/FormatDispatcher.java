@@ -28,6 +28,7 @@ public final class FormatDispatcher {
     private final Map<String, URI> upstreams;
     private final ProxyFormat.Fetcher fetcher;
     private final ObservationRegistry observations;
+    private final PullThroughHooks hooks;
 
     public FormatDispatcher(List<RepositoryFormat> formats, Map<String, URI> upstreams, ProxyFormat.Fetcher fetcher) {
         this(formats, upstreams, fetcher, ObservationRegistry.NOOP);
@@ -35,10 +36,21 @@ public final class FormatDispatcher {
 
     public FormatDispatcher(List<RepositoryFormat> formats, Map<String, URI> upstreams, ProxyFormat.Fetcher fetcher,
                             ObservationRegistry observations) {
+        this(formats, upstreams, fetcher, observations, PullThroughHooks.NONE);
+    }
+
+    /**
+     * Bind an edition's {@link PullThroughHooks} into the pull-through the loop drives. The other constructors delegate
+     * here with {@link PullThroughHooks#NONE}, so an existing call site is unchanged and its proxy legs serve exactly as
+     * before.
+     */
+    public FormatDispatcher(List<RepositoryFormat> formats, Map<String, URI> upstreams, ProxyFormat.Fetcher fetcher,
+                            ObservationRegistry observations, PullThroughHooks hooks) {
         this.formats = formats;
         this.upstreams = upstreams;
         this.fetcher = fetcher;
         this.observations = observations;
+        this.hooks = hooks;
     }
 
     /**
@@ -53,7 +65,7 @@ public final class FormatDispatcher {
             if (format.handles(path)) {
                 URI base = upstreams.get(format.name());
                 if (base != null && fetcher != ProxyFormat.Fetcher.NONE && format instanceof ProxyFormat proxy) {
-                    new PullThroughCache(fetcher, observations).serve(format, proxy, base, exchange, store);
+                    new PullThroughCache(fetcher, observations, hooks).serve(format, proxy, base, exchange, store);
                 } else {
                     format.handle(exchange, store);
                 }
