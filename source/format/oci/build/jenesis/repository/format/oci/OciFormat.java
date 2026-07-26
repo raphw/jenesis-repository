@@ -380,8 +380,14 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         if (manifest) {
             return proxyManifest(name, reference, accept, exchange, store, url, fetcher);
         }
-        // A blob carries no metadata to inspect, so it streams straight from upstream to storage: writeBlob digests it
-        // as it stores it, and the digest is checked against the requested one afterwards.
+        // Proxy-leg digest integrity for a blob, which is content-addressed by the reference itself. writeBlob streams
+        // the download under a SHA-256 DigestInputStream and stores it at blobs/<its-own-hash> (never buffering the
+        // layer whole, §1); the fetched bytes are then held to the requested digest. On a sha256 reference (the OCI
+        // norm, and the only algorithm this content-addressed store keys on) a mismatch is REFUSED: the bytes land only
+        // under their own true hash, so blobs/<requested> is never created - nothing is linked or served, the mismatched
+        // object is left unreferenced for GC, and a re-pull re-hits upstream. A reference in another registered
+        // algorithm the store cannot address (sha512:...) is left to the serve path, which 404s it since no
+        // blobs/<sha256> key can answer it - today's behaviour, no fabricated cross-algorithm check.
         Optional<ProxyFormat.Download> fetched = download(url, accept, fetcher);
         if (fetched.isEmpty()) {
             return false;
@@ -410,9 +416,23 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         }
         byte[] body = fetched.get().body();
         String hex = sha256(body);
+        // Proxy-leg digest integrity: hold the received manifest to every digest that is knowable here, refusing
+        // (letting the local 404 stand) on any mismatch rather than caching corrupted-in-transit bytes under the digest
+        // or tag a client will later trust - the manifest counterpart of the blob check above.
+        //   - By-digest pull: the reference names the content digest, so the bytes must hash to it.
         if (reference.startsWith("sha256:") && !hex.equals(hex(reference))) {
             return false;
         }
+        //   - By-tag pull: the upstream Docker-Content-Digest header carries the digest the registry addresses this
+        //     manifest by (the mutable tag is only a pointer to it), so the received bytes are held to it when present.
+        String contentDigest = fetched.get().header("Docker-Content-Digest");
+        if (contentDigest != null && contentDigest.startsWith("sha256:") && !hex.equals(hex(contentDigest))) {
+            return false;
+        }
+        //   - A mutable tag whose upstream response carries no (sha256) Docker-Content-Digest exposes no verifiable
+        //     digest to check against, so this falls back to trusting the upstream response, as before - no fabricated
+        //     check. The addressed digest is still recomputed and recorded by ingest() below, and a later by-digest
+        //     re-pull of the same content is verified against it.
         if (!reference.startsWith("sha256:") && !isTag(reference)) {
             return false; // a non-tag reference must not become a tags/ store key - let the local 404 stand
         }

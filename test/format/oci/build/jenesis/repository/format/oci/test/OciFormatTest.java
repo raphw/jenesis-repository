@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -338,5 +339,115 @@ class OciFormatTest {
         assertThatThrownBy(() -> format.enumerate(fetcher, URI.create("http://hub.local")))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("404");
+    }
+
+    private static final String MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json";
+
+    private static final URI UPSTREAM = URI.create("http://upstream.local");
+
+    /** A fetcher that serves one canned upstream response, counting how many times upstream was hit - so a test can
+     *  prove a refused (uncached) pull re-hits upstream on the next attempt while a cached one does not. */
+    private static ProxyFormat.Fetcher counting(String path, ProxyFormat.Fetched response, AtomicInteger hits) {
+        String target = UPSTREAM + path;
+        return (url, headers) -> {
+            if (!url.toString().equals(target)) {
+                return Optional.empty();
+            }
+            hits.incrementAndGet();
+            return Optional.of(response);
+        };
+    }
+
+    @Test
+    void a_proxied_blob_matching_its_digest_is_cached_and_served() throws IOException {
+        byte[] blob = "the-real-layer".getBytes(StandardCharsets.UTF_8);
+        String digest = "sha256:" + sha256(blob);
+        AtomicInteger hits = new AtomicInteger();
+        ProxyFormat.Fetcher fetcher = counting("/v2/app/blobs/" + digest,
+                new ProxyFormat.Fetched(200, blob, Map.of("Docker-Content-Digest", digest)), hits);
+
+        FakeExchange pull = new FakeExchange("GET", "/v2/app/blobs/" + digest);
+        boolean served = format.proxy(pull, store, UPSTREAM, fetcher);
+
+        assertThat(served).as("the proxy served the blob").isTrue();
+        assertThat(pull.status()).isEqualTo(200);
+        assertThat(pull.responseBytes()).as("the served bytes are the fetched blob").isEqualTo(blob);
+        assertThat(hits.get()).as("the proxy fetched upstream once").isEqualTo(1);
+        assertThat(store.exists("blobs/" + sha256(blob))).as("the blob is cached under its digest").isTrue();
+
+        // The cached blob now serves from the local store - the dispatcher's local-hit path (handle), which never
+        // reaches the proxy leg, so upstream is not touched again.
+        FakeExchange local = new FakeExchange("GET", "/v2/app/blobs/" + digest);
+        format.handle(local, store);
+        assertThat(local.status()).isEqualTo(200);
+        assertThat(local.responseBytes()).as("the cached blob re-serves locally").isEqualTo(blob);
+        assertThat(hits.get()).as("a local hit does not touch upstream").isEqualTo(1);
+    }
+
+    @Test
+    void a_proxied_blob_mismatching_its_digest_is_refused_and_not_cached() throws IOException {
+        byte[] tampered = "tampered-in-transit".getBytes(StandardCharsets.UTF_8);
+        byte[] legit = "what-the-digest-names".getBytes(StandardCharsets.UTF_8);
+        String requested = "sha256:" + sha256(legit); // the client asks for legit; upstream returns tampered bytes
+        AtomicInteger hits = new AtomicInteger();
+        ProxyFormat.Fetcher fetcher = counting("/v2/app/blobs/" + requested,
+                new ProxyFormat.Fetched(200, tampered, Map.of()), hits);
+
+        FakeExchange pull = new FakeExchange("GET", "/v2/app/blobs/" + requested);
+        boolean served = format.proxy(pull, store, UPSTREAM, fetcher);
+
+        assertThat(served).as("a blob whose bytes belie the requested digest is refused").isFalse();
+        assertThat(store.exists("blobs/" + sha256(legit)))
+                .as("nothing is cached under the requested digest").isFalse();
+
+        // A re-pull re-hits upstream, proving the mismatched bytes were never linked under the requested digest.
+        format.proxy(new FakeExchange("GET", "/v2/app/blobs/" + requested), store, UPSTREAM, fetcher);
+        assertThat(hits.get()).as("a re-pull re-hits upstream - nothing was cached").isEqualTo(2);
+    }
+
+    @Test
+    void a_proxied_manifest_by_tag_matching_the_content_digest_is_cached_and_served() throws IOException {
+        byte[] manifest = ("{\"mediaType\":\"" + MANIFEST_TYPE + "\"}").getBytes(StandardCharsets.UTF_8);
+        String digest = "sha256:" + sha256(manifest);
+        AtomicInteger hits = new AtomicInteger();
+        ProxyFormat.Fetcher fetcher = counting("/v2/app/manifests/1.0",
+                new ProxyFormat.Fetched(200, manifest,
+                        Map.of("Content-Type", MANIFEST_TYPE, "Docker-Content-Digest", digest)), hits);
+
+        FakeExchange pull = new FakeExchange("GET", "/v2/app/manifests/1.0",
+                new byte[0], Map.of(), Map.of("Accept", MANIFEST_TYPE));
+        boolean served = format.proxy(pull, store, UPSTREAM, fetcher);
+
+        assertThat(served).as("the proxy served the manifest").isTrue();
+        assertThat(pull.status()).isEqualTo(200);
+        assertThat(pull.responseBytes()).isEqualTo(manifest);
+        assertThat(store.exists("blobs/" + sha256(manifest))).as("the manifest is cached by digest").isTrue();
+        assertThat(store.readVersioned("oci/app/tags/1.0"))
+                .as("the tag is linked to the verified digest").isPresent();
+    }
+
+    @Test
+    void a_proxied_manifest_by_tag_mismatching_the_content_digest_is_refused() throws IOException {
+        byte[] tampered = ("{\"mediaType\":\"tampered\"}").getBytes(StandardCharsets.UTF_8);
+        byte[] legit = ("{\"mediaType\":\"legit\"}").getBytes(StandardCharsets.UTF_8);
+        // Upstream (or a corrupted proxy leg) hands over tampered bytes under a header claiming the legit digest.
+        String claimed = "sha256:" + sha256(legit);
+        AtomicInteger hits = new AtomicInteger();
+        ProxyFormat.Fetcher fetcher = counting("/v2/app/manifests/1.0",
+                new ProxyFormat.Fetched(200, tampered,
+                        Map.of("Content-Type", MANIFEST_TYPE, "Docker-Content-Digest", claimed)), hits);
+
+        FakeExchange pull = new FakeExchange("GET", "/v2/app/manifests/1.0",
+                new byte[0], Map.of(), Map.of("Accept", MANIFEST_TYPE));
+        boolean served = format.proxy(pull, store, UPSTREAM, fetcher);
+
+        assertThat(served).as("a manifest whose bytes belie the Docker-Content-Digest is refused").isFalse();
+        assertThat(store.exists("blobs/" + sha256(tampered))).as("tampered manifest is not cached").isFalse();
+        assertThat(store.readVersioned("oci/app/tags/1.0")).as("the tag is not linked").isEmpty();
+
+        // A re-pull re-hits upstream - nothing was cached or tagged.
+        format.proxy(new FakeExchange("GET", "/v2/app/manifests/1.0",
+                new byte[0], Map.of(), Map.of("Accept", MANIFEST_TYPE)), store, UPSTREAM, fetcher);
+        assertThat(hits.get()).as("a re-pull re-hits upstream - nothing was cached").isEqualTo(2);
     }
 }
