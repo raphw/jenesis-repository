@@ -27,17 +27,30 @@ public interface RepositoryRouting {
     /**
      * The resolved artifact space for a request: the {@code tenant} and {@code repository} it addresses (never
      * {@code null} - the fixed-tenant deployment resolves its configured defaults), the doubly-scoped
-     * {@code root.scope(tenant).scope(repository)} {@link ArtifactStore} the format reads and writes, and the
+     * {@code root.scope(tenant).scope(repository)} {@link ArtifactStore} the format reads and writes, the
      * {@code path} the format matches on (the request URI with the {@code /repository} prefix stripped on the
-     * fixed-tenant deployment, the repository-prefix-stripped path under multi-tenant routing).
+     * fixed-tenant deployment, the repository-prefix-stripped path under multi-tenant routing), and whether the route
+     * is a valid write target ({@link #writable}).
+     *
+     * <p>A {@code writable} route accepts a write (a mutating verb lays out or deletes); a non-writable one answers a
+     * {@code 405} at the controller's write branch before any layout - the seam a multi-tenant routing uses to reject a
+     * write to a read-only repository (a proxy or group view, or one whose router resolved no write target) without a
+     * fork. The fixed-tenant deployment always resolves a writable route, so the free edition is unchanged; the
+     * four-argument convenience constructor keeps that always-writable default for every existing call site.
      */
-    record Route(String tenant, String repository, ArtifactStore store, String path) {
+    record Route(String tenant, String repository, ArtifactStore store, String path, boolean writable) {
 
         public Route {
             Objects.requireNonNull(tenant, "tenant");
             Objects.requireNonNull(repository, "repository");
             Objects.requireNonNull(store, "store");
             Objects.requireNonNull(path, "path");
+        }
+
+        /** A writable route - the always-writable default the fixed-tenant deployment resolves, and the shape every
+         *  existing call site builds. A read-only route is built with the canonical five-argument constructor. */
+        public Route(String tenant, String repository, ArtifactStore store, String path) {
+            this(tenant, repository, store, path, true);
         }
     }
 }

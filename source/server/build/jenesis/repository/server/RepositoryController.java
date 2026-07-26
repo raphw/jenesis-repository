@@ -130,9 +130,26 @@ public class RepositoryController {
                                 UnaryOperator<String> settings,
                                 ArtifactStore root,
                                 RoutedServing routed) {
+        this(routing, dispatcher, importSources, fetcher, batch, settings, root, routed, EdgeHooks.NONE);
+    }
+
+    /** As above, threading an edition's {@link EdgeHooks} into the shared screening edge so a paid edition plugs its
+     *  ingress concerns (tenant binding, a release-immutability {@code 409}, a quarantine-dispatch record, deploy
+     *  observation) into the one free {@link ScreenedDispatch} rather than forking a second deploy controller.
+     *  {@link EdgeHooks#NONE} (the default every convenience constructor above passes) is the free no-op, so the free
+     *  edition's write choreography is byte-for-byte unchanged. */
+    public RepositoryController(RepositoryRouting routing,
+                                FormatDispatcher dispatcher,
+                                List<ImportSourceProvider> importSources,
+                                ProxyFormat.Fetcher fetcher,
+                                BatchIngestion batch,
+                                UnaryOperator<String> settings,
+                                ArtifactStore root,
+                                RoutedServing routed,
+                                EdgeHooks hooks) {
         this.routing = routing;
         this.dispatcher = dispatcher;
-        this.screened = new ScreenedDispatch(dispatcher);
+        this.screened = new ScreenedDispatch(dispatcher, hooks);
         this.importSources = importSources;
         this.fetcher = fetcher;
         this.batch = batch;
@@ -157,6 +174,13 @@ public class RepositoryController {
     public void handle(HttpServletRequest request, HttpServletResponse response) throws IOException {
         RepositoryRouting.Route route = routing.route(request);
         ServletFormatExchange exchange = new ServletFormatExchange(request, response, route.path(), settings);
+        // A write (PUT/POST/PATCH/DELETE) to a route that is not a valid write target is a 405 before any layout - the
+        // seam a multi-tenant routing uses to reject a write to a read-only repository. The fixed-tenant deployment
+        // always resolves a writable route, so the free edition never takes this branch.
+        if (isWrite(request.getMethod()) && !route.writable()) {
+            response.setStatus(405);
+            return;
+        }
         if (batch != null && batch.claims(exchange)) {
             batch.explode(exchange, route.store(), dispatcher);
             return;
@@ -188,6 +212,11 @@ public class RepositoryController {
 
     private static boolean isRead(String method) {
         return "GET".equals(method) || "HEAD".equals(method);
+    }
+
+    /** A mutating verb - the write that a non-writable route refuses with a {@code 405}. */
+    private static boolean isWrite(String method) {
+        return "PUT".equals(method) || "POST".equals(method) || "PATCH".equals(method) || "DELETE".equals(method);
     }
 
     /**

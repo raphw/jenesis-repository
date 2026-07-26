@@ -110,6 +110,7 @@ open module build.jenesis.repository.test {
     requires build.jenesis.repository.importer.index;
     requires build.jenesis;
     requires tools.jackson.databind;
+    requires org.apache.tomcat.embed.core;
     requires java.net.http;
     requires jdk.httpserver;
     requires org.junit.jupiter;
