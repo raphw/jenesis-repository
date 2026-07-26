@@ -118,4 +118,6 @@ open module build.jenesis.repository.test {
     provides build.jenesis.repository.store.PublishInterceptor
             with build.jenesis.repository.test.MarkerInterceptor,
                     build.jenesis.repository.test.CountingInterceptor;
+    provides build.jenesis.repository.store.PublicationObserver
+            with build.jenesis.repository.test.RecordingObserver;
 }

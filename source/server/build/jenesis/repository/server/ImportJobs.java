@@ -2,6 +2,7 @@ package build.jenesis.repository.server;
 
 import module java.base;
 import build.jenesis.repository.importer.ImportSource;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -23,16 +24,35 @@ public final class ImportJobs {
         return UUID.randomUUID().toString();
     }
 
-    /** Start an import in the background, seeded with the given counts (non-zero for a resume), and return at once. */
+    /** Start an import in the background, seeded with the given counts (non-zero for a resume), and return at once.
+     *  The free convenience arm: no edition listener and no job-scope decorator, so the job runs exactly as the free
+     *  import walk does. */
     public void submit(ArtifactStore store, ImportSource source, String jobId, int baseImported, int baseSkipped)
             throws IOException {
-        write(store, jobId, "running", baseImported, baseSkipped, new LinkedHashSet<>(), null, null, null);
-        Thread.ofVirtual().name("import-" + jobId).start(() -> run(store, source, jobId, baseImported, baseSkipped));
+        submit(store, source, jobId, baseImported, baseSkipped, RepositoryImport.Listener.NONE, UnaryOperator.identity());
     }
 
-    private void run(ArtifactStore store, ImportSource source, String jobId, int baseImported, int baseSkipped) {
+    /** As above, with two seams an edition binds around the background job. {@code listener} rides every imported,
+     *  held, rejected and skipped asset (the enterprise controller records a held asset's replay context here);
+     *  {@code jobScope} decorates the job body before it is started on the virtual thread - the seam the enterprise
+     *  controller uses to bind its {@code PublishTenant} around the run, since the import job runs on a fresh
+     *  {@link Thread#ofVirtual() virtual thread} where no tenant is bound and the screen would otherwise resolve the
+     *  deployment-wide policy rather than the tenant's. The default {@link UnaryOperator#identity() identity} leaves
+     *  the free behaviour unchanged. This job's own progress accounting (counts, cursor, status JSON) always runs;
+     *  {@code listener} is notified in addition to it. */
+    public void submit(ArtifactStore store, ImportSource source, String jobId, int baseImported, int baseSkipped,
+                       RepositoryImport.Listener listener, UnaryOperator<Runnable> jobScope) throws IOException {
+        write(store, jobId, "running", baseImported, baseSkipped, 0, 0, new LinkedHashSet<>(), null, null, null);
+        Runnable body = () -> run(store, source, jobId, baseImported, baseSkipped, listener);
+        Thread.ofVirtual().name("import-" + jobId).start(jobScope.apply(body));
+    }
+
+    private void run(ArtifactStore store, ImportSource source, String jobId, int baseImported, int baseSkipped,
+                     RepositoryImport.Listener delegate) {
         AtomicInteger imported = new AtomicInteger(baseImported);
         AtomicInteger skipped = new AtomicInteger(baseSkipped);
+        AtomicInteger held = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
         Set<String> skippedFormats = new LinkedHashSet<>();
         String[] cursor = {null};
         AtomicReference<String> asset = new AtomicReference<>();
@@ -42,24 +62,42 @@ public final class ImportJobs {
                 public void imported(String path) {
                     imported.incrementAndGet();
                     asset.set(path);
+                    delegate.imported(path);
+                }
+
+                @Override
+                public void held(String path, ArtifactDescriptor descriptor, String hash) {
+                    held.incrementAndGet();
+                    delegate.held(path, descriptor, hash);
+                }
+
+                @Override
+                public void rejected(String path, ArtifactDescriptor descriptor) {
+                    rejected.incrementAndGet();
+                    delegate.rejected(path, descriptor);
                 }
 
                 @Override
                 public void skipped(String format) {
                     skipped.incrementAndGet();
                     skippedFormats.add(format);
+                    delegate.skipped(format);
                 }
 
                 @Override
                 public void checkpoint(String reached) throws IOException {
                     cursor[0] = reached;
-                    write(store, jobId, "running", imported.get(), skipped.get(), skippedFormats, reached, asset.get(), null);
+                    write(store, jobId, "running", imported.get(), skipped.get(), held.get(), rejected.get(),
+                            skippedFormats, reached, asset.get(), null);
+                    delegate.checkpoint(reached);
                 }
             });
-            write(store, jobId, "completed", imported.get(), skipped.get(), skippedFormats, null, asset.get(), null);
+            write(store, jobId, "completed", imported.get(), skipped.get(), held.get(), rejected.get(),
+                    skippedFormats, null, asset.get(), null);
         } catch (Exception e) {
             try {
-                write(store, jobId, "failed", imported.get(), skipped.get(), skippedFormats, cursor[0], asset.get(),
+                write(store, jobId, "failed", imported.get(), skipped.get(), held.get(), rejected.get(),
+                        skippedFormats, cursor[0], asset.get(),
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             } catch (IOException suppressed) {
                 throw new UncheckedIOException(suppressed);
@@ -88,16 +126,20 @@ public final class ImportJobs {
             formats.add(format.asString(null));
         }
         return Optional.of(new Snapshot(state.path("state").asString(null), state.path("imported").asInt(0),
-                state.path("skipped").asInt(0), formats, state.path("cursor").asString(null),
+                state.path("skipped").asInt(0), state.path("held").asInt(0), state.path("rejected").asInt(0),
+                formats, state.path("cursor").asString(null),
                 state.path("asset").asString(null), state.path("error").asString(null)));
     }
 
-    private void write(ArtifactStore store, String jobId, String state, int imported, int skipped,
-                       Set<String> skippedFormats, String cursor, String asset, String error) throws IOException {
+    private void write(ArtifactStore store, String jobId, String state, int imported, int skipped, int held,
+                       int rejected, Set<String> skippedFormats, String cursor, String asset, String error)
+            throws IOException {
         Map<String, Object> job = new LinkedHashMap<>();
         job.put("state", state);
         job.put("imported", imported);
         job.put("skipped", skipped);
+        job.put("held", held);
+        job.put("rejected", rejected);
         job.put("skippedFormats", new ArrayList<>(skippedFormats));
         job.put("cursor", cursor);
         job.put("asset", asset);
@@ -105,9 +147,10 @@ public final class ImportJobs {
         store.write("imports/" + jobId, new ByteArrayInputStream(JSON.writeValueAsBytes(job)));
     }
 
-    /** A parsed view of a job's persisted state; {@code asset} is the source path of the most recently imported
-     *  asset (which one the walk has reached), {@code null} before the first asset. */
-    public record Snapshot(String state, int imported, int skipped, List<String> skippedFormats,
-                           String cursor, String asset, String error) {
+    /** A parsed view of a job's persisted state; {@code held} and {@code rejected} are the assets the import edge
+     *  screened to quarantine and rejection, {@code asset} is the source path of the most recently imported asset
+     *  (which one the walk has reached), {@code null} before the first asset. */
+    public record Snapshot(String state, int imported, int skipped, int held, int rejected,
+                           List<String> skippedFormats, String cursor, String asset, String error) {
     }
 }

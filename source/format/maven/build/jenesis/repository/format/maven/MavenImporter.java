@@ -2,6 +2,7 @@ package build.jenesis.repository.format.maven;
 
 import module java.base;
 import build.jenesis.repository.format.RepositoryImporter;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 
 /**
@@ -17,6 +18,15 @@ public final class MavenImporter implements RepositoryImporter {
     @Override
     public boolean handles(String format) {
         return format.equals("maven2") || format.equals("maven");
+    }
+
+    @Override
+    public Optional<ArtifactDescriptor> describe(String sourcePath) {
+        String relative = sourcePath.startsWith("/") ? sourcePath.substring(1) : sourcePath;
+        // The coordinate-enriched descriptor MavenFormat parses from the /maven/ path an asset lands on, so the edge
+        // screens against the real Maven coordinate/version. Empty for a generated maven-metadata.xml (which the import
+        // walk then streams straight to importArtifact, where it is skipped) - the format owns that rule in one place.
+        return new MavenFormat().describe("/maven/" + relative);
     }
 
     @Override

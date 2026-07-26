@@ -2,6 +2,7 @@ package build.jenesis.repository.format.oci;
 
 import module java.base;
 import build.jenesis.repository.format.RepositoryImporter;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -19,6 +20,14 @@ public final class OciImporter implements RepositoryImporter {
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+
+    @Override
+    public Optional<ArtifactDescriptor> describe(String sourcePath) {
+        // Structural exception: an OCI push is not a single-body write - a manifest references blobs pushed as their
+        // own assets - so OCI owns its screening choke point through its own manifest choreography (T26.7), not the
+        // import edge. Empty tells the walk to lay each OCI asset out unscreened here; the manifest gate screens it.
+        return Optional.empty();
+    }
 
     @Override
     public boolean handles(String format) {
