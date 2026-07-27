@@ -14,4 +14,13 @@ import build.jenesis.repository.store.ArtifactStore;
 public interface ModuleView {
 
     void publish(String moduleName, String version, String hash, ArtifactStore store) throws IOException;
+
+    /**
+     * Retract the {@code /module/} view {@link #publish} linked for a module - the exact counterpart of a publish, so
+     * an artifact retracted from its Maven coordinate (a proxied jar that failed its upstream checksum) is unreachable
+     * by module name too, not merely by coordinate. The same view module that owns the publish-side path derivation
+     * owns its removal, so the Maven format never hardcodes a parallel {@code /module/} path. Best-effort per pointer:
+     * a view the module never gained is a no-op.
+     */
+    void unpublish(String moduleName, String version, ArtifactStore store) throws IOException;
 }

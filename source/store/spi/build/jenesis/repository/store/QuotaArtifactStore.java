@@ -8,9 +8,13 @@ import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilitySource;
 
 /**
- * An {@link ArtifactStore} that caps the total stored content bytes of the scope it wraps. Only content blobs
- * ({@code blobs/<hash>}) count against the limit - the small pointers and metadata a publish also writes are
- * negligible and pass through unmetered. Usage is a running counter ({@code quota/used}) kept on a {@code meter}
+ * An {@link ArtifactStore} that caps the total stored content bytes of the scope it wraps. Content counts against
+ * the limit whether it is a finished content blob ({@code blobs/<hash>}) or the still-in-flight chunks of an OCI
+ * chunked-upload session staged under {@code oci/uploads/} before they are finalized into a blob; the small pointers
+ * and metadata a publish also writes are negligible and pass through unmetered. Metering the upload staging closes
+ * the bypass where an authenticated writer opens chunked-upload sessions and never finalizes them: those bytes are
+ * really stored, but before they land in {@code blobs/} they would otherwise grow the store without ever touching the
+ * namespace the meter watched. Usage is a running counter ({@code quota/used}) kept on a {@code meter}
  * store, maintained with its compare-and-set so concurrent writers converge, and seedable from the live blobs with
  * {@link #recompute} (which a periodic reconcile corrects any drift against).
  *
@@ -38,6 +42,10 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(QuotaArtifactStore.class);
 
     private static final String BLOBS = "blobs/";
+    // The OCI chunked-upload staging: an un-finalized session's chunks are real stored content, so they count too.
+    // A deliberate, documented cross-format coupling - the same key-convention sharing the formats already lean on -
+    // rather than let staged bytes bypass the cap until (if ever) they are finalized into a blob.
+    private static final String UPLOADS = "oci/uploads/";
     private static final String USED = "quota/used";
     private static final int PAGE = 1000;
 
@@ -111,10 +119,12 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         }
     }
 
-    /** Sum the live blobs directly under the wrapped scope and store the total as the authoritative counter,
-     *  paging through the flat {@code blobs/} namespace via {@link #page} so a millions-entry scope never
-     *  materialises as one list. Use this only when the meter is the scope that holds the blobs (the default,
-     *  single-scope wrapping). */
+    /** Sum the live content directly under the wrapped scope and store the total as the authoritative counter: the
+     *  flat {@code blobs/} namespace plus the in-flight {@code oci/uploads/} staging, each paged via {@link #page} so
+     *  a millions-entry scope never materialises as one list. Summing the staging as well keeps a reseed exactly
+     *  consistent with the live write/delete path, so a reconcile does not silently drop an un-finalized session's
+     *  bytes and reopen the bypass the metering closes. Use this only when the meter is the scope that holds the
+     *  content (the default, single-scope wrapping). */
     public long recompute() throws IOException {
         long total = 0L;
         String after = "";
@@ -132,7 +142,44 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
             }
             after = names.getLast();
         }
+        total += uploadBytes();
         store(total);
+        return total;
+    }
+
+    /** Sum the staged chunk bytes of every un-finalized OCI upload session under {@code oci/uploads/}, paging both
+     *  the session level and each session's chunk level rather than listing them. The staging is small (a handful of
+     *  sessions, each itself bounded by this quota) and shallow (session then numbered chunks), so this stays cheap
+     *  next to the blob pass while counting the same bytes the live path meters. */
+    private long uploadBytes() throws IOException {
+        long total = 0L;
+        String afterSession = "";
+        while (true) {
+            List<String> sessions = new ArrayList<>();
+            delegate.page("oci/uploads", afterSession, PAGE, sessions::add);
+            for (String session : sessions) {
+                String prefix = UPLOADS + session;
+                String afterChunk = "";
+                while (true) {
+                    List<String> chunks = new ArrayList<>();
+                    delegate.page(prefix, afterChunk, PAGE, chunks::add);
+                    for (String chunk : chunks) {
+                        long size = delegate.size(prefix + "/" + chunk);
+                        if (size > 0) {
+                            total += size;
+                        }
+                    }
+                    if (chunks.size() < PAGE) {
+                        break;
+                    }
+                    afterChunk = chunks.getLast();
+                }
+            }
+            if (sessions.size() < PAGE) {
+                break;
+            }
+            afterSession = sessions.getLast();
+        }
         return total;
     }
 
@@ -149,13 +196,27 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         }
     }
 
+    /** Whether a key names content that consumes the quota: a finished blob, or the in-flight chunks of an OCI
+     *  chunked-upload session staged under {@code oci/uploads/}. Pointers and format sidecars are not metered. */
+    private static boolean metered(String key) {
+        return key.startsWith(BLOBS) || key.startsWith(UPLOADS);
+    }
+
     @Override
     public void write(String key, InputStream in) throws IOException {
-        if (limit <= 0 || !key.startsWith(BLOBS)) {
+        if (limit <= 0 || !metered(key)) {
             delegate.write(key, in);
             return;
         }
         boolean fresh = !delegate.exists(key);
+        // A content-addressed blob whose key (blobs/<hash>) already resolves is byte-for-byte the content being
+        // written: there is nothing to store, so skip the delegate write entirely rather than re-upload (and re-spool)
+        // identical bytes. The dedup is probed here, before the body is ever streamed to the backend, so a re-put of
+        // stored content costs one existence check and reads none of the body. Staged oci/uploads/ chunks are not
+        // content-addressed, so they keep their overwrite semantics and fall through to the write below.
+        if (!fresh && key.startsWith(BLOBS)) {
+            return;
+        }
         if (fresh && used() >= limit) {
             throw new QuotaExceededException(limit, used());
         }
@@ -173,9 +234,12 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
         if (limit <= 0) {
             return delegate.writeBlob(in);
         }
-        // The content-addressed key is only known once the stream is digested, so buffer to a temp file while
-        // hashing, then route the stored bytes through this store's own metered write, which enforces the quota and
-        // counts the blob exactly as a keyed publish would (freshness, refusal at the limit, usage adjustment).
+        // The content-addressed key is only known once the stream is digested, so buffer to a temp file (on disk, not
+        // in heap) while hashing, then route the stored bytes through this store's own metered write. That keyed write
+        // dedups an already-stored blob (no re-upload, no second spool) and otherwise counts it exactly as a keyed
+        // publish would - refusing a fresh blob at the ceiling. The ceiling check cannot be pulled ahead of the spool:
+        // the hash is unknown until the body is read, so a re-deployed (byte-identical, already-stored) blob - which
+        // adds no bytes and must be admitted even at a full store - is indistinguishable from a fresh one until then.
         Path temporary = Files.createTempFile("quota-blob-", null);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -196,7 +260,7 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
 
     @Override
     public void delete(String key) throws IOException {
-        if (limit <= 0 || !key.startsWith(BLOBS)) {
+        if (limit <= 0 || !metered(key)) {
             delegate.delete(key);
             return;
         }

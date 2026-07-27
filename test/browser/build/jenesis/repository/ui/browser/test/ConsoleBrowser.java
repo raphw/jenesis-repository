@@ -87,7 +87,7 @@ final class ConsoleBrowser {
             }
             sleep();
         }
-        throw new AssertionError("Timed out after " + TIMEOUT + " waiting for: " + describe, last);
+        throw new BrowserTimeoutException("Timed out after " + TIMEOUT + " waiting for: " + describe, last);
     }
 
     /** Wait until an element matching {@code by} is present and displayed, and return it. */

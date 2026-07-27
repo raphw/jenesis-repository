@@ -62,11 +62,94 @@ class QuotaArtifactStoreTest {
     }
 
     @Test
+    void in_flight_upload_chunks_count_toward_the_quota() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
+        store.write("oci/uploads/session/0", bytes(300));
+        store.write("oci/uploads/session/1", bytes(200));
+        assertThat(store.used()).as("staged, un-finalized chunks are stored content and count").isEqualTo(500);
+        // The session's start marker lives in its own namespace, is negligible metadata, and is not metered.
+        store.write("oci/upload-sessions/session", bytes(50));
+        assertThat(store.used()).as("the session marker is not metered").isEqualTo(500);
+    }
+
+    @Test
+    void an_open_upload_session_cannot_bypass_the_quota_and_is_refused_at_the_limit() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 500);
+        store.write("oci/uploads/session/0", bytes(500));
+        assertThatThrownBy(() -> store.write("oci/uploads/session/1", bytes(1)))
+                .as("an un-finalized session cannot grow storage past the cap")
+                .isInstanceOf(QuotaExceededException.class);
+        assertThat(store.exists("oci/uploads/session/1")).as("no partial bytes staged").isFalse();
+        assertThat(store.used()).isEqualTo(500);
+    }
+
+    @Test
+    void reaping_an_upload_session_releases_its_bytes_from_the_counter() throws IOException {
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
+        store.write("oci/uploads/session/0", bytes(400));
+        assertThat(store.used()).isEqualTo(400);
+        store.delete("oci/uploads/session/0");
+        assertThat(store.used()).as("a reaped chunk's bytes leave the counter, converging the meter").isZero();
+    }
+
+    @Test
+    void recompute_seeds_usage_from_blobs_and_in_flight_upload_staging() throws IOException {
+        ArtifactStore raw = delegate();
+        raw.write("blobs/aaa", bytes(300));
+        raw.write("oci/uploads/s1/0", bytes(200));
+        raw.write("oci/uploads/s1/1", bytes(100));
+        raw.write("oci/uploads/s2/0", bytes(50));
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 5000);
+        assertThat(store.recompute()).as("blobs plus every staged chunk, so a reconcile keeps the staging counted")
+                .isEqualTo(650);
+        assertThat(store.used()).isEqualTo(650);
+    }
+
+    @Test
     void a_re_written_blob_does_not_double_count() throws IOException {
         QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 1000);
         store.write("blobs/aaa", bytes(300));
         store.write("blobs/aaa", bytes(300));
         assertThat(store.used()).isEqualTo(300);
+    }
+
+    @Test
+    void a_re_written_blob_is_not_re_uploaded_to_the_delegate() throws IOException {
+        // A content-addressed blob already stored is byte-for-byte identical to the content being written; the quota
+        // store must dedup it before touching the backend - the delegate sees exactly one write for the key, never a
+        // wasteful re-upload (and never a second temp spool) of the same bytes.
+        CountingWriteDelegate raw = new CountingWriteDelegate(delegate());
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 1000);
+        store.write("blobs/aaa", bytes(300));
+        store.write("blobs/aaa", bytes(300));
+        assertThat(raw.writes("blobs/aaa")).as("the already-stored blob is not re-uploaded").isEqualTo(1);
+        assertThat(store.used()).isEqualTo(300);
+    }
+
+    @Test
+    void a_streamed_dedup_blob_probes_before_spooling_and_is_not_re_uploaded() throws IOException {
+        // The streaming write buffers once to learn the hash, then routes through the keyed write, which dedups on
+        // the hash: identical content is stored to the delegate exactly once, never re-uploaded on a second call.
+        CountingWriteDelegate raw = new CountingWriteDelegate(delegate());
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 1000);
+        String hash = store.writeBlob(bytes(300));
+        assertThat(store.writeBlob(bytes(300))).as("identical content dedupes to one blob").isEqualTo(hash);
+        assertThat(raw.writes("blobs/" + hash)).as("the streamed blob is stored once, never re-uploaded").isEqualTo(1);
+        assertThat(store.used()).isEqualTo(300);
+    }
+
+    @Test
+    void a_deduped_streamed_redeploy_is_admitted_even_at_a_full_store() throws IOException {
+        // A store filled exactly to its ceiling still admits a re-deploy of already-stored content: the redeploy is
+        // byte-identical, adds no bytes, and dedupes to the stored blob. The ceiling check cannot pre-empt the body -
+        // the hash (hence the dedup) is only known once the stream is read - so a full store must not 507 a redeploy.
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 500);
+        String hash = store.writeBlob(bytes(500));
+        assertThat(store.used()).as("the store is now exactly at its ceiling").isEqualTo(500);
+        assertThat(store.writeBlob(bytes(500))).as("the redeploy dedupes to the stored blob").isEqualTo(hash);
+        assertThat(store.used()).as("a deduped redeploy adds no bytes").isEqualTo(500);
+        // A fresh (different) streamed write at the same full store is still refused.
+        assertThatThrownBy(() -> store.writeBlob(bytes(1))).isInstanceOf(QuotaExceededException.class);
     }
 
     @Test
@@ -153,7 +236,12 @@ class QuotaArtifactStoreTest {
         QuotaArtifactStore store = new QuotaArtifactStore(new PagingDelegate(raw, pages), 3000);
         assertThat(store.recompute()).as("every live blob summed across page boundaries").isEqualTo(2001);
         assertThat(store.used()).isEqualTo(2001);
-        assertThat(pages).as("bounded pages, resumed across the namespace").hasSize(3).containsOnly(1000);
+        // Three bounded pages resume across the 2001-blob namespace, plus one bounded probe of the (here empty)
+        // oci/uploads staging the reseed also sums - every access is a page() with the bound, never an unbounded
+        // list() (PagingDelegate.list() throws), so the "never materialise as one list" guarantee still holds and
+        // now covers the staging walk too.
+        assertThat(pages).as("bounded pages only - blob namespace resumed plus the staging probe, never a list")
+                .hasSize(4).containsOnly(1000);
     }
 
     /** Forwards to a real store but fails {@link ArtifactStore#delete} for one key, standing in for a delete that
@@ -202,6 +290,81 @@ class QuotaArtifactStoreTest {
         @Override
         public long size(String key) throws IOException {
             return delegate.size(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
+    }
+
+    /** Forwards to a real store but tallies every {@link ArtifactStore#write} per key, so a test can prove an
+     *  already-stored content blob is deduped away rather than re-uploaded (its key stays at a single write). */
+    private record CountingWriteDelegate(ArtifactStore delegate, java.util.Map<String, Integer> counts)
+            implements ArtifactStore {
+
+        CountingWriteDelegate(ArtifactStore delegate) {
+            this(delegate, new java.util.HashMap<>());
+        }
+
+        int writes(String key) {
+            return counts.getOrDefault(key, 0);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            counts.merge(key, 1, Integer::sum);
+            delegate.write(key, in);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
         }
 
         @Override

@@ -176,24 +176,53 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
      *  the stored blob into this layout, so a body reaching {@code layout} is already accepted and there is no verdict
      *  to map - the redundant format-embedded screen pass is dropped, the essential link (what {@link #located} serves
      *  over) is kept. The restreamed body dedupes to the same {@code blobs/<hash>}, so reading the module name back is
-     *  identical to before. */
-    public static void layout(ArtifactStore store, String path, InputStream body) throws IOException {
+     *  identical to before. Returns the content-addressed blob hash so a caller that must undo the layout (a proxy
+     *  fetch whose bytes fail the upstream checksum, T4.2) can retract the exact views this linked. */
+    public static String layout(ArtifactStore store, String path, InputStream body) throws IOException {
         Publication publication = new Publication(store);
         String hash = publication.storeBlob(body);
         publication.link(path, hash);
         String[] coordinate = JavaLayout.mavenCoordinate(path);
         if (!path.endsWith(".jar") || coordinate == null) {
-            return;
+            return hash;
         }
-        String module;
-        try (InputStream in = store.open("blobs/" + hash)) {
-            module = JavaLayout.moduleName(in);
-        }
+        String module = moduleName(store, hash);
         if (module == null) {
-            return;
+            return hash;
         }
         for (ModuleView view : MODULE_VIEWS) {
             view.publish(module, coordinate[2], hash, store);
+        }
+        return hash;
+    }
+
+    /**
+     * Retract a proxied artifact whose fetched bytes failed the upstream SHA-1 check from every coordinate it was
+     * linked under: the {@code /maven/} pointer and - reusing the very cross-view seam the layout path linked - the
+     * {@code /module/} view(s) a modular jar gained, so a tampered jar is unreachable by module name as well as by its
+     * Maven coordinate (a retracted-for-tampering artifact must not resolve under any coordinate). The module name is
+     * read back from the just-stored blob exactly as the layout cross-link read it, so the retraction acts on exactly
+     * the views the layout created rather than deriving a parallel {@code /module/} path. The orphaned blob is left
+     * for a later garbage collection once no pointer references it.
+     */
+    private static void retract(ArtifactStore store, String path, String hash) throws IOException {
+        String[] coordinate = JavaLayout.mavenCoordinate(path);
+        if (path.endsWith(".jar") && coordinate != null) {
+            String module = moduleName(store, hash);
+            if (module != null) {
+                for (ModuleView view : MODULE_VIEWS) {
+                    view.unpublish(module, coordinate[2], store);
+                }
+            }
+        }
+        new Publication(store).unpublish(path);
+    }
+
+    /** The module name the content-addressed blob {@code hash} declares, or null when the blob is gone or the jar is
+     *  non-modular - the single read the layout cross-link and its retraction share, so both act on the same module. */
+    private static String moduleName(ArtifactStore store, String hash) throws IOException {
+        try (InputStream in = store.open("blobs/" + hash)) {
+            return JavaLayout.moduleName(in);
         }
     }
 
@@ -260,10 +289,13 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
                 // between the upstream and here is never left cached and served. The digest is computed as the blob
                 // streams to storage; the tiny checksum sibling is fetched afterwards, so it never delays the artifact.
                 MessageDigest sha1 = sha1();
-                layout(store, path, new DigestInputStream(download.body(), sha1));
+                String hash = layout(store, path, new DigestInputStream(download.body(), sha1));
                 String expected = upstreamSha1(fetcher, URI.create(prefix + rest + ".sha1"));
                 if (expected != null && !expected.equalsIgnoreCase(HexFormat.of().formatHex(sha1.digest()))) {
-                    new Publication(store).unpublish(path);
+                    // Retract from BOTH coordinates: the /maven/ pointer and the /module/ view(s) the layout above
+                    // cross-linked for a modular jar - otherwise a tampered modular jar, retracted from its Maven
+                    // coordinate, would still serve by module name.
+                    retract(store, path, hash);
                     return false;
                 }
             }

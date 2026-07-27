@@ -122,6 +122,75 @@ class OciFormatTest {
     }
 
     @Test
+    void a_stale_un_finalized_upload_session_is_reaped_after_its_ttl() throws IOException {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
+
+        // Open a chunked session and stream a chunk into it, but never finalize (no PUT) - the leak an authenticated
+        // writer uses to grow stored bytes past the quota.
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(begin, store);
+        String id = begin.responseHeader("Docker-Upload-UUID");
+        FakeExchange patch = new FakeExchange("PATCH", "/v2/app/blobs/uploads/" + id,
+                "half-a-layer".getBytes(StandardCharsets.UTF_8));
+        reaping.handle(patch, store);
+        assertThat(store.list("oci/uploads/" + id)).as("the chunk is staged").isNotEmpty();
+
+        // Before the TTL elapses a reap spares the still-live session.
+        clock.advance(Duration.ofHours(23));
+        assertThat(reaping.reap(store)).isZero();
+        assertThat(store.list("oci/uploads/" + id)).isNotEmpty();
+
+        // Past the TTL the abandoned session - staged chunks and start marker both - is swept.
+        clock.advance(Duration.ofHours(2));
+        assertThat(reaping.reap(store)).isEqualTo(1);
+        assertThat(store.list("oci/uploads/" + id)).as("the staged chunks are gone").isEmpty();
+        assertThat(store.list("oci/upload-sessions")).as("the start marker is gone").doesNotContain(id);
+    }
+
+    @Test
+    void a_new_upload_lazily_reaps_a_stale_session_without_a_scheduler() throws IOException {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
+
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(begin, store);
+        String stale = begin.responseHeader("Docker-Upload-UUID");
+        reaping.handle(new FakeExchange("PATCH", "/v2/app/blobs/uploads/" + stale,
+                "orphan".getBytes(StandardCharsets.UTF_8)), store);
+
+        clock.advance(Duration.ofHours(25));
+        // A fresh POST sweeps the abandoned session on the upload path itself - the negative-cache lazy-sweep idiom.
+        FakeExchange next = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(next, store);
+        assertThat(next.status()).isEqualTo(202);
+        assertThat(store.list("oci/uploads/" + stale)).as("the stale session was reaped on the new upload").isEmpty();
+    }
+
+    @Test
+    void reaping_never_touches_a_finalized_or_reserved_namespace() throws IOException {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
+
+        // A completed chunked push leaves no session behind, so a much-later reap has nothing to sweep and the
+        // finalized blob and its catalog remain untouched.
+        byte[] full = "hello world".getBytes(StandardCharsets.UTF_8);
+        String hex = sha256(full);
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        reaping.handle(begin, store);
+        String id = begin.responseHeader("Docker-Upload-UUID");
+        reaping.handle(new FakeExchange("PUT", "/v2/app/blobs/uploads/" + id, full,
+                Map.of("digest", "sha256:" + hex), Map.of()), store);
+        assertThat(store.list("oci/upload-sessions")).as("finalizing cleared the session marker").doesNotContain(id);
+
+        clock.advance(Duration.ofDays(30));
+        assertThat(reaping.reap(store)).isZero();
+        FakeExchange get = new FakeExchange("GET", "/v2/app/blobs/sha256:" + hex);
+        reaping.handle(get, store);
+        assertThat(get.status()).as("the finalized blob is untouched by the reaper").isEqualTo(200);
+    }
+
+    @Test
     void a_manifest_is_pushed_and_pulled_by_tag_and_by_digest() throws IOException {
         byte[] manifest = "{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\"}"
                 .getBytes(StandardCharsets.UTF_8);
@@ -188,6 +257,64 @@ class OciFormatTest {
                 Map.of("digest", "sha256:" + sha256(blob)), Map.of());
         format.handle(post, store);
         assertThat(post.status()).isEqualTo(201);
+    }
+
+    /** Mark a manifest's stored blob withheld through the same {@code withheld/<hash>} marker the blob and manifest
+     *  serve paths screen on, so a pull of it 404s - the setup a held-image catalog/tags/list disclosure test asserts
+     *  against. */
+    private void withhold(byte[] manifest) throws IOException {
+        store.write("withheld/" + sha256(manifest), new ByteArrayInputStream(new byte[0]));
+    }
+
+    @Test
+    void a_fully_withheld_image_is_absent_from_the_catalog_and_its_tag_from_tags_list() throws IOException {
+        byte[] kept = "{\"schemaVersion\":2,\"n\":\"kept\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] held = "{\"schemaVersion\":2,\"n\":\"held\"}".getBytes(StandardCharsets.UTF_8);
+        push("kept", "1.0", kept);
+        push("held", "1.0", held);
+
+        // The held image's only manifest is withheld: a pull by tag already 404s (the serve path's withheld screen).
+        withhold(held);
+        FakeExchange pull = new FakeExchange("GET", "/v2/held/manifests/1.0");
+        format.handle(pull, store);
+        assertThat(pull.status()).as("a withheld manifest 404s on a pull").isEqualTo(404);
+
+        // The catalog must not disclose the held image's name - it has no surviving tag - while the kept one remains.
+        FakeExchange catalog = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(catalog, store);
+        assertThat(catalog.status()).isEqualTo(200);
+        assertThat(catalog.responseText()).isEqualTo("{\"repositories\":[\"kept\"]}");
+
+        // The held image's tags/list must not disclose the withheld tag (its existence included).
+        FakeExchange heldTags = new FakeExchange("GET", "/v2/held/tags/list");
+        format.handle(heldTags, store);
+        assertThat(heldTags.status()).isEqualTo(200);
+        assertThat(heldTags.responseText()).isEqualTo("{\"name\":\"held\",\"tags\":[]}");
+
+        // The non-withheld image still lists normally.
+        FakeExchange keptTags = new FakeExchange("GET", "/v2/kept/tags/list");
+        format.handle(keptTags, store);
+        assertThat(keptTags.responseText()).isEqualTo("{\"name\":\"kept\",\"tags\":[\"1.0\"]}");
+    }
+
+    @Test
+    void a_partially_withheld_image_stays_catalogued_with_only_its_surviving_tags() throws IOException {
+        byte[] shown = "{\"schemaVersion\":2,\"t\":\"shown\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] hidden = "{\"schemaVersion\":2,\"t\":\"hidden\"}".getBytes(StandardCharsets.UTF_8);
+        push("app", "shown", shown);
+        push("app", "hidden", hidden);
+
+        // One of the image's two tags is withheld; the image keeps a surviving tag, so it stays catalogued.
+        withhold(hidden);
+
+        FakeExchange catalog = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(catalog, store);
+        assertThat(catalog.responseText()).isEqualTo("{\"repositories\":[\"app\"]}");
+
+        // tags/list shows the surviving tag but drops the withheld one.
+        FakeExchange tags = new FakeExchange("GET", "/v2/app/tags/list");
+        format.handle(tags, store);
+        assertThat(tags.responseText()).isEqualTo("{\"name\":\"app\",\"tags\":[\"shown\"]}");
     }
 
     /** A fetcher answering from {@link OciFormat#handle} itself, so the walk consumes exactly what the format
