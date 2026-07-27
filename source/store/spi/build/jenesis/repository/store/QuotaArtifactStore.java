@@ -253,6 +253,12 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
     }
 
     @Override
+    public Optional<URI> presign(String key, Duration ttl) {
+        // A read-only capability: a quota decorator has no reason to block a presigned GET, so delegate like read/size.
+        return delegate.presign(key, ttl);
+    }
+
+    @Override
     public void read(String key, OutputStream out) throws IOException {
         delegate.read(key, out);
     }

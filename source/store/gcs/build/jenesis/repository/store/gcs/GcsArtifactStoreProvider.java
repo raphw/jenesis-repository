@@ -13,6 +13,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
 import java.util.Set;
@@ -73,6 +74,14 @@ public final class GcsArtifactStoreProvider implements ArtifactStoreProvider {
                 .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
                 .serviceConfiguration(S3Configuration.builder().chunkedEncodingEnabled(false).build())
                 .build();
+        // The presigner mints direct-fetch GET URLs (ArtifactStore.presign) over the same GCS S3-compatible endpoint,
+        // region, credentials and path-style as the client, so a presigned URL points at the same host the client uses.
+        S3Presigner presigner = S3Presigner.builder()
+                .region(Region.of(region))
+                .credentialsProvider(credentials(config))
+                .endpointOverride(override)
+                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                .build();
         try {
             s3.createBucket(b -> b.bucket(bucket));
         } catch (S3Exception ignored) {
@@ -81,7 +90,7 @@ public final class GcsArtifactStoreProvider implements ArtifactStoreProvider {
             // credentials may not permit creation; the operations below surface a clear error if the
             // bucket is truly unusable.
         }
-        return new GcsArtifactStore(s3, bucket);
+        return new GcsArtifactStore(s3, presigner, bucket);
     }
 
     /**

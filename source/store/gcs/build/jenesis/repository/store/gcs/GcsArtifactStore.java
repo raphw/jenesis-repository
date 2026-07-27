@@ -11,6 +11,8 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 
 /**
  * An {@link ArtifactStore} backed by a Google Cloud Storage bucket over GCS's S3-compatible XML API
@@ -35,22 +37,48 @@ public final class GcsArtifactStore implements ArtifactStore {
     private static final String IF_GENERATION_MATCH = "x-goog-if-generation-match";
 
     private final S3Client s3;
+    private final S3Presigner presigner;
     private final String bucket;
     private final String keyPrefix;
 
     public GcsArtifactStore(S3Client s3, String bucket) {
-        this(s3, bucket, "");
+        this(s3, null, bucket, "");
     }
 
-    private GcsArtifactStore(S3Client s3, String bucket, String keyPrefix) {
+    /** As {@link #GcsArtifactStore(S3Client, String)} but with a {@link S3Presigner} - built by the provider from the
+     *  same region, credentials and endpoint as {@code s3} - so {@link #presign} can mint a direct-fetch GET URL.
+     *  GCS's S3-compatible XML API signs identically to S3, so this is the same presigner path. */
+    public GcsArtifactStore(S3Client s3, S3Presigner presigner, String bucket) {
+        this(s3, presigner, bucket, "");
+    }
+
+    private GcsArtifactStore(S3Client s3, S3Presigner presigner, String bucket, String keyPrefix) {
         this.s3 = s3;
+        this.presigner = presigner;
         this.bucket = bucket;
         this.keyPrefix = keyPrefix;
     }
 
     @Override
     public ArtifactStore scope(String tenant) {
-        return new GcsArtifactStore(s3, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/");
+        return new GcsArtifactStore(s3, presigner, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/");
+    }
+
+    @Override
+    public Optional<URI> presign(String key, Duration ttl) {
+        // GCS's S3-compatible XML API honours SigV4 presigned GET URLs exactly as S3 does, so this is the identical
+        // presigner path; with no presigner configured, degrade to streaming.
+        if (presigner == null) {
+            return Optional.empty();
+        }
+        try {
+            PresignedGetObjectRequest presigned = presigner.presignGetObject(b -> b
+                    .signatureDuration(ttl)
+                    .getObjectRequest(r -> r.bucket(bucket).key(keyPrefix + key)));
+            return Optional.of(presigned.url().toURI());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException("Presigned GCS URL is not a valid URI for " + key, e);
+        }
     }
 
     @Override

@@ -51,6 +51,11 @@ public final class ReadOnlyArtifactStore implements ArtifactStore {
     }
 
     @Override
+    public Optional<URI> presign(String key, Duration ttl) {
+        return delegate.presign(key, ttl);
+    }
+
+    @Override
     public List<String> list(String prefix) {
         return delegate.list(prefix);
     }

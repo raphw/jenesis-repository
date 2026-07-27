@@ -50,6 +50,19 @@ public interface ArtifactStore {
      */
     InputStream open(String key) throws IOException;
 
+    /**
+     * A short-lived URL a client can fetch this key from directly (a presigned object-store GET), or empty when
+     * this backend cannot mint one (the filesystem default) - the caller then streams as today. The object-store
+     * backends sign a {@code GET} for the fully-qualified object (the scope's {@link #scope key prefix} plus
+     * {@code key}) valid for {@code ttl}, so a serve plane can 307 the client at the bucket instead of moving the
+     * bytes through the JVM; every other store (and every decorator that does not delegate) answers empty, and the
+     * caller falls back to {@link #read}. A URL is a bearer capability for its lifetime, so {@code ttl} should be
+     * short and the caller must have already authorized the read before minting one.
+     */
+    default Optional<URI> presign(String key, Duration ttl) {
+        return Optional.empty();
+    }
+
     /** Atomically store the blob from {@code in}, so a reader never observes a partial write. */
     void write(String key, InputStream in) throws IOException;
 

@@ -10,7 +10,9 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
 import java.util.Set;
@@ -57,19 +59,27 @@ public final class S3ArtifactStoreProvider implements ArtifactStoreProvider {
                 .region(Region.of(region))
                 .httpClient(UrlConnectionHttpClient.create())
                 .credentialsProvider(credentials(config));
+        // The presigner mints direct-fetch GET URLs (ArtifactStore.presign); it must sign against the same region,
+        // credentials and endpoint/path-style as the client, or a presigned URL would point at the wrong host.
+        S3Presigner.Builder presignerBuilder = S3Presigner.builder()
+                .region(Region.of(region))
+                .credentialsProvider(credentials(config));
         String endpoint = config.apply("JENESIS_AWS_ENDPOINT");
         if (endpoint != null && !endpoint.isBlank()) {
             URI override = secureEndpoint(endpoint, config.apply("JENESIS_AWS_ALLOW_INSECURE_ENDPOINT"));
             builder.endpointOverride(override).forcePathStyle(true);
+            presignerBuilder.endpointOverride(override)
+                    .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build());
         }
         S3Client s3 = builder.build();
+        S3Presigner presigner = presignerBuilder.build();
         try {
             s3.createBucket(b -> b.bucket(bucket));
         } catch (S3Exception ignored) {
             // The bucket may already exist or the credentials may not permit creation; the operations
             // below surface a clear error if the bucket is truly unusable.
         }
-        return new S3ArtifactStore(s3, bucket);
+        return new S3ArtifactStore(s3, presigner, bucket);
     }
 
     /**

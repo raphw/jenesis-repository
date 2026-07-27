@@ -5,6 +5,7 @@ import build.jenesis.repository.store.ArtifactStore;
 import com.azure.core.http.rest.PagedResponse;
 import com.azure.core.util.BinaryData;
 import com.azure.core.util.Context;
+import com.azure.storage.blob.BlobClient;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.models.BlobDownloadContentResponse;
 import com.azure.storage.blob.models.BlobErrorCode;
@@ -14,6 +15,8 @@ import com.azure.storage.blob.models.BlobRequestConditions;
 import com.azure.storage.blob.models.BlobStorageException;
 import com.azure.storage.blob.options.BlobInputStreamOptions;
 import com.azure.storage.blob.options.BlockBlobSimpleUploadOptions;
+import com.azure.storage.blob.sas.BlobSasPermission;
+import com.azure.storage.blob.sas.BlobServiceSasSignatureValues;
 import com.azure.storage.blob.specialized.BlobOutputStream;
 import com.azure.storage.blob.specialized.BlockBlobClient;
 
@@ -45,6 +48,22 @@ public final class AzureArtifactStore implements ArtifactStore {
     @Override
     public ArtifactStore scope(String tenant) {
         return new AzureArtifactStore(container, keyPrefix + ArtifactStore.segment(tenant) + "/");
+    }
+
+    @Override
+    public Optional<URI> presign(String key, Duration ttl) {
+        BlobClient blob = container.getBlobClient(keyPrefix + key);
+        BlobServiceSasSignatureValues values = new BlobServiceSasSignatureValues(
+                OffsetDateTime.now().plus(ttl), new BlobSasPermission().setReadPermission(true));
+        try {
+            String sas = blob.generateSas(values);
+            return Optional.of(URI.create(blob.getBlobUrl() + "?" + sas));
+        } catch (IllegalStateException noSharedKey) {
+            // generateSas requires an account-key (shared-key) credential; a client built from a token/AAD credential
+            // cannot sign a service SAS here, so degrade to streaming (Optional.empty) rather than fail the read. A
+            // user-delegation-key SAS for AAD-authenticated deployments is a wave-2 follow-up.
+            return Optional.empty();
+        }
     }
 
     @Override

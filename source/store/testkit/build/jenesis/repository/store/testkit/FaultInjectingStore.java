@@ -242,6 +242,12 @@ public final class FaultInjectingStore implements ArtifactStore {
     }
 
     @Override
+    public Optional<URI> presign(String key, Duration ttl) {
+        // No fault is armed against presign (a read-only capability); pass through so a presigning backend still mints.
+        return delegate.presign(key, ttl);
+    }
+
+    @Override
     public void delete(String key) throws IOException {
         Mode mode = intercept(Op.DELETE, key);
         if (mode == Mode.THROW_BEFORE) {
@@ -366,6 +372,11 @@ public final class FaultInjectingStore implements ArtifactStore {
                 throw fault(Op.SIZE, key);
             }
             return scoped.size(key);
+        }
+
+        @Override
+        public Optional<URI> presign(String key, Duration ttl) {
+            return scoped.presign(key, ttl);
         }
 
         @Override

@@ -11,6 +11,8 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 
 /**
  * An {@link ArtifactStore} backed by an S3-compatible bucket (AWS S3, GCS via the XML API, MinIO,
@@ -26,22 +28,46 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 public final class S3ArtifactStore implements ArtifactStore {
 
     private final S3Client s3;
+    private final S3Presigner presigner;
     private final String bucket;
     private final String keyPrefix;
 
     public S3ArtifactStore(S3Client s3, String bucket) {
-        this(s3, bucket, "");
+        this(s3, null, bucket, "");
     }
 
-    private S3ArtifactStore(S3Client s3, String bucket, String keyPrefix) {
+    /** As {@link #S3ArtifactStore(S3Client, String)} but with a {@link S3Presigner} - built by the provider from the
+     *  same region, credentials and endpoint as {@code s3} - so {@link #presign} can mint a direct-fetch GET URL. */
+    public S3ArtifactStore(S3Client s3, S3Presigner presigner, String bucket) {
+        this(s3, presigner, bucket, "");
+    }
+
+    private S3ArtifactStore(S3Client s3, S3Presigner presigner, String bucket, String keyPrefix) {
         this.s3 = s3;
+        this.presigner = presigner;
         this.bucket = bucket;
         this.keyPrefix = keyPrefix;
     }
 
     @Override
     public ArtifactStore scope(String tenant) {
-        return new S3ArtifactStore(s3, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/");
+        return new S3ArtifactStore(s3, presigner, bucket, keyPrefix + ArtifactStore.segment(tenant) + "/");
+    }
+
+    @Override
+    public Optional<URI> presign(String key, Duration ttl) {
+        // No presigner configured (the two-arg constructor, or a store built without one): degrade to streaming.
+        if (presigner == null) {
+            return Optional.empty();
+        }
+        try {
+            PresignedGetObjectRequest presigned = presigner.presignGetObject(b -> b
+                    .signatureDuration(ttl)
+                    .getObjectRequest(r -> r.bucket(bucket).key(keyPrefix + key)));
+            return Optional.of(presigned.url().toURI());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException("Presigned S3 URL is not a valid URI for " + key, e);
+        }
     }
 
     @Override
