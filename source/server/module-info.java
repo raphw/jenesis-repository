@@ -94,6 +94,8 @@ open module build.jenesis.repository.server {
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;
     requires org.slf4j;
+    requires ch.qos.logback.classic;
+    requires ch.qos.logback.core;
     requires spring.beans;
     requires spring.context;
     requires spring.core;

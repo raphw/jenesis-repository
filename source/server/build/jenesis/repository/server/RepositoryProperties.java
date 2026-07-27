@@ -46,6 +46,10 @@ public class RepositoryProperties {
 
     private int batchUploadMaxEntries = 10_000;
 
+    /** The recent-logs ring size (WO.4): how many most-recent log entries the in-memory recent-logs buffer retains
+     *  before the oldest is evicted, the bound behind {@code GET /api/logs}. Sized once at startup. */
+    private int logsBuffer = LogRingBuffer.DEFAULT_CAPACITY;
+
     private boolean demo = false;
 
     private boolean readOnly = false;
@@ -163,6 +167,14 @@ public class RepositoryProperties {
 
     public void setBatchUploadMaxEntries(int batchUploadMaxEntries) {
         this.batchUploadMaxEntries = batchUploadMaxEntries;
+    }
+
+    public int getLogsBuffer() {
+        return logsBuffer;
+    }
+
+    public void setLogsBuffer(int logsBuffer) {
+        this.logsBuffer = logsBuffer;
     }
 
     /** Whether demo mode seeds a fresh, completely empty repository with real artifacts through the formats' own

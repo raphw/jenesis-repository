@@ -223,6 +223,37 @@ public class RepositoryAutoConfiguration {
         });
     }
 
+    /** The recent-logs ring (WO.4): a bounded in-memory store of the most recent entries, sized from
+     *  {@code jenesis.repository.logs.buffer} at startup - the bound behind {@code GET /api/logs}. */
+    @Bean
+    @ConditionalOnMissingBean
+    public LogRingBuffer logRingBuffer(RepositoryProperties properties) {
+        return new LogRingBuffer(properties.getLogsBuffer());
+    }
+
+    /** The recent-logs tap (WO.4): attach the logback appender to the running root logger at startup so every entry the
+     *  JVM emits is captured into the ring, never re-reading a file. A non-logback slf4j binding leaves the appender
+     *  unattached and the ring simply stays empty (graceful). */
+    @Bean
+    @ConditionalOnMissingBean
+    public LogRingAppender logRingAppender(LogRingBuffer buffer) {
+        LogRingAppender appender = new LogRingAppender(buffer);
+        org.slf4j.ILoggerFactory factory = org.slf4j.LoggerFactory.getILoggerFactory();
+        if (factory instanceof ch.qos.logback.classic.LoggerContext context) {
+            appender.setContext(context);
+            appender.start();
+            context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).addAppender(appender);
+        }
+        return appender;
+    }
+
+    /** The recent-logs read - {@code GET /api/logs}, reading the same ring the appender feeds. */
+    @Bean
+    @ConditionalOnMissingBean
+    public RecentLogsController recentLogsController(LogRingBuffer buffer) {
+        return new RecentLogsController(buffer);
+    }
+
     @Bean
     @ConditionalOnMissingBean(name = "repositoryController")
     public RepositoryController repositoryController(RepositoryRouting routing,

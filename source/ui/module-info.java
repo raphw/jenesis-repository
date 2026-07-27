@@ -136,5 +136,6 @@ open module build.jenesis.repository.ui {
     uses build.jenesis.repository.ui.Panel;
     provides build.jenesis.repository.ui.Panel
             with build.jenesis.repository.ui.BrowsePanel,
-                    build.jenesis.repository.ui.SpiCatalogPanel;
+                    build.jenesis.repository.ui.SpiCatalogPanel,
+                    build.jenesis.repository.ui.LogPanel;
 }

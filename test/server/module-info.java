@@ -115,6 +115,9 @@ open module build.jenesis.repository.test {
     requires org.apache.tomcat.embed.core;
     requires java.net.http;
     requires jdk.httpserver;
+    requires org.slf4j;
+    requires ch.qos.logback.classic;
+    requires ch.qos.logback.core;
     requires org.junit.jupiter;
     requires org.assertj.core;
 
