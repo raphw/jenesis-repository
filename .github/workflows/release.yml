@@ -36,6 +36,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           ref: ${{ github.event.workflow_run.head_sha }}
+          # build/jenesis is a symlink into the .jenesis/upstream submodule (the pinned jenesis build tool).
+          submodules: true
 
       - name: Resolve release version
         id: version

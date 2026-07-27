@@ -24,6 +24,7 @@ ARG BASE=eclipse-temurin:25-jdk
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*
+COPY .jenesis ./.jenesis
 COPY build ./build
 COPY source ./source
 RUN java build/jenesis/Project.java +source+bundle build \

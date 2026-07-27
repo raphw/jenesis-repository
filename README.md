@@ -308,6 +308,11 @@ the enterprise console's SPI catalogue and its `/api/admin/spi` admin API).
 Build & run
 -----------
 
+The jenesis build tool lives in the `.jenesis/upstream` git submodule (`build/jenesis` is a symlink
+into it; the committed `.jenesis/.jenesis.skip` marker keeps the tool's own project out of this
+build's module scan), so populate it once after cloning:
+
+    git submodule update --init                                 # fetch the pinned build tool
     java build/jenesis/Project.java build                       # build everything
     java build/jenesis/Project.java +source+store+s3 build          # one module (+ deps)
 

@@ -4,7 +4,7 @@ The free core: the repository / build-cache server modules consumed by downstrea
 
 ## Build & test
 
-- `java build/jenesis/Project.java` resolves, compiles, and tests every module. **Requires JDK 25** (the sources use module-import declarations and unnamed variables).
+- `java build/jenesis/Project.java` resolves, compiles, and tests every module. **Requires JDK 25** (the sources use module-import declarations and unnamed variables). The build tool is the `.jenesis/upstream` git submodule pinned to a raphw/jenesis commit (`build/jenesis` is a symlink into it; the committed `.jenesis/.jenesis.skip` marker keeps the tool's own modules out of the project scan) — run `git submodule update --init` once after cloning.
 - Fast iteration — build one module's subgraph with a `+` selector: `+source+<path>` or `+test+<path>` (e.g. `+test+store+s3`; a nested `store/s3` is written `+store+s3`, and `/<step>` drills into a step). `+` selectors are *lenient* — a wrong one silently matches nothing, so confirm your module shows an `[EXECUTED]` line.
 - `-Djenesis.*` system properties go **before** the `Project.java` path; bare selectors go **after** it.
 - `java build/jenesis/Project.java help` documents every selector and `-D` flag (`pin` regenerates the `@jenesis.pin` version/checksum lines; `export` produces the deliverable repository).
