@@ -35,7 +35,7 @@ import build.jenesis.repository.observation.ObservabilitySource;
  */
 public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySource {
 
-    private static final System.Logger LOGGER = System.getLogger(QuotaArtifactStore.class.getName());
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(QuotaArtifactStore.class);
 
     private static final String BLOBS = "blobs/";
     private static final String USED = "quota/used";
@@ -224,9 +224,8 @@ public final class QuotaArtifactStore implements ArtifactStore, ObservabilitySou
                 return;
             }
         }
-        LOGGER.log(System.Logger.Level.WARNING,
-                "quota counter update of " + delta + " bytes dropped after repeated conflicts; "
-                        + "the usage counter drifts until the next recompute");
+        LOGGER.warn("quota counter update of " + delta + " bytes dropped after repeated conflicts; "
+                + "the usage counter drifts until the next recompute");
     }
 
     private static long parse(byte[] content) {

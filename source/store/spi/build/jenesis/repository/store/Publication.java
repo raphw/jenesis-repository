@@ -21,7 +21,7 @@ import module java.base;
  */
 public final class Publication {
 
-    private static final System.Logger LOGGER = System.getLogger(Publication.class.getName());
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(Publication.class);
 
     /** The ceiling on a {@link PublishInterceptor.Content#sibling} read. A sibling is small published metadata a gate
      *  inspects beside the artifact (a jar reading its POM, a package reading its manifest) - never a whole artifact -
@@ -184,7 +184,7 @@ public final class Publication {
             try {
                 observer.onDeleted(removed, store);
             } catch (Exception exception) {
-                LOGGER.log(System.Logger.Level.WARNING, "publication observer "
+                LOGGER.warn("publication observer "
                         + observer.getClass().getName() + " failed for removal of " + removed.path(), exception);
             }
         }
@@ -195,7 +195,7 @@ public final class Publication {
             try {
                 observer.onPublished(published, store);
             } catch (Exception exception) {
-                LOGGER.log(System.Logger.Level.WARNING, "publication observer "
+                LOGGER.warn("publication observer "
                         + observer.getClass().getName() + " failed for " + published.path(), exception);
             }
         }

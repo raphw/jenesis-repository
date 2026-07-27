@@ -32,7 +32,7 @@ import module java.base;
  */
 public final class Features {
 
-    private static final System.Logger LOGGER = System.getLogger(Features.class.getName());
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(Features.class);
 
     /** Namespace shared with the Spring property schema; a feature toggle is {@code jenesis.repository.<feature>}. */
     private static final String NAMESPACE = "jenesis.repository.";
@@ -81,7 +81,7 @@ public final class Features {
             return true;
         }
         if (ANNOUNCED.add(feature)) {
-            LOGGER.log(System.Logger.Level.INFO, feature + " disabled - missing " + String.join(", ", missing)
+            LOGGER.info(feature + " disabled - missing " + String.join(", ", missing)
                     + "; set " + NAMESPACE + feature + "=false to disable it and silence this.");
         }
         return false;
