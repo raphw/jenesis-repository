@@ -5,7 +5,8 @@ import build.jenesis.repository.oidc.OidcExchange;
 import build.jenesis.repository.server.TokenExchange;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
-import com.sun.net.httpserver.HttpServer;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,9 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -43,7 +47,7 @@ class OidcExchangeTest {
 
     private Authorization authorization;
     private OidcExchange exchange;
-    private HttpServer server;
+    private WireMockServer server;
     private String issuer;
     private KeyPair keyPair;
 
@@ -58,20 +62,24 @@ class OidcExchangeTest {
         generator.initialize(2048);
         keyPair = generator.generateKeyPair();
 
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        issuer = "http://127.0.0.1:" + server.getAddress().getPort();
-        server.createContext("/.well-known/openid-configuration", respond("{"
-                + "\"issuer\":\"" + issuer + "\","
-                + "\"authorization_endpoint\":\"" + issuer + "/authorize\","
-                + "\"token_endpoint\":\"" + issuer + "/token\","
-                + "\"jwks_uri\":\"" + issuer + "/jwks\","
-                + "\"response_types_supported\":[\"id_token\"],"
-                + "\"subject_types_supported\":[\"public\"],"
-                + "\"id_token_signing_alg_values_supported\":[\"RS256\"]}"));
-        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
-        server.createContext("/jwks", respond("{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"k1\",\"n\":\""
-                + unsigned(publicKey.getModulus()) + "\",\"e\":\"" + unsigned(publicKey.getPublicExponent()) + "\"}]}"));
+        server = new WireMockServer(WireMockConfiguration.options().bindAddress("127.0.0.1").dynamicPort());
         server.start();
+        issuer = "http://127.0.0.1:" + server.port();
+        server.stubFor(any(urlPathEqualTo("/.well-known/openid-configuration"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody("{"
+                        + "\"issuer\":\"" + issuer + "\","
+                        + "\"authorization_endpoint\":\"" + issuer + "/authorize\","
+                        + "\"token_endpoint\":\"" + issuer + "/token\","
+                        + "\"jwks_uri\":\"" + issuer + "/jwks\","
+                        + "\"response_types_supported\":[\"id_token\"],"
+                        + "\"subject_types_supported\":[\"public\"],"
+                        + "\"id_token_signing_alg_values_supported\":[\"RS256\"]}")));
+        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+        server.stubFor(any(urlPathEqualTo("/jwks"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"k1\",\"n\":\""
+                                + unsigned(publicKey.getModulus()) + "\",\"e\":\""
+                                + unsigned(publicKey.getPublicExponent()) + "\"}]}")));
 
         authorization.setTrust("acme", new Authorization.Trust("github", issuer, "jenesis",
                 "repo:acme/app:*", "releases", "repository:read,repository:write", Duration.ofMinutes(15)));
@@ -79,7 +87,7 @@ class OidcExchangeTest {
 
     @AfterEach
     void tearDown() {
-        server.stop(0);
+        server.stop();
     }
 
     @Test
@@ -230,15 +238,5 @@ class OidcExchangeTest {
             bytes = Arrays.copyOfRange(bytes, 1, bytes.length);
         }
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private static com.sun.net.httpserver.HttpHandler respond(String body) {
-        return exchange -> {
-            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, bytes.length);
-            exchange.getResponseBody().write(bytes);
-            exchange.close();
-        };
     }
 }

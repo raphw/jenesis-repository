@@ -9,6 +9,7 @@
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.server
+ * @jenesis.alias wiremock.standalone org.wiremock/wiremock-standalone 4.0.0-beta.38
  * @jenesis.pin build.jenesis 0.8.1
  * @jenesis.pin build.jenesis/build.jenesis 0.8.1 SHA-256/b824ecde8b7337fe2ef42194f8a8a98f2eab942313a198db9a369df0f99f18c0
  * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
@@ -84,6 +85,7 @@
  * @jenesis.pin org.springframework/spring-expression 7.0.8 SHA-256/3c97c38ab59c77ee886e08ccf8096f6bb58a1245f68dfed7a40e93f41c435f9a
  * @jenesis.pin org.springframework/spring-web 7.0.8 SHA-256/4d4ed7ecb0453d25d735ea27d025ea36b003c3d29cb7d006bedd6d5188a2f5c0
  * @jenesis.pin org.springframework/spring-webmvc 7.0.8 SHA-256/48f7e1e2d0d46e98ed3fa30d5a64cb1f7ed2aa339a82edcd87289ed8ff216f04
+ * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin org.yaml/snakeyaml 2.6 SHA-256/c8f7a98e7394adda02f6317249710e4d1b4c7a25aa8c7eace0c2eea52eb8bf85
  * @jenesis.pin tools.jackson.core/jackson-core 3.2.0 SHA-256/5e353ce53c6901105dfcbf183e3220c17072e334e552b818a4bb1b99decea596
  * @jenesis.pin tools.jackson.core/jackson-databind 3.2.0 SHA-256/3ef94a3dddeafc247c50230fad0315981b2ce4ae6e91cfb4368a86f328904e4f
@@ -115,6 +117,11 @@ open module build.jenesis.repository.test {
     requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
+
+    // WireMock's shaded HttpClient5 reaches for jdk/net/Sockets at runtime; an automatic module roots no requires, so
+    // the consumer must root jdk.net explicitly or the tests throw NoClassDefFoundError: jdk/net/Sockets.
+    requires jdk.net;
+    requires wiremock.standalone;
     provides build.jenesis.repository.store.PublishInterceptor
             with build.jenesis.repository.test.MarkerInterceptor,
                     build.jenesis.repository.test.CountingInterceptor;

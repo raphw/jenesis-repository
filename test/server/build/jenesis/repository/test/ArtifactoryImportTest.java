@@ -6,8 +6,8 @@ import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.importer.artifactory.ArtifactorySource;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -27,6 +27,9 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -43,7 +46,7 @@ public class ArtifactoryImportTest {
     @TempDir
     static Path root;
 
-    private HttpServer artifactory;
+    private WireMockServer artifactory;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -61,8 +64,9 @@ public class ArtifactoryImportTest {
         jar = "a library jar".getBytes(StandardCharsets.UTF_8);
         byte[] pom = "<project><modelVersion>4.0.0</modelVersion></project>".getBytes(StandardCharsets.UTF_8);
 
-        artifactory = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        String upstream = "http://localhost:" + artifactory.getAddress().getPort();
+        artifactory = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort());
+        artifactory.start();
+        String upstream = "http://localhost:" + artifactory.port();
 
         Map<String, byte[]> files = new HashMap<>();
         files.put("/libs-release/org/lib/dep/2.0/dep-2.0.jar", jar);
@@ -73,13 +77,11 @@ public class ArtifactoryImportTest {
                 + "{\"uri\":\"/org/lib/dep/2.0/dep-2.0.jar\",\"folder\":false},"
                 + "{\"uri\":\"/org/lib/dep/2.0/dep-2.0.pom\",\"folder\":false}]}";
 
-        artifactory.createContext("/api/storage/libs-release", exchange ->
-                respond(exchange, 200, listing.getBytes(StandardCharsets.UTF_8)));
-        artifactory.createContext("/libs-release", exchange -> {
-            byte[] body = files.get(exchange.getRequestURI().getPath());
-            respond(exchange, body == null ? 404 : 200, body == null ? new byte[0] : body);
-        });
-        artifactory.start();
+        // The storage listing API (query params ignored on the path match); each listed file serves its exact bytes.
+        artifactory.stubFor(any(urlPathEqualTo("/api/storage/libs-release"))
+                .willReturn(aResponse().withStatus(200).withBody(listing.getBytes(StandardCharsets.UTF_8))));
+        files.forEach((path, body) ->
+                artifactory.stubFor(any(urlPathEqualTo(path)).willReturn(aResponse().withStatus(200).withBody(body))));
 
         result = new RepositoryImport().run(
                 new ArtifactorySource(URI.create(upstream), "libs-release", "maven", new HttpFetcher()), store);
@@ -98,7 +100,7 @@ public class ArtifactoryImportTest {
     @AfterAll
     public void tearDown() {
         running.close();
-        artifactory.stop(0);
+        artifactory.stop();
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.maven-metadata-compute");
@@ -124,14 +126,5 @@ public class ArtifactoryImportTest {
                 BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).as("GET " + path).isEqualTo(200);
         return response.body();
-    }
-
-    private static void respond(HttpExchange exchange, int status, byte[] body) throws IOException {
-        exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            if (body.length > 0) {
-                out.write(body);
-            }
-        }
     }
 }

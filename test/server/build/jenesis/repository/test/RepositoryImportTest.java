@@ -6,8 +6,9 @@ import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.importer.nexus.NexusSource;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,10 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -59,11 +64,10 @@ public class RepositoryImportTest {
     @TempDir
     static Path root;
 
-    private HttpServer nexus;
+    private WireMockServer nexus;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
-    private final Set<String> requested = Collections.synchronizedSet(new HashSet<>());
 
     private byte[] jar;
     private byte[] sourceMetadata;
@@ -94,8 +98,9 @@ public class RepositoryImportTest {
         byte[] tarball = "a npm tarball".getBytes(StandardCharsets.UTF_8);
         rawFile = "a signed installer".getBytes(StandardCharsets.UTF_8);
 
-        nexus = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        String upstream = "http://localhost:" + nexus.getAddress().getPort();
+        nexus = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort());
+        nexus.start();
+        String upstream = "http://localhost:" + nexus.port();
 
         Map<String, byte[]> assets = new HashMap<>();
         assets.put("/repository/maven-releases/com/acme/app/1.0/app-1.0.jar", jar);
@@ -125,20 +130,25 @@ public class RepositoryImportTest {
                 + asset("is-thirteen/-/is-thirteen-2.0.0.tgz", upstream, "npm-hosted")
                 + "]}],\"continuationToken\":null}");
 
-        nexus.createContext("/repository", exchange -> {
-            requested.add(exchange.getRequestURI().getPath());
-            byte[] body = assets.get(exchange.getRequestURI().getPath());
-            respond(exchange, body == null ? 404 : 200, body == null ? new byte[0] : body);
+        // The asset FETCH side: each recorded path serves its exact bytes; an unregistered path is the default 404.
+        assets.forEach((path, body) ->
+                nexus.stubFor(any(urlPathEqualTo(path)).willReturn(aResponse().withStatus(200).withBody(body))));
+        // The components REST API, keyed on repository and (for a later page) the continuation token; a token-bearing
+        // stub outranks its repository-only sibling so page 2 wins when the token is present.
+        pages.forEach((key, page) -> {
+            byte[] body = page.getBytes(StandardCharsets.UTF_8);
+            int bar = key.indexOf('|');
+            if (bar < 0) {
+                nexus.stubFor(any(urlPathEqualTo("/service/rest/v1/components")).atPriority(5)
+                        .withQueryParam("repository", equalTo(key))
+                        .willReturn(aResponse().withStatus(200).withBody(body)));
+            } else {
+                nexus.stubFor(any(urlPathEqualTo("/service/rest/v1/components")).atPriority(1)
+                        .withQueryParam("repository", equalTo(key.substring(0, bar)))
+                        .withQueryParam("continuationToken", equalTo(key.substring(bar + 1)))
+                        .willReturn(aResponse().withStatus(200).withBody(body)));
+            }
         });
-        nexus.createContext("/service/rest/v1/components", exchange -> {
-            Map<String, String> query = query(exchange.getRequestURI().getRawQuery());
-            String key = query.get("repository")
-                    + (query.containsKey("continuationToken") ? "|" + query.get("continuationToken") : "");
-            String page = pages.get(key);
-            respond(exchange, page == null ? 404 : 200,
-                    page == null ? new byte[0] : page.getBytes(StandardCharsets.UTF_8));
-        });
-        nexus.start();
 
         RepositoryImport importer = new RepositoryImport();
         maven = importer.run(new NexusSource(URI.create(upstream), "maven-releases", new HttpFetcher()), store);
@@ -161,7 +171,7 @@ public class RepositoryImportTest {
     @AfterAll
     public void tearDown() {
         running.close();
-        nexus.stop(0);
+        nexus.stop();
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.maven-metadata-compute");
@@ -218,7 +228,18 @@ public class RepositoryImportTest {
         assertThat(npm.imported()).isZero();
         assertThat(npm.skipped()).isEqualTo(1);
         assertThat(npm.skippedFormats()).containsExactly("npm");
-        assertThat(requested).doesNotContain(NPM_TARBALL);
+        assertThat(requestedPaths()).doesNotContain(NPM_TARBALL);
+    }
+
+    /** Every request path WireMock saw (query stripped) - the npm tarball must be absent, proving lazy content reads. */
+    private Set<String> requestedPaths() {
+        Set<String> paths = new HashSet<>();
+        for (ServeEvent event : nexus.getAllServeEvents()) {
+            String url = event.getRequest().getUrl();
+            int query = url.indexOf('?');
+            paths.add(query < 0 ? url : url.substring(0, query));
+        }
+        return paths;
     }
 
     private byte[] get(String path) throws Exception {
@@ -231,28 +252,6 @@ public class RepositoryImportTest {
     private static String asset(String path, String upstream, String repository) {
         return "{\"path\":\"" + path + "\",\"downloadUrl\":\""
                 + upstream + "/repository/" + repository + "/" + path + "\"}";
-    }
-
-    private static Map<String, String> query(String raw) {
-        Map<String, String> parameters = new HashMap<>();
-        if (raw != null) {
-            for (String pair : raw.split("&")) {
-                int equals = pair.indexOf('=');
-                if (equals > 0) {
-                    parameters.put(pair.substring(0, equals), pair.substring(equals + 1));
-                }
-            }
-        }
-        return parameters;
-    }
-
-    private static void respond(HttpExchange exchange, int status, byte[] body) throws IOException {
-        exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            if (body.length > 0) {
-                out.write(body);
-            }
-        }
     }
 
     private static byte[] jarWithModuleName(String module) throws IOException {

@@ -1,7 +1,8 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.RepositoryApplication;
-import com.sun.net.httpserver.HttpServer;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,9 @@ import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -38,7 +42,7 @@ public class ImportHostGuardTest {
     @TempDir
     static Path root;
 
-    private HttpServer nexus;
+    private WireMockServer nexus;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -49,12 +53,13 @@ public class ImportHostGuardTest {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
         System.setProperty("jenesis.repository.auth", "false");
 
-        nexus = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        upstream = "http://localhost:" + nexus.getAddress().getPort();
+        nexus = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort());
+        nexus.start();
+        upstream = "http://localhost:" + nexus.port();
         // An empty first page: a migration that opts past the guard starts, walks nothing and completes cleanly.
         byte[] page = "{\"items\":[],\"continuationToken\":null}".getBytes(StandardCharsets.UTF_8);
-        nexus.createContext("/service/rest/v1/components", exchange -> respond(exchange, page));
-        nexus.start();
+        nexus.stubFor(any(urlPathEqualTo("/service/rest/v1/components"))
+                .willReturn(aResponse().withStatus(200).withBody(page)));
 
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
@@ -64,7 +69,7 @@ public class ImportHostGuardTest {
     @AfterAll
     public void tearDown() {
         running.close();
-        nexus.stop(0);
+        nexus.stop();
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
         System.clearProperty(GUARD);
@@ -90,12 +95,5 @@ public class ImportHostGuardTest {
     private HttpResponse<String> post(String body) throws Exception {
         return client.send(HttpRequest.newBuilder(URI.create(base + "/admin/import"))
                 .POST(BodyPublishers.ofString(body)).build(), BodyHandlers.ofString());
-    }
-
-    private static void respond(com.sun.net.httpserver.HttpExchange exchange, byte[] body) throws IOException {
-        exchange.sendResponseHeaders(200, body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
-        }
     }
 }

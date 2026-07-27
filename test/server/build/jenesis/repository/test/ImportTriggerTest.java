@@ -1,8 +1,9 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.RepositoryApplication;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -40,19 +45,19 @@ public class ImportTriggerTest {
     @TempDir
     static Path root;
 
-    private HttpServer nexus;
+    private WireMockServer nexus;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
     private String upstream;
-    private final AtomicBoolean secondPageFailedOnce = new AtomicBoolean();
 
     @BeforeAll
     public void setUp() throws IOException {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
 
-        nexus = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        upstream = "http://localhost:" + nexus.getAddress().getPort();
+        nexus = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort());
+        nexus.start();
+        upstream = "http://localhost:" + nexus.port();
 
         Map<String, byte[]> assets = new HashMap<>();
         assets.put("/repository/releases/org/acme/one/1.0/one-1.0.jar", "first jar".getBytes(StandardCharsets.UTF_8));
@@ -64,21 +69,22 @@ public class ImportTriggerTest {
                 + "\"downloadUrl\":\"" + upstream + "/repository/releases/org/acme/two/1.0/two-1.0.jar\"}]}],"
                 + "\"continuationToken\":null}";
 
-        nexus.createContext("/repository", exchange -> {
-            byte[] body = assets.get(exchange.getRequestURI().getPath());
-            respond(exchange, body == null ? 404 : 200, body == null ? new byte[0] : body);
-        });
-        nexus.createContext("/service/rest/v1/components", exchange -> {
-            Map<String, String> query = query(exchange.getRequestURI().getRawQuery());
-            if (!"page2".equals(query.get("continuationToken"))) {
-                respond(exchange, 200, pageOne.getBytes(StandardCharsets.UTF_8));
-            } else if (secondPageFailedOnce.compareAndSet(false, true)) {
-                respond(exchange, 500, new byte[0]);
-            } else {
-                respond(exchange, 200, pageTwo.getBytes(StandardCharsets.UTF_8));
-            }
-        });
-        nexus.start();
+        assets.forEach((path, body) ->
+                nexus.stubFor(any(urlPathEqualTo(path)).willReturn(aResponse().withStatus(200).withBody(body))));
+        // Page one always lists first. Page two 500s the first time it is fetched, then serves - a WireMock Scenario
+        // reproducing the original one-shot failure the resume must survive. The token-bearing page-two stubs outrank
+        // the repository-only page-one stub, so they win once the continuation token is present.
+        nexus.stubFor(any(urlPathEqualTo("/service/rest/v1/components")).atPriority(5)
+                .withQueryParam("repository", equalTo("releases"))
+                .willReturn(aResponse().withStatus(200).withBody(pageOne.getBytes(StandardCharsets.UTF_8))));
+        nexus.stubFor(any(urlPathEqualTo("/service/rest/v1/components")).atPriority(1)
+                .withQueryParam("continuationToken", equalTo("page2"))
+                .inScenario("page2-flake").whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(500)).willSetStateTo("page2-retried"));
+        nexus.stubFor(any(urlPathEqualTo("/service/rest/v1/components")).atPriority(1)
+                .withQueryParam("continuationToken", equalTo("page2"))
+                .inScenario("page2-flake").whenScenarioStateIs("page2-retried")
+                .willReturn(aResponse().withStatus(200).withBody(pageTwo.getBytes(StandardCharsets.UTF_8))));
 
         // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
         // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
@@ -94,7 +100,7 @@ public class ImportTriggerTest {
     @AfterAll
     public void tearDown() {
         running.close();
-        nexus.stop(0);
+        nexus.stop();
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.block-private-import-hosts");
@@ -156,27 +162,5 @@ public class ImportTriggerTest {
         String token = "\"" + name + "\":\"";
         int start = json.indexOf(token) + token.length();
         return json.substring(start, json.indexOf('"', start));
-    }
-
-    private static Map<String, String> query(String raw) {
-        Map<String, String> parameters = new HashMap<>();
-        if (raw != null) {
-            for (String pair : raw.split("&")) {
-                int equals = pair.indexOf('=');
-                if (equals > 0) {
-                    parameters.put(pair.substring(0, equals), pair.substring(equals + 1));
-                }
-            }
-        }
-        return parameters;
-    }
-
-    private static void respond(HttpExchange exchange, int status, byte[] body) throws IOException {
-        exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            if (body.length > 0) {
-                out.write(body);
-            }
-        }
     }
 }
