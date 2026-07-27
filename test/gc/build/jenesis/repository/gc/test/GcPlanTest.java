@@ -9,14 +9,7 @@ import build.jenesis.repository.walk.store.StoreArtifactWalk;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

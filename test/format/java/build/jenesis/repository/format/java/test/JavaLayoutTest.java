@@ -3,14 +3,8 @@ package build.jenesis.repository.format.java.test;
 import build.jenesis.repository.format.java.JavaLayout;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import module java.base;
 import java.util.jar.Attributes;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
-import java.util.jar.Manifest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

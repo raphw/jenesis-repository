@@ -6,11 +6,7 @@ import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.PublishedAssets;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.function.Function;
+import module java.base;
 
 /**
  * A stably-ordered, resumable walk of a repository's published assets, layering format/coordinate enrichment over the

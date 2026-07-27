@@ -5,9 +5,7 @@ import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.importer.index.IndexSourceProvider;
 import org.junit.jupiter.api.Test;
 
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

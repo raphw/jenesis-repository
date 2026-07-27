@@ -2,13 +2,7 @@ package build.jenesis.repository.format.maven.test;
 
 import build.jenesis.repository.format.FormatExchange;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import module java.base;
 
 /**
  * An in-memory {@link FormatExchange} for driving a format's {@code handle}/{@code proxy} without an HTTP server: it

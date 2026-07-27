@@ -5,13 +5,7 @@ import build.jenesis.repository.proxy.HttpFetcher;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

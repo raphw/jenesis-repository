@@ -2,14 +2,7 @@ package build.jenesis.repository.format;
 
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.io.ByteArrayInputStream;
-import java.io.Closeable;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Stream;
+import module java.base;
 
 /**
  * The optional pull-through capability of a {@link RepositoryFormat}: a format that also implements this serves a

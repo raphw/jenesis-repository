@@ -7,9 +7,7 @@ import org.springframework.security.authorization.AuthorizationResult;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.function.Supplier;
+import module java.base;
 
 /**
  * Authorizes a request against the {@link Authorization} credential model. An anonymous deployment (the headless

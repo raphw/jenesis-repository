@@ -4,17 +4,7 @@ import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.proxy.NegativeCachingFetcher;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

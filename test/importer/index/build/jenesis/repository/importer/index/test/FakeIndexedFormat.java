@@ -5,12 +5,7 @@ import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
-import java.util.stream.Stream;
+import module java.base;
 
 /**
  * A fake enumerable format, provided by this test module so the connector's {@code installed} lookup discovers it:

@@ -14,9 +14,7 @@ import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
-import java.net.URI;
-import java.util.Set;
-import java.util.function.UnaryOperator;
+import module java.base;
 
 /**
  * The {@code s3} artifact-store backend over any S3-compatible bucket (AWS S3, GCS via the XML API,

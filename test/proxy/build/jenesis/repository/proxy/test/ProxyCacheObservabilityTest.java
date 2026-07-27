@@ -9,14 +9,7 @@ import build.jenesis.repository.proxy.NegativeCachingFetcher;
 import build.jenesis.repository.proxy.RevalidatingFetcher;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

@@ -6,16 +6,7 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
-import java.io.FilterInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.function.BooleanSupplier;
-import java.util.function.IntSupplier;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipException;
-import java.util.zip.ZipInputStream;
+import module java.base;
 
 /**
  * Batch archive ingestion: a single publish request carrying an archive and the {@value #EXPLODE_HEADER} header is

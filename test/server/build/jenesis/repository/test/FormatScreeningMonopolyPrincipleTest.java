@@ -2,12 +2,7 @@ package build.jenesis.repository.test;
 
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Stream;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
