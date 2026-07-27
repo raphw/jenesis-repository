@@ -112,6 +112,7 @@
  */
 open module build.jenesis.repository.ui {
     requires build.jenesis.repository.store;
+    requires build.jenesis.repository.observation;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;
     requires org.slf4j;
@@ -137,5 +138,6 @@ open module build.jenesis.repository.ui {
     provides build.jenesis.repository.ui.Panel
             with build.jenesis.repository.ui.BrowsePanel,
                     build.jenesis.repository.ui.SpiCatalogPanel,
+                    build.jenesis.repository.ui.ObservabilityPanel,
                     build.jenesis.repository.ui.LogPanel;
 }

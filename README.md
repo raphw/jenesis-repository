@@ -270,7 +270,7 @@ Modules
         nexus/ artifactory/   the built-in vendor connectors
         maven/ jenesis/       the vendor-neutral Maven tree walk and the jenesis-to-jenesis connector
       server/                 the dual-layout repository server (RepositoryApplication)
-      ui/                     a simple, extendable web console (browse, SPI catalog)
+      ui/                     a simple, extendable web console (browse, SPI catalog, metrics overview)
     test/                     tests, mirroring source/ (server/, store/s3, store/gcs, store/azure)
 
 The console is an open shell with a **panel-registration SPI**, so additional panels
@@ -278,6 +278,16 @@ plug in through the console's extension points without forking the core. The bun
 the artifact **browse** and an **SPI catalog** - a read-only view of the whole plug-in surface
 grouped by SPI, discovered from the module graph's `provides` declarations (the free counterpart of
 the enterprise console's SPI catalogue and its `/api/admin/spi` admin API).
+
+A **metrics overview** panel (WO.2) surfaces all of the instance's observability in one plain,
+no-graphs page for operators who are not staring at Grafana: every self-describing signal collected
+through `ObservabilityReport.discover()` - current values, health states and background-task status,
+each shown with the **description from its registration** and, for a metric that declares a `limit`,
+its used-vs-available and how close to the ceiling it is (a plain number and bar, never a
+time-series graph). The listing is **searchable** and degrades gracefully - a disabled or absent
+source contributes nothing, so it is simply not listed, and an instance with no source installed
+shows a friendly empty state rather than an error. It is the free counterpart of the enterprise
+console's metrics-overview page and its `/api/admin/observability` admin API.
 
 | Module | Folder | What it is |
 |--------|--------|------------|
