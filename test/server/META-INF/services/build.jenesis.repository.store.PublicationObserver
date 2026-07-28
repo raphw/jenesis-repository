@@ -1,1 +1,3 @@
 build.jenesis.repository.test.RecordingObserver
+build.jenesis.repository.test.MarkerInterceptor
+build.jenesis.repository.test.CountingInterceptor

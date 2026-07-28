@@ -125,9 +125,11 @@ open module build.jenesis.repository.test {
     // the consumer must root jdk.net explicitly or the tests throw NoClassDefFoundError: jdk/net/Sockets.
     requires jdk.net;
     requires wiremock.standalone;
-    provides build.jenesis.repository.store.PublishInterceptor
-            with build.jenesis.repository.test.MarkerInterceptor,
-                    build.jenesis.repository.test.CountingInterceptor;
+    // WSPI.2 (b): the two publication hooks are one discovered seam - a PublishInterceptor IS a PublicationObserver,
+    // so the screen fixtures register through the single PublicationObserver clause and Publication splits them into
+    // the verdict chain by instanceof.
     provides build.jenesis.repository.store.PublicationObserver
-            with build.jenesis.repository.test.RecordingObserver;
+            with build.jenesis.repository.test.RecordingObserver,
+                    build.jenesis.repository.test.MarkerInterceptor,
+                    build.jenesis.repository.test.CountingInterceptor;
 }

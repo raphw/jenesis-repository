@@ -72,13 +72,17 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Rate limiting** (`RateLimiterProvider`) - the metering strategy behind the 429 filter is a discovered
    module (`source/ratelimit`, an in-memory token bucket); a coordinated limiter for a replicated deployment
    would be another module, and without one nothing is limited.
- - **Publication screening** (`PublishInterceptor`) - the verdict-bearing hook run when an upload
-   commits, after the blob is stored content-addressed but *before* its pointer is linked: an
-   ordered chain reads the neutral `ArtifactDescriptor` the format emits and returns `ACCEPT` /
-   `QUARANTINE` / `REJECT`, and the same screen can *withhold* an already-published path on read
-   (the quarantine read side, for a verdict that changes after the fact) - so a compliance gate,
-   scanner or audit plugs in without any format knowing it.
- - **After-commit observation** (`PublicationObserver`) - the second publication hook class, with
+ - **Publication screening** (`PublishInterceptor`, a `PublicationObserver` sub-interface) - the
+   verdict-bearing hook run when an upload commits, after the blob is stored content-addressed but
+   *before* its pointer is linked: an ordered chain reads the neutral `ArtifactDescriptor` the format
+   emits and returns `ACCEPT` / `QUARANTINE` / `REJECT`, and the same screen can *withhold* an
+   already-published path on read (the quarantine read side, for a verdict that changes after the
+   fact) - so a compliance gate, scanner or audit plugs in without any format knowing it. Because a
+   screen *is* an observer, one `uses PublicationObserver` clause discovers both hook classes and
+   `Publication` splits the discovered list by `instanceof` - driving the interceptor chain, then
+   notifying every observer after commit. The verdict methods propagate on failure (a gate that
+   cannot decide fails the write); the inherited observe methods are contained like any observer's.
+ - **After-commit observation** (`PublicationObserver`) - the general publication hook class, with
    no say in any verdict: notified only once an accepted artifact's pointer is linked and serving
    (never for a quarantined or rejected publish) and once a serving pointer is removed
    (`onDeleted`, once per pointer, with the path and the blob hash the pointer named), with a
@@ -214,8 +218,8 @@ with ...` it from a module on the path:
 | A migration importer               | `RepositoryImporter`    | `build.jenesis.repository.format.RepositoryImporter` |
 | An import source (incumbent connector) | `ImportSourceProvider` | `build.jenesis.repository.importer.ImportSourceProvider` |
 | A console panel                    | `Panel`                 | `build.jenesis.repository.ui.Panel`                  |
-| An upload screen (gate/quarantine) | `PublishInterceptor`    | `build.jenesis.repository.store.PublishInterceptor`  |
 | An after-commit publish / removal observer | `PublicationObserver` | `build.jenesis.repository.store.PublicationObserver` |
+| An upload screen (gate/quarantine) | `PublishInterceptor` (a `PublicationObserver` sub-interface) | `build.jenesis.repository.store.PublicationObserver` |
 
 A format may additionally implement one or both of two optional capabilities, detected
 by `instanceof` so a format that has no use for them is unaffected: `ProxyFormat` to gain

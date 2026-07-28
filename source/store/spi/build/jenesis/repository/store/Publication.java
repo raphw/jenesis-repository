@@ -29,14 +29,21 @@ public final class Publication {
      *  arbitrarily large blob into the heap, which would let a screen be turned into an out-of-memory lever. */
     private static final int LARGEST_SIBLING = 8 * 1024 * 1024;
 
-    /** The screen chain, discovered once at class load like {@code MavenFormat.MODULE_VIEWS} - empty in the free
-     *  edition (no provider on the module path), so {@link #screen} is a plain store-and-accept there. */
-    private static final List<PublishInterceptor> DISCOVERED = ServiceLoader.load(PublishInterceptor.class)
-            .stream().map(ServiceLoader.Provider::get).toList();
-
-    /** The after-commit observers, discovered the same way - the hook class with no say in any verdict. */
+    /** The one discovered publication hook class, loaded once at class load like {@code MavenFormat.MODULE_VIEWS}:
+     *  every {@link PublicationObserver} on the module path, the interceptors among them included - a
+     *  {@link PublishInterceptor} IS a {@code PublicationObserver}, so a single {@code uses PublicationObserver}
+     *  clause discovers both. Empty in the free edition (no provider on the module path). */
     private static final List<PublicationObserver> OBSERVERS = ServiceLoader.load(PublicationObserver.class)
             .stream().map(ServiceLoader.Provider::get).toList();
+
+    /** The verdict-bearing subset, split from the one discovered list by {@code instanceof PublishInterceptor}: the
+     *  observers that also screen. So {@link #screen} drives exactly the interceptors while {@link #published} and
+     *  {@link #unpublish} still notify every discovered observer - the interceptors ride the after-commit call too
+     *  (their {@link PublishInterceptor#onPublished} defaults to a no-op, so this never double-counts a screen). */
+    private static final List<PublishInterceptor> DISCOVERED = OBSERVERS.stream()
+            .filter(observer -> observer instanceof PublishInterceptor)
+            .map(observer -> (PublishInterceptor) observer)
+            .toList();
 
     private final ArtifactStore store;
     private final List<PublishInterceptor> interceptors;

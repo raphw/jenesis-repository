@@ -39,6 +39,8 @@ open module build.jenesis.repository.format.oci.test {
     requires build.jenesis.repository.store.filesystem;
     requires org.junit.jupiter;
     requires org.assertj.core;
-    provides build.jenesis.repository.store.PublishInterceptor
+    // WSPI.2 (b): a PublishInterceptor IS a PublicationObserver, discovered through the single seam and split into
+    // the verdict chain by instanceof.
+    provides build.jenesis.repository.store.PublicationObserver
             with build.jenesis.repository.format.oci.test.OciScreenInterceptor;
 }

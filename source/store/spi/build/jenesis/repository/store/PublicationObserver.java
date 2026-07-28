@@ -3,8 +3,11 @@ package build.jenesis.repository.store;
 import module java.base;
 
 /**
- * An after-commit observer of {@link Publication#published} and {@link Publication#unpublish} - the second hook class
- * beside the verdict-bearing {@link PublishInterceptor}. Discovered with {@link java.util.ServiceLoader} like the
+ * An after-commit observer of {@link Publication#published} and {@link Publication#unpublish} - the <em>general</em>
+ * publication hook seam, whose verdict-bearing {@link PublishInterceptor} sub-interface (which {@code extends} this)
+ * adds the assess/withhold/commit screen. One {@code uses PublicationObserver} clause therefore discovers both, and
+ * {@link Publication} splits the discovered list by {@code instanceof PublishInterceptor} - so a base-only observer
+ * plugs in here unchanged and never sits in a verdict chain. Discovered with {@link java.util.ServiceLoader} like the
  * screens, but notified only once an ingress edge has screened an accepted artifact and laid it out and fires the
  * {@link Publication#published} seam - a quarantined or rejected publish is never observed - or once a serving pointer
  * is removed, and an observer has no say in either disposition.
