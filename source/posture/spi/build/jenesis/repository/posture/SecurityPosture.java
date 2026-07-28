@@ -59,8 +59,11 @@ public final class SecurityPosture implements SafetyAdvisor {
         }
 
         // 4. Wildcard console admins: '*' makes every authenticated user a console admin (the explicit open-console
-        //    opt-out) instead of naming the operators who should hold admin.
-        if ("*".equals(config.optional("jenesis.ui.admins").orElse(""))) {
+        //    opt-out) instead of naming the operators who should hold admin. Parse the value exactly as Principals does
+        //    - comma-split and trim - so 'alice,*' (which Principals honours as the wildcard, granting everyone admin)
+        //    raises the advisory too; matching only the whole-value "*" would fail open on a wildcard hidden in a list.
+        if (Arrays.stream(config.optional("jenesis.ui.admins").orElse("").split(","))
+                .map(String::trim).anyMatch("*"::equals)) {
             advisories.add(SecurityAdvisory.deployment("jenesis.console.wildcard", Severity.WARN,
                     "The admin console grants admin to every signed-in user",
                     "jenesis.ui.admins=* makes every authenticated user a console admin, so anyone who can sign in can "

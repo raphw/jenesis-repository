@@ -316,6 +316,16 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             OciManifests.Ingested ingested = OciManifests.ingest(
                     name, reference, body, exchange.requestHeader("Content-Type"), store);
             String hex = ingested.hex();
+            // A push BY DIGEST must actually hash to that digest - the manifest-side counterpart of the blob store()
+            // content-address check. Without this a client could PUT /manifests/sha256:<X> with a body that hashes to
+            // Y, and the registry would accept it and answer Docker-Content-Digest: sha256:Y, silently disagreeing
+            // with the reference the client (and any content-addressed puller) used. Refuse the mismatch as invalid.
+            if (reference.startsWith("sha256:") && !reference.substring("sha256:".length()).equalsIgnoreCase(hex)) {
+                exchange.setResponseHeader("Content-Type", "application/json");
+                exchange.respond(400, ("{\"errors\":[{\"code\":\"MANIFEST_INVALID\",\"message\":"
+                        + "\"the manifest body does not hash to the referenced digest\"}]}").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             switch (ingested.disposition()) {
                 case ACCEPT -> {
                     exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);

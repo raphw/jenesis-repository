@@ -116,6 +116,22 @@ final class SecurityPostureTest {
     }
 
     @Test
+    void aWildcardHiddenInTheAdminsListStillRaisesTheOpenConsoleAdvisory() {
+        // Regression: the advisory once matched only the whole value "*", so 'alice,*' - which Principals honours as
+        // the wildcard (it comma-splits and checks the set contains "*"), granting every signed-in user admin - failed
+        // open and raised no warning. It must fire whenever "*" appears as any element of the comma-separated list.
+        List<String> ids = new SecurityPosture().advise(config("jenesis.ui.admins", "github/alice, *"))
+                .stream().map(SecurityAdvisory::id).toList();
+        assertThat(ids)
+                .as("a '*' element anywhere in jenesis.ui.admins raises the open-console advisory, not only a bare '*'")
+                .contains("jenesis.console.wildcard");
+        // And a list with no wildcard - named operators only - does not raise it.
+        assertThat(new SecurityPosture().advise(config("jenesis.ui.admins", "github/alice, oidc/bob"))
+                .stream().map(SecurityAdvisory::id).toList())
+                .doesNotContain("jenesis.console.wildcard");
+    }
+
+    @Test
     void theCoreSeederFlagsTheRealFootgunsOnTheirActualKeys() {
         Configuration config = config(
                 "jenesis.repository.auth", "false",
@@ -168,13 +184,21 @@ final class SecurityPostureTest {
 
     @Test
     void noAdvisoryTextEverRepeatsAConfiguredValue() {
-        // The posture surface enumerates weaknesses, so it must never echo a secret: prove the rendered text of every
-        // seed carries no configured value even when the config holds a "secret".
-        Configuration config = config("jenesis.repository.auth", "false", "jenesis.ui.admins", "*",
-                "spring.profiles.active", "dev", "jenesis.repository.demo", "true");
-        for (SecurityAdvisory advisory : new SecurityPosture().advise(config)) {
-            String text = advisory.title() + " " + advisory.why() + " " + advisory.fix();
-            assertThat(text).doesNotContain("SECRETVALUE");
+        // The posture surface enumerates weaknesses, so it must never echo an operator's configured value (it names
+        // keys and RECOMMENDED fix values, never what is actually set). Put a recognizable sentinel INTO the values the
+        // firing advisories read, assert the seeds actually fired (so the check is not vacuous), then prove no
+        // advisory's rendered text - title, why, fix, AND the recommended settingValue - repeats the sentinel.
+        Configuration config = config(
+                "jenesis.repository.auth", "false",
+                "jenesis.ui.admins", "github/SECRETVALUE, *",
+                "spring.profiles.active", "SECRETVALUE,dev",
+                "jenesis.repository.demo", "true");
+        List<SecurityAdvisory> advisories = new SecurityPosture().advise(config);
+        assertThat(advisories).as("the seeds fired, so the doesNotContain checks below are non-vacuous").isNotEmpty();
+        for (SecurityAdvisory advisory : advisories) {
+            String text = advisory.title() + " " + advisory.why() + " " + advisory.fix() + " " + advisory.settingValue();
+            assertThat(text).as("advisory %s must not echo a configured value", advisory.id())
+                    .doesNotContain("SECRETVALUE");
         }
     }
 }
