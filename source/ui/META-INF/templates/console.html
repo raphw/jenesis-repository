@@ -15,6 +15,10 @@
             <li th:each="panel : ${panels}">
                 <a th:href="'#' + ${panel.id}" th:text="${panel.title}">Panel</a>
             </li>
+            <li th:if="${postureCount > 0}">
+                <a href="#posture" class="secondary" title="Security-posture advisories"
+                   th:text="'⚠ ' + ${postureCount}">⚠ 0</a>
+            </li>
             <li><select th:replace="~{base :: themeSelect}"></select></li>
             <li>
                 <form th:action="@{/logout}" method="post" style="display:inline;margin:0">

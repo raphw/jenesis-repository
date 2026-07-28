@@ -90,6 +90,7 @@ open module build.jenesis.repository.server {
     requires build.jenesis.repository.store.filesystem;
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.importer;
+    requires build.jenesis.repository.posture;
     requires tools.jackson.databind;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;

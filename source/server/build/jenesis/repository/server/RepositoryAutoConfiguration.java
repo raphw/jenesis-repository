@@ -55,6 +55,25 @@ public class RepositoryAutoConfiguration {
         // discovers providers, so every jenesis.repository.* toggle - including its JENESIS_REPOSITORY_* environment
         // spelling through relaxed binding - gates ServiceLoader discovery deployment-wide.
         Features.configure(environment::getProperty);
+        logSecurityPosture(environment);
+    }
+
+    /** Log the deployment-wide security-posture advisories at boot (WO.5), the single source of truth for the
+     *  secure-defaults boot WARNs (auth off, SSRF screen off, dev profile, ...): the same discovered {@link
+     *  build.jenesis.repository.posture.SafetyAdvisor} list the console panel and {@code GET /api/posture} surface, so a
+     *  condition is expressed once and both logged and shown. A clean deployment logs nothing. */
+    private static void logSecurityPosture(Environment environment) {
+        build.jenesis.repository.posture.PostureReport report = build.jenesis.repository.posture.PostureReport.discover(
+                build.jenesis.repository.posture.Configuration.of(environment::getProperty));
+        for (build.jenesis.repository.posture.SecurityAdvisory advisory
+                : report.scoped(build.jenesis.repository.posture.Scope.DEPLOYMENT)) {
+            String line = "SECURITY POSTURE [" + advisory.severity() + "] " + advisory.id() + ": " + advisory.why()
+                    + " Fix: " + advisory.fix() + " (" + advisory.settingKey() + "=" + advisory.settingValue() + ")";
+            switch (advisory.severity()) {
+                case CRITICAL, WARN -> LOGGER.warn(line);
+                case INFO -> LOGGER.info(line);
+            }
+        }
     }
 
     @Bean
@@ -71,16 +90,10 @@ public class RepositoryAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public Authorization authorization(RepositoryProperties properties, ArtifactStore store) {
-        if (!properties.isAuth()) {
-            // Secure-defaults principle: an insecure configuration must be loud, not silent. Per-credential
-            // authorization is on by default; this deployment turned it off explicitly (jenesis.repository.auth=false),
-            // so warn at boot that every request is served with no credential. Anonymous is a legitimate explicit
-            // choice, so this warns rather than failing the boot.
-            LOGGER.warn("SECURITY: per-credential authorization is DISABLED (jenesis.repository.auth=false) - the "
-                    + "repository is running ANONYMOUS/OPEN and every request is served without a credential. This is "
-                    + "an explicit opt-out; unset it or set jenesis.repository.auth=true (the default) to enforce "
-                    + "authorization.");
-        }
+        // Secure-defaults principle: an insecure configuration must be loud, not silent. The auth=false open-deployment
+        // WARN is no longer an ad-hoc line here; it is the jenesis.auth.open security-posture advisory
+        // (SecurityPosture), logged once at boot by logSecurityPosture(...) and surfaced on the console and
+        // GET /api/posture - one source of truth, no divergent second list.
         return properties.isAuth() ? Authorization.enforcing(store) : Authorization.anonymous();
     }
 
@@ -252,6 +265,14 @@ public class RepositoryAutoConfiguration {
     @ConditionalOnMissingBean
     public RecentLogsController recentLogsController(LogRingBuffer buffer) {
         return new RecentLogsController(buffer);
+    }
+
+    /** The security-posture read (WO.5) - {@code GET /api/posture}, the console / CLI read of the deployment's
+     *  configuration-warning advisories, discovered against the effective {@code Environment}. */
+    @Bean
+    @ConditionalOnMissingBean
+    public PostureController postureController(Environment environment) {
+        return new PostureController(environment);
     }
 
     @Bean

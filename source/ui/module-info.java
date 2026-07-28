@@ -113,6 +113,7 @@
 open module build.jenesis.repository.ui {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.observation;
+    requires build.jenesis.repository.posture;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;
     requires org.slf4j;

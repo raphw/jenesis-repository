@@ -23,9 +23,13 @@ public class UiConfig {
 
     @Bean
     @ConditionalOnMissingBean(name = "panels")
-    public List<Panel> panels() {
+    public List<Panel> panels(Environment environment) {
         List<Panel> panels = new ArrayList<>();
         ServiceLoader.load(Panel.class).forEach(panels::add);
+        // The Security-posture panel (WO.5) is config-aware, so it is contributed here with the deployment
+        // configuration lookup (the Spring Environment) rather than ServiceLoader-discovered no-arg, so its body reads
+        // the same effective configuration the header badge (ConsoleAdvice) counts.
+        panels.add(new PosturePanel(environment::getProperty));
         return panels;
     }
 
