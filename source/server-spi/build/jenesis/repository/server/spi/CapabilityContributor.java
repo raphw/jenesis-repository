@@ -1,4 +1,4 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.server.spi;
 
 import module java.base;
 
@@ -6,13 +6,13 @@ import module java.base;
  * A free-core extension point for the deployment-wide {@code /api/capabilities} surface, discovered at runtime with
  * {@link ServiceLoader} - so a richer distribution advertises its extra capabilities (an enterprise edition's supported
  * formats, import sources, module flags) on the <em>one</em> free-served {@code /api/capabilities} endpoint without a
- * bean override and without a client change. This is exactly the intent the free {@link RepositoryController#capabilities}
+ * bean override and without a client change. This is exactly the intent the free {@code RepositoryController#capabilities}
  * javadoc has always stated: "a distribution with more capabilities extends the map without a client change".
  *
- * <p>The free {@link RepositoryController} builds its base map ({@code readOnly}, {@code auth}, {@code anonymousRights}),
+ * <p>The free {@code RepositoryController} builds its base map ({@code readOnly}, {@code auth}, {@code anonymousRights}),
  * then {@link #merge merges} every discovered contributor into it. With no contributor installed - the free product -
  * the served map is exactly the base map, byte-for-byte unchanged. A distribution adds capabilities simply by shipping
- * a module that {@code provides build.jenesis.repository.server.CapabilityContributor with ...}; the server already
+ * a module that {@code provides build.jenesis.repository.server.spi.CapabilityContributor with ...}; the server already
  * {@code uses} it, so no core change is needed. It replaces the former {@code WebMvcRegistrations} mapping-suppression
  * stopgap that dropped the free mapping so an enterprise controller could own the same path.
  *

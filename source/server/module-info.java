@@ -86,6 +86,7 @@
  * @jenesis.pin tools.jackson.databind 3.2.0
  */
 open module build.jenesis.repository.server {
+    requires transitive build.jenesis.repository.server.spi;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
     requires build.jenesis.repository.format;
@@ -114,11 +115,7 @@ open module build.jenesis.repository.server {
     exports build.jenesis.repository.server;
     uses build.jenesis.repository.format.RepositoryFormat;
     uses build.jenesis.repository.importer.ImportSourceProvider;
-    uses build.jenesis.repository.server.TokenExchangeProvider;
-    uses build.jenesis.repository.server.KeyUsageTrackerProvider;
-    uses build.jenesis.repository.server.RateLimiterProvider;
-    uses build.jenesis.repository.server.CapabilityContributor;
-    uses build.jenesis.repository.server.ImportEdgeProvider;
+    uses build.jenesis.repository.server.spi.CapabilityContributor;
     provides build.jenesis.repository.posture.SafetyAdvisor
             with build.jenesis.repository.server.NodeDivergenceAdvisor;
 }

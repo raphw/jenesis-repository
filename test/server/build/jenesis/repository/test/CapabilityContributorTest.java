@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.CapabilityContributor;
+import build.jenesis.repository.server.spi.CapabilityContributor;
 import build.jenesis.repository.server.RepositoryApplication;
 import module org.junit.jupiter.api;
 

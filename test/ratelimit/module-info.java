@@ -87,7 +87,6 @@
  */
 open module build.jenesis.repository.ratelimit.test {
     requires build.jenesis.repository.ratelimit;
-    requires build.jenesis.repository.server;
     requires build.jenesis.repository.observation;
     requires org.junit.jupiter;
     requires org.assertj.core;

@@ -1,8 +1,8 @@
 package build.jenesis.repository.ratelimit;
 
 import module java.base;
-import build.jenesis.repository.server.RateLimiter;
-import build.jenesis.repository.server.RateLimiterProvider;
+import build.jenesis.repository.server.spi.RateLimiter;
+import build.jenesis.repository.server.spi.RateLimiterProvider;
 
 /**
  * Discovers the in-memory token-bucket limiter. There is nothing to configure - the ceiling is passed per call, so

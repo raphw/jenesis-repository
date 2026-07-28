@@ -1,4 +1,5 @@
 package build.jenesis.repository.server;
+import build.jenesis.repository.server.spi.Authorization;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;

@@ -1,4 +1,4 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.server.spi;
 
 import build.jenesis.repository.store.Features;
 
@@ -7,10 +7,10 @@ import module java.base;
 /**
  * A free-core signal SPI through which a richer distribution claims ownership of the import edge - the repo-less
  * {@code POST /repository/admin/import} / {@code GET /repository/admin/import/<id>} surface the free
- * {@link ImportEdgeController} serves - discovered at runtime with {@link ServiceLoader}, exactly like the
+ * {@code ImportEdgeController} serves - discovered at runtime with {@link ServiceLoader}, exactly like the
  * {@link CapabilityContributor} SPI and the format / import-source plugins. When any provider is {@link #installed()
- * installed}, the free {@link ImportEdgeController} bean is simply not registered (see
- * {@link RepositoryAutoConfiguration}), so its mapping never joins the handler mapping and the distribution's own
+ * installed}, the free {@code ImportEdgeController} bean is simply not registered (see
+ * {@code RepositoryAutoConfiguration}), so its mapping never joins the handler mapping and the distribution's own
  * import controller - the enterprise edition's tenant-scoped {@code /repository/<repo>/admin/import} with its audited,
  * SSRF-screened choreography - is the <em>only</em> import edge at boot.
  *
@@ -41,8 +41,8 @@ public interface ImportEdgeProvider {
     }
 
     /** Whether any {@link ServiceLoader}-discovered {@link ImportEdgeProvider} is active under the shared
-     *  {@link Features} convention - the single question the free {@link RepositoryAutoConfiguration} asks to decide
-     *  whether to register the free {@link ImportEdgeController}. {@code false} (no provider, or every discovered one
+     *  {@link Features} convention - the single question the free {@code RepositoryAutoConfiguration} asks to decide
+     *  whether to register the free {@code ImportEdgeController}. {@code false} (no provider, or every discovered one
      *  configured off / missing its required config) means the free import edge is served; {@code true} means a
      *  distribution owns the import edge and the free controller yields, its mapping never registered. */
     static boolean installed() {

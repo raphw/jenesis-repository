@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.Authorization;
+import build.jenesis.repository.server.spi.Authorization;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import module org.junit.jupiter.api;

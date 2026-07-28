@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.ImportEdgeProvider;
+import build.jenesis.repository.server.spi.ImportEdgeProvider;
 
 import module java.base;
 

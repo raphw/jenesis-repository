@@ -1,4 +1,4 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.server.spi;
 
 /**
  * A request rate limiter, keyed by an arbitrary string (a tenant, or a credential hash): {@link #allow} consumes

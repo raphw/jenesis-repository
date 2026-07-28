@@ -1,4 +1,7 @@
 package build.jenesis.repository.server;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.CapabilityContributor;
+import build.jenesis.repository.server.spi.ImportEdgeProvider;
 
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;

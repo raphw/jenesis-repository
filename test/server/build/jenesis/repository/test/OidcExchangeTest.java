@@ -1,8 +1,8 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.Authorization;
+import build.jenesis.repository.server.spi.Authorization;
 import build.jenesis.repository.oidc.OidcExchange;
-import build.jenesis.repository.server.TokenExchange;
+import build.jenesis.repository.server.spi.TokenExchange;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.github.tomakehurst.wiremock.WireMockServer;

@@ -1,4 +1,4 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.server.spi;
 
 /**
  * Opt-in usage tracking for credentials: an allowed request offers its tenant, key hash and source address, and an

@@ -2,12 +2,12 @@ package build.jenesis.repository.test;
 
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.importer.ImportSource;
-import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.RateLimiter;
-import build.jenesis.repository.server.RateLimiterProvider;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.RateLimiter;
+import build.jenesis.repository.server.spi.RateLimiterProvider;
 import build.jenesis.repository.server.RepositoryImport;
-import build.jenesis.repository.server.TokenExchange;
-import build.jenesis.repository.server.TokenExchangeProvider;
+import build.jenesis.repository.server.spi.TokenExchange;
+import build.jenesis.repository.server.spi.TokenExchangeProvider;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Features;

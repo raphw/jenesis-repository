@@ -1,8 +1,7 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.server.spi;
 
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
-import org.springframework.security.web.util.matcher.IpAddressMatcher;
 
 /**
  * The credential model. A key is {@code jenk_<tenant>.<secret><checksum>} (see {@link #mint}): the {@code jenk_}
@@ -681,13 +680,50 @@ public final class Authorization {
         return false;
     }
 
-    /** Whether {@code address} lies within {@code cidr} (a {@code network/bits} range or a plain address), via Spring
-     *  Security's {@link IpAddressMatcher} so IPv4/IPv6 normalisation and malformed masks are handled; a malformed
-     *  CIDR or address never matches. */
+    /** Whether {@code address} lies within {@code cidr} (a {@code network/bits} range, or a plain address matched in
+     *  full). A small hand-rolled matcher (this SPI module is Spring-free, so it cannot reach for spring-security-web's
+     *  {@code IpAddressMatcher}): it parses both sides with {@link InetAddress#getByName} - which accepts a numeric
+     *  IPv4 or IPv6 literal without a DNS lookup, exactly the inputs a source-IP allowlist and a client address carry -
+     *  and compares the {@code bits} most-significant masked bits of the network and address bytes. IPv4 and IPv6 never
+     *  match each other (their byte lengths differ); a malformed CIDR, a bad prefix length, or an unparseable/blank
+     *  address never matches (any failure yields {@code false}). Behaviour matches the previous
+     *  {@code new IpAddressMatcher(cidr).matches(address)}: a bare address is a full-length (/32 or /128) match, an
+     *  in-range address inside a listed CIDR matches, one outside does not. */
     private static boolean inRange(String address, String cidr) {
         try {
-            return new IpAddressMatcher(cidr).matches(address);
-        } catch (IllegalArgumentException e) {
+            if (address == null || cidr == null || cidr.isBlank()) {
+                return false;
+            }
+            int slash = cidr.indexOf('/');
+            String networkText = (slash < 0 ? cidr : cidr.substring(0, slash)).trim();
+            if (networkText.isEmpty()) {
+                return false;
+            }
+            byte[] network = InetAddress.getByName(networkText).getAddress();
+            byte[] target = InetAddress.getByName(address.trim()).getAddress();
+            if (network.length != target.length) {
+                return false;                     // an IPv4 range never covers an IPv6 address, or vice versa
+            }
+            int maxBits = network.length * 8;
+            int bits = slash < 0 ? maxBits : Integer.parseInt(cidr.substring(slash + 1).trim());
+            if (bits < 0 || bits > maxBits) {
+                return false;
+            }
+            int fullBytes = bits / 8;
+            for (int i = 0; i < fullBytes; i++) {
+                if (network[i] != target[i]) {
+                    return false;
+                }
+            }
+            int remainingBits = bits % 8;
+            if (remainingBits != 0) {
+                int mask = (0xFF << (8 - remainingBits)) & 0xFF;
+                if ((network[fullBytes] & mask) != (target[fullBytes] & mask)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (RuntimeException | java.net.UnknownHostException failure) {
             return false;
         }
     }
