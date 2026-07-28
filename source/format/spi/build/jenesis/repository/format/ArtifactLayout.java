@@ -3,8 +3,7 @@ package build.jenesis.repository.format;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.util.List;
-import java.util.Optional;
+import module java.base;
 
 /**
  * The optional coordinate/layout capability of a {@link RepositoryFormat}: it maps a request path this format owns to

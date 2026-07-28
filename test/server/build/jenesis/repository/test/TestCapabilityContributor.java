@@ -2,9 +2,7 @@ package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.CapabilityContributor;
 
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import module java.base;
 
 /**
  * A test {@link CapabilityContributor} registered through this test module's {@code module-info} {@code provides}

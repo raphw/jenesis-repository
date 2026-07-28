@@ -4,11 +4,9 @@ import build.jenesis.repository.observation.Health;
 import build.jenesis.repository.observation.HealthCheck;
 import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.TaskStatus;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.OptionalDouble;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

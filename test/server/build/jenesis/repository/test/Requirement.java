@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import org.junit.jupiter.api.Assumptions;
+import module org.junit.jupiter.api;
 
 /**
  * Gates a test on its environment - a tool on the {@code PATH}, a reachable upstream, a running daemon. By default an

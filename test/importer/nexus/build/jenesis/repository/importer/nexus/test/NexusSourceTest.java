@@ -2,7 +2,7 @@ package build.jenesis.repository.importer.nexus.test;
 
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.importer.nexus.NexusSource;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

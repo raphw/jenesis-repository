@@ -5,10 +5,9 @@ import build.jenesis.repository.importer.ImportRequest;
 import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.importer.artifactory.ArtifactorySource;
 import build.jenesis.repository.importer.artifactory.ArtifactorySourceProvider;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.net.URI;
-import java.util.Optional;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

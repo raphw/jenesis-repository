@@ -4,11 +4,9 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Tenants;
 import build.jenesis.repository.store.TenantsProvider;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
-import java.io.IOException;
-import java.nio.file.Path;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;

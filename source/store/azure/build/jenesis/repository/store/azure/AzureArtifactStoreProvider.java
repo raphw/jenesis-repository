@@ -7,8 +7,7 @@ import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 import com.azure.storage.blob.models.BlobStorageException;
 
-import java.util.Set;
-import java.util.function.UnaryOperator;
+import module java.base;
 
 /**
  * The {@code azure-blob} artifact-store backend over an Azure Blob Storage container. Selected with

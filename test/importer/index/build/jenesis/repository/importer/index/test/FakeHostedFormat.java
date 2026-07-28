@@ -4,7 +4,7 @@ import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.io.IOException;
+import module java.base;
 
 /** A fake hosted-only format (no {@code ProxyFormat}), so a test proves the connector refuses a format that
  *  cannot enumerate an upstream. */

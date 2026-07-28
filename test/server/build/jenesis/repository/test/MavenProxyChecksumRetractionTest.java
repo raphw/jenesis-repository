@@ -6,24 +6,9 @@ import build.jenesis.repository.format.maven.MavenFormat;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Publication;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
-import java.util.Map;
-import java.util.Optional;
-import java.util.jar.JarOutputStream;
-import java.util.jar.Manifest;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

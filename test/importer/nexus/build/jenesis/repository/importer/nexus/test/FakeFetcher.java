@@ -2,11 +2,7 @@ package build.jenesis.repository.importer.nexus.test;
 
 import build.jenesis.repository.format.ProxyFormat;
 
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import module java.base;
 
 /**
  * A fixed in-memory {@link ProxyFormat.Fetcher}: it answers each URL from a canned response map (an unmapped URL is a

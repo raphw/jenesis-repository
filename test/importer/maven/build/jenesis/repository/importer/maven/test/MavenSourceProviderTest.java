@@ -5,11 +5,9 @@ import build.jenesis.repository.importer.ImportRequest;
 import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.importer.maven.MavenSource;
 import build.jenesis.repository.importer.maven.MavenSourceProvider;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.net.URI;
-import java.util.Map;
-import java.util.Optional;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

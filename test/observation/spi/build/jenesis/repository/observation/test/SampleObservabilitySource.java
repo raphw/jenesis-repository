@@ -6,7 +6,7 @@ import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilitySource;
 import build.jenesis.repository.observation.TaskStatus;
 
-import java.util.List;
+import module java.base;
 
 /**
  * A {@code provides}-declared {@link ObservabilitySource} standing in for a real plugin, so the

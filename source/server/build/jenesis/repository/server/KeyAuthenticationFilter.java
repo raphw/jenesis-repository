@@ -8,8 +8,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
-import java.util.Collections;
+import module java.base;
 
 /**
  * Lifts the {@code Jenesis-Repository-Key} header into the Spring Security context, so a keyed request is seen as

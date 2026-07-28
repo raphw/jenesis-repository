@@ -4,9 +4,9 @@ import build.jenesis.repository.posture.PostureReport;
 import build.jenesis.repository.posture.SecurityAdvisory;
 import build.jenesis.repository.posture.Severity;
 import build.jenesis.repository.ui.PosturePanel;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.util.List;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

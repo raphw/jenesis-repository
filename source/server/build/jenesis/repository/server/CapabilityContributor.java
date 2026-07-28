@@ -1,8 +1,6 @@
 package build.jenesis.repository.server;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.ServiceLoader;
+import module java.base;
 
 /**
  * A free-core extension point for the deployment-wide {@code /api/capabilities} surface, discovered at runtime with

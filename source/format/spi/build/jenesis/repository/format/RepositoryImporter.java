@@ -3,9 +3,7 @@ package build.jenesis.repository.format;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Optional;
+import module java.base;
 
 /**
  * The optional migration-import capability of a {@link RepositoryFormat}: a format that also implements this can

@@ -1,10 +1,9 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.BoundedTenantBuckets;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.util.HashSet;
-import java.util.Set;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

@@ -2,7 +2,7 @@ package build.jenesis.repository.test;
 
 import module java.base;
 
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

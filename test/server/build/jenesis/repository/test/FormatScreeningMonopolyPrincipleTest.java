@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

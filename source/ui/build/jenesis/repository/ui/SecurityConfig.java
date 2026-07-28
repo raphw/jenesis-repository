@@ -11,7 +11,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 
-import java.util.List;
+import module java.base;
 
 /**
  * Server-side security for the console: deny-by-default authorization and Spring Security's CSRF protection (left

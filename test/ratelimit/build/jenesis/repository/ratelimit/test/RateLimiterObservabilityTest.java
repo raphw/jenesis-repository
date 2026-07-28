@@ -5,9 +5,9 @@ import build.jenesis.repository.observation.HealthCheck;
 import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilityReport;
 import build.jenesis.repository.ratelimit.TokenBucketRateLimiter;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.util.List;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

@@ -7,18 +7,12 @@ import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Publication;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import module java.base;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import module java.net.http;
 import java.net.http.HttpResponse.BodyHandlers;
 
 import static org.assertj.core.api.Assertions.assertThat;

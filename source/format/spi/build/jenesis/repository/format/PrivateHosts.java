@@ -1,7 +1,6 @@
 package build.jenesis.repository.format;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
+import module java.base;
 
 /**
  * The one private-range classifier the SSRF screens share, so the import trigger (an operator-supplied URL) and the

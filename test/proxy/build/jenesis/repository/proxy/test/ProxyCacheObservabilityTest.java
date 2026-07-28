@@ -7,7 +7,7 @@ import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilityReport;
 import build.jenesis.repository.proxy.NegativeCachingFetcher;
 import build.jenesis.repository.proxy.RevalidatingFetcher;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

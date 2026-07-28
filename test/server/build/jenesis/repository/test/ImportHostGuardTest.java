@@ -3,17 +3,11 @@ package build.jenesis.repository.test;
 import build.jenesis.repository.server.RepositoryApplication;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
 import module java.base;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import module java.net.http;
 import java.net.http.HttpRequest.BodyPublishers;
-import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;

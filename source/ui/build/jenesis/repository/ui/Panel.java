@@ -2,7 +2,7 @@ package build.jenesis.repository.ui;
 
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.io.IOException;
+import module java.base;
 
 /**
  * A console panel, discovered with {@code ServiceLoader} and bridged into Spring by {@link UiConfig}. The shell ships

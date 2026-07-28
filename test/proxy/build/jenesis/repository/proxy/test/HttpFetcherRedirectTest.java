@@ -2,8 +2,8 @@ package build.jenesis.repository.proxy.test;
 
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.proxy.HttpFetcher;
-import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.Test;
+import module jdk.httpserver;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

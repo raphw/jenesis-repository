@@ -8,12 +8,10 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
-import java.lang.reflect.Proxy;
 import module java.base;
+import java.lang.reflect.Proxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

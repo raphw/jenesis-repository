@@ -9,9 +9,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import module java.base;
 
 /**
  * The sign-in page. It lists the configured OAuth2/OIDC providers (each linking to Spring Security's authorization

@@ -1,7 +1,7 @@
 package build.jenesis.repository.ui.test;
 
 import build.jenesis.repository.ui.SpiCatalogPanel;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

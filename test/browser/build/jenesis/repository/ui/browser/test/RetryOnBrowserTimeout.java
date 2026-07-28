@@ -2,13 +2,9 @@ package build.jenesis.repository.ui.browser.test;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.List;
+import module java.base;
 
-import org.junit.jupiter.api.extension.ExtensionContext;
-import org.junit.jupiter.api.extension.InvocationInterceptor;
-import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
+import module org.junit.jupiter.api;
 import org.openqa.selenium.WebDriverException;
 
 /**

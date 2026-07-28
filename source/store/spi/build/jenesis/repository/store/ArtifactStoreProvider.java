@@ -1,9 +1,6 @@
 package build.jenesis.repository.store;
 
-import java.util.List;
-import java.util.ServiceLoader;
-import java.util.Set;
-import java.util.function.UnaryOperator;
+import module java.base;
 
 /**
  * A named factory for an {@link ArtifactStore} backend, discovered at runtime with {@link ServiceLoader}.

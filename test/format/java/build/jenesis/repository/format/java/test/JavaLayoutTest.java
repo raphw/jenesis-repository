@@ -1,7 +1,7 @@
 package build.jenesis.repository.format.java.test;
 
 import build.jenesis.repository.format.java.JavaLayout;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import module java.base;
 import java.util.jar.Attributes;

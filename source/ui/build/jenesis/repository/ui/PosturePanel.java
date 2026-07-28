@@ -6,8 +6,7 @@ import build.jenesis.repository.posture.Scope;
 import build.jenesis.repository.posture.SecurityAdvisory;
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.util.Objects;
-import java.util.function.UnaryOperator;
+import module java.base;
 
 /**
  * The Security-posture panel (WO.5): the console's window onto <em>all</em> of this deployment's configuration-warning

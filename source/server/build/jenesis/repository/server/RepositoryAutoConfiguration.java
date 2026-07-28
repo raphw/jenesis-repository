@@ -25,12 +25,7 @@ import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.ServiceLoader;
+import module java.base;
 
 /**
  * Publishes the repository as Spring Boot auto-configuration so a downstream distribution can consume it with a plain

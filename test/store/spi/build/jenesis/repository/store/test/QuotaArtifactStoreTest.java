@@ -4,8 +4,7 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.QuotaArtifactStore;
 import build.jenesis.repository.store.QuotaExceededException;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

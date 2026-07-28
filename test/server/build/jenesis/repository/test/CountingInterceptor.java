@@ -3,7 +3,7 @@ package build.jenesis.repository.test;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.PublishInterceptor;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import module java.base;
 
 /**
  * A test-only publication screen, discovered like a real one, that counts how many times the chain assesses a body -

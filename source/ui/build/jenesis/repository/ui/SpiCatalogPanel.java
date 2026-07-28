@@ -2,12 +2,7 @@ package build.jenesis.repository.ui;
 
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.lang.module.ModuleDescriptor;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import module java.base;
 
 /**
  * The SPI catalogue panel: the console's read-only view of this repository's plug-in surface, grouped by SPI. Every

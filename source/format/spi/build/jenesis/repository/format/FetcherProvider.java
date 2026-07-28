@@ -2,10 +2,7 @@ package build.jenesis.repository.format;
 
 import build.jenesis.repository.store.Features;
 
-import java.util.Optional;
-import java.util.ServiceLoader;
-import java.util.Set;
-import java.util.function.UnaryOperator;
+import module java.base;
 
 /**
  * A named factory for the upstream {@link ProxyFormat.Fetcher}, discovered at runtime with {@link ServiceLoader} -

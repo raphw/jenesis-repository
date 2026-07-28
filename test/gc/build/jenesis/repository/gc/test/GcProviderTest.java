@@ -2,7 +2,7 @@ package build.jenesis.repository.gc.test;
 
 import build.jenesis.repository.gc.GarbageCollectorProvider;
 import build.jenesis.repository.store.Features;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

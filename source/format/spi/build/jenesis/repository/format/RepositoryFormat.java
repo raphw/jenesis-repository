@@ -3,11 +3,7 @@ package build.jenesis.repository.format;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Features;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.Optional;
-import java.util.ServiceLoader;
-import java.util.Set;
+import module java.base;
 
 /**
  * A repository protocol over the shared {@link ArtifactStore}: it claims a set of request paths and serves and

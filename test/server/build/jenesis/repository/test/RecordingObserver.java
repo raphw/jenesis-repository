@@ -4,8 +4,7 @@ import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.PublicationObserver;
 
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import module java.base;
 
 /**
  * A test-only after-commit observer, discovered like a real one, that records the {@link ArtifactDescriptor} of every

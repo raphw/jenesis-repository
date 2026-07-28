@@ -1,7 +1,6 @@
 package build.jenesis.repository.format;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Objects;
+import module java.base;
 
 /**
  * A small SVG icon a {@link RepositoryFormat} embeds in its own module and lends to the console through

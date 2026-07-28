@@ -2,10 +2,7 @@ package build.jenesis.repository.server;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-import java.time.Duration;
-import java.util.LinkedHashMap;
-import java.util.Locale;
-import java.util.Map;
+import module java.base;
 
 /**
  * The configuration of the Spring repository server, bound from {@code jenesis.repository.*}: the artifact-store

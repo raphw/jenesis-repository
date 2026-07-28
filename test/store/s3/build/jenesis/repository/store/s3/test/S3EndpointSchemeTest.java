@@ -1,9 +1,9 @@
 package build.jenesis.repository.store.s3.test;
 
 import build.jenesis.repository.store.s3.S3ArtifactStoreProvider;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.net.URI;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

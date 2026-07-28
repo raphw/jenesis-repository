@@ -1,9 +1,9 @@
 package build.jenesis.repository.importer.test;
 
 import build.jenesis.repository.importer.ImportRequest;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.net.URI;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

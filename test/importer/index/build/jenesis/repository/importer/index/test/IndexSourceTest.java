@@ -3,7 +3,7 @@ package build.jenesis.repository.importer.index.test;
 import build.jenesis.repository.importer.ImportRequest;
 import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.importer.index.IndexSourceProvider;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

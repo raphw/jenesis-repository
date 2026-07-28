@@ -4,13 +4,9 @@ import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.ReadOnlyArtifactStore;
 import build.jenesis.repository.store.ReadOnlyException;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.file.Path;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

@@ -2,7 +2,7 @@ package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.ImportEdgeProvider;
 import build.jenesis.repository.store.Features;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

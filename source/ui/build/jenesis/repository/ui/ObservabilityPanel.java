@@ -6,7 +6,7 @@ import build.jenesis.repository.observation.ObservabilityReport;
 import build.jenesis.repository.observation.TaskStatus;
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.util.OptionalDouble;
+import module java.base;
 
 /**
  * The metrics-overview panel (WO.2): the console's plain, no-graphs window onto <em>all</em> of this repository's

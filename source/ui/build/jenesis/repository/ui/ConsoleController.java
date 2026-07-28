@@ -5,9 +5,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+import module java.base;
 
 /**
  * Renders the console: it asks each registered {@link Panel} to render its body against the repository

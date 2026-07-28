@@ -5,7 +5,7 @@ import build.jenesis.repository.posture.SafetyAdvisor;
 import build.jenesis.repository.posture.SecurityAdvisory;
 import build.jenesis.repository.posture.Severity;
 
-import java.util.List;
+import module java.base;
 
 /**
  * A {@code provides}-declared {@link SafetyAdvisor} standing in for a real feature module, so the {@link

@@ -1,7 +1,7 @@
 package build.jenesis.repository.store.s3.test;
 
 import build.jenesis.repository.store.s3.S3ArtifactStore;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 

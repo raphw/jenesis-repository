@@ -2,9 +2,7 @@ package build.jenesis.repository.server;
 
 import build.jenesis.repository.format.FormatExchange;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import module java.base;
 
 /**
  * A {@link FormatExchange} that wraps a real request/response exchange but restreams its request body from an

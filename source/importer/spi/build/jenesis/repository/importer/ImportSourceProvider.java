@@ -2,7 +2,7 @@ package build.jenesis.repository.importer;
 
 import build.jenesis.repository.format.ProxyFormat;
 
-import java.util.Set;
+import module java.base;
 
 /**
  * Discovers and builds an {@link ImportSource} for a named incumbent. A source implementation ships as its own module

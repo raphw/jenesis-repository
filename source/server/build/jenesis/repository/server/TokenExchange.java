@@ -1,7 +1,6 @@
 package build.jenesis.repository.server;
 
-import java.io.IOException;
-import java.time.Instant;
+import module java.base;
 
 /**
  * Exchanges a workload's identity token for a short-lived Jenesis credential, so a CI job authenticates with the

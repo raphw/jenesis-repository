@@ -2,21 +2,10 @@ package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.CapabilityContributor;
 import build.jenesis.repository.server.RepositoryApplication;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import module java.base;
+import module java.net.http;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

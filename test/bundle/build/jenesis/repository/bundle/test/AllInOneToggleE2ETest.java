@@ -3,9 +3,7 @@ package build.jenesis.repository.bundle.test;
 import module java.base;
 import module java.net.http;
 import build.jenesis.repository.bundle.AllInOne;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

@@ -7,10 +7,9 @@ import build.jenesis.repository.posture.Scope;
 import build.jenesis.repository.posture.SecurityAdvisory;
 import build.jenesis.repository.posture.SecurityPosture;
 import build.jenesis.repository.posture.Severity;
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 
-import java.util.List;
-import java.util.Map;
+import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

@@ -1,10 +1,7 @@
 package build.jenesis.repository.proxy;
 
 import module java.base;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
+import module java.net.http;
 import build.jenesis.repository.format.PrivateHosts;
 import build.jenesis.repository.format.ProxyFormat;
 

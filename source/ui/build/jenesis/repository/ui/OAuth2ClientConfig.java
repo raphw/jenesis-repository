@@ -12,8 +12,7 @@ import org.springframework.security.oauth2.client.registration.ClientRegistratio
 import org.springframework.security.oauth2.client.registration.ClientRegistrations;
 import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
 
-import java.util.ArrayList;
-import java.util.List;
+import module java.base;
 
 /**
  * Builds the OAuth2/OIDC client registrations from configuration: the built-in GitHub provider when

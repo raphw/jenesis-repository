@@ -7,9 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ServiceLoader;
+import module java.base;
 
 /**
  * Bridges the framework-neutral console primitives into Spring: the {@link Panel} plugins (discovered with

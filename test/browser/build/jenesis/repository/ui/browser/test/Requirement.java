@@ -1,6 +1,6 @@
 package build.jenesis.repository.ui.browser.test;
 
-import org.junit.jupiter.api.Assumptions;
+import module org.junit.jupiter.api;
 
 /**
  * Gates a test on its environment - here a reachable Docker daemon for the {@code selenium/standalone-chrome}

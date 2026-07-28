@@ -8,8 +8,7 @@ import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.store.testkit.FaultInjectingStore;
 import build.jenesis.repository.store.testkit.StoreInvariants;
 import build.jenesis.repository.walk.store.StoreArtifactWalk;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

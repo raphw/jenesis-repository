@@ -1,8 +1,8 @@
 package build.jenesis.repository.ui.browser.test;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import module java.base;
 
-import org.junit.jupiter.api.Test;
+import module org.junit.jupiter.api;
 import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriverException;
 

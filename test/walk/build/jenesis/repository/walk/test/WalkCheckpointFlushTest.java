@@ -5,8 +5,7 @@ import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.walk.ArtifactWalk;
 import build.jenesis.repository.walk.WalkPass;
 import build.jenesis.repository.walk.store.StoreArtifactWalk;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import module org.junit.jupiter.api;
 
 import module java.base;
 

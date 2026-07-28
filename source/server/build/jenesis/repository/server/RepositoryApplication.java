@@ -8,8 +8,7 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
 
-import java.net.URI;
-import java.util.Map;
+import module java.base;
 
 /**
  * The Spring Boot entry point for the dual-layout repository. The framework-neutral logic - the dual layout, the

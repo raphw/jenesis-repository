@@ -2,9 +2,7 @@ package build.jenesis.repository.ui;
 
 import build.jenesis.repository.store.ArtifactStore;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+import module java.base;
 
 /**
  * The bundled browse panel: the console's entry point into the generic artifact browse ({@link BrowseController} at
