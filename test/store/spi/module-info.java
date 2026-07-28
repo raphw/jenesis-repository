@@ -40,6 +40,7 @@
 open module build.jenesis.repository.store.test {
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
+    requires build.jenesis.repository.store.testkit;
     requires build.jenesis.repository.observation;
     requires org.junit.jupiter;
     requires org.assertj.core;
