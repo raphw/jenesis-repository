@@ -314,6 +314,19 @@ source contributes nothing, so it is simply not listed, and an instance with no 
 shows a friendly empty state rather than an error. It is the free counterpart of the enterprise
 console's metrics-overview page and its `/api/admin/observability` admin API.
 
+The engine adopters self-describe their signals through the same `ObservabilitySource` seam: the
+rate limiter (`jenesis.ratelimit.*`), the key-usage tracker (`jenesis.usage.*`), the storage quota
+(`jenesis.quota.*`), the proxy caches (`jenesis.proxy.*`) and now the two whole-store sweep engines -
+the shared-walk engine (`StoreArtifactWalk`, reporting `jenesis.walk.segments` a bounded convergence
+gauge, `jenesis.walk.resumes` a takeover counter, and a `jenesis.walk.pass` task status) and the
+mark-sweep garbage collector (`MarkSweepGarbageCollector`, reporting `jenesis.gc.condemned` the
+in-flight condemned gauge, `jenesis.gc.collected` a reclaimed counter, and a `jenesis.gc.lastrun`
+task status; a deployment with no collector installed or selected contributes nothing, so GC-off is
+visible on the capabilities surface rather than as a silent signal). A never-run walk and a never-run
+collector each report nothing until their first pass. The enterprise `OBSERVABILITY.md` §11 Adopters
+catalogue renders these rows automatically once the republished modules are re-pinned in the operator
+§9 batch.
+
 | Module | Folder | What it is |
 |--------|--------|------------|
 | `build.jenesis.repository.store`    | `source/store/spi` | The `ArtifactStore` SPI (streaming `read`/`open`/`write` and the content-addressing `writeBlob` that digests a blob as it streams, plus `exists`/`size`/`list`/`delete`, the ordered child paging `page` - start-after + limit, overridden natively per backend so a flat millions-entry namespace never materialises as one list - and `writeVersioned` for cross-node compare-and-set, over an object namespace), the `QuotaArtifactStore` decorator that caps a scope's stored content bytes, and the format-neutral content-addressed store (`Publication`) that every format publishes through - including its gated `publish(descriptor, stream)`, which stores the blob, runs the ordered `ServiceLoader`-discovered `PublishInterceptor` chain over the neutral `ArtifactDescriptor`, routes the pointer by the strongest disposition (accept / quarantine / reject), and only then notifies the `PublicationObserver` after-commit hooks (contained, accepted publishes only); its `unpublish` notifies the same observers of the removal (`onDeleted`, once per removed pointer, path + blob hash - contained the same way, never blocking the removal; a layout-aware eviction enriches the event through `unpublish(descriptor)`, or reports a pointer it deleted in a format's own namespace through `deleted(descriptor)`); its serving lookup (`located`) asks the same screens whether a path is withheld - the quarantine read side. Also the reusable `DirtyIndexFeed` incremental-derived-index primitive (dirty-set form): `touched`/`removed` mark a coordinate under a `.../dirty/` prefix, `applySince` sweeps only the marked coordinates for an idempotent upsert-by-coordinate (with a monotonic-version out-of-order guard), `clear` compacts the applied markers after the snapshot commits (crash-safe), and `compactThrough` GCs the feed behind a periodic full reconcile - so a search / dependents / roll-up index runs O(&Delta;) in steady state, with the append-only-journal-with-cursor form left documented as the richer option. `java.base` only, so a format plugin builds on it without pulling in the server. |

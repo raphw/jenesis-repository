@@ -15,6 +15,7 @@
 module build.jenesis.repository.gc.store {
     requires build.jenesis.repository.gc;
     requires build.jenesis.repository.walk;
+    requires build.jenesis.repository.observation;
     exports build.jenesis.repository.gc.store to build.jenesis.repository.gc.test;
     provides build.jenesis.repository.gc.GarbageCollectorProvider
             with build.jenesis.repository.gc.store.MarkSweepGarbageCollectorProvider;

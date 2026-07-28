@@ -40,6 +40,7 @@ open module build.jenesis.repository.gc.test {
     requires build.jenesis.repository.gc.store;
     requires build.jenesis.repository.walk;
     requires build.jenesis.repository.walk.store;
+    requires build.jenesis.repository.observation;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
     requires build.jenesis.repository.store.testkit;
