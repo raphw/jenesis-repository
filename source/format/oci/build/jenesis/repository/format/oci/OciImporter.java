@@ -42,8 +42,15 @@ public final class OciImporter implements RepositoryImporter {
         }
         int manifests = rest.indexOf("/manifests/");
         if (manifests >= 0) {
-            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()),
-                    content.readAllBytes(), store);
+            // Bound the imported manifest read exactly as the push path does (OciFormat.MAX_MANIFEST): a manifest is
+            // metadata, so buffering it whole to screen it is fine only when capped - a source registry handing back a
+            // multi-GB "manifest" asset must not OOM the migration.
+            byte[] body = content.readNBytes(OciFormat.MAX_MANIFEST + 1);
+            if (body.length > OciFormat.MAX_MANIFEST) {
+                throw new IOException("imported manifest at " + rest + " exceeds the " + OciFormat.MAX_MANIFEST
+                        + "-byte limit - refused.");
+            }
+            manifest(rest.substring(0, manifests), rest.substring(manifests + "/manifests/".length()), body, store);
             return;
         }
         if (rest.contains("/blobs/")) {

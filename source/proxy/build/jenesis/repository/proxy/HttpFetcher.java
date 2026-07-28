@@ -50,6 +50,15 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
     /** A bound on the redirect chain, so a redirect loop cannot spin an import or a proxy fetch forever. */
     private static final int MAX_REDIRECTS = 5;
 
+    /** A ceiling on a BUFFERED {@link #fetch} body. {@code fetch} is the small-mutable-index path (a packument,
+     *  maven-metadata, an OCI manifest, a catalog/tags page, a bearer-token JSON) and buffers the response whole; a
+     *  hostile, compromised or MITM-substituted upstream (operator-configured, so a trust-boundary defence rather than
+     *  an unauthenticated one) could otherwise return a multi-GB "index" and OOM the proxy before anything caps it
+     *  (RevalidatingFetcher's cache cap only gates what is stored, after the body is already in heap). 64 MiB is far
+     *  above any legitimate index yet bounds the buffer; the streaming {@link #download} path stays uncapped by design
+     *  (it copies network-to-store without buffering). */
+    private static final int MAX_FETCH_BODY = 64 * 1024 * 1024;
+
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .followRedirects(HttpClient.Redirect.NEVER)
@@ -81,8 +90,19 @@ public final class HttpFetcher implements ProxyFormat.Fetcher {
     @Override
     public Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException {
         try {
-            HttpResponse<byte[]> response = send(url, requestHeaders, "GET", HttpResponse.BodyHandlers.ofByteArray());
-            return Optional.of(new ProxyFormat.Fetched(response.statusCode(), response.body(), headers(response)));
+            // Stream the buffered index body through a bounded read rather than ofByteArray(), so a hostile/oversized
+            // upstream response is refused at MAX_FETCH_BODY instead of materialising a multi-GB byte[] on the heap.
+            HttpResponse<InputStream> response = send(url, requestHeaders, "GET",
+                    HttpResponse.BodyHandlers.ofInputStream());
+            byte[] body;
+            try (InputStream in = response.body()) {
+                body = in.readNBytes(MAX_FETCH_BODY + 1);
+            }
+            if (body.length > MAX_FETCH_BODY) {
+                throw new IOException("Upstream index body from " + url + " exceeds the " + MAX_FETCH_BODY
+                        + "-byte fetch limit - refused (a proxied index must be small metadata, not a bulk artifact).");
+            }
+            return Optional.of(new ProxyFormat.Fetched(response.statusCode(), body, headers(response)));
         } catch (HttpTimeoutException e) {
             return Optional.empty();
         } catch (InterruptedException e) {
