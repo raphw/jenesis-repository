@@ -149,6 +149,46 @@ public class RepositoryAuthE2ETest {
         assertThat(get("maven/org/example/ip/1/ip-1.jar", allowlisted).statusCode()).isEqualTo(200);
     }
 
+    @Test
+    public void the_api_reads_are_key_gated_like_every_other_wire_read() throws Exception {
+        // W9.1: the deployment-wide /api reads (posture, capabilities) ride the same deny-by-default
+        // RepositoryAuthorizationManager as every other surface - no key is 401, a repository:read key is 200. They
+        // are not an open backdoor that enumerates the deployment (posture names every unsafe setting) without a key.
+        for (String path : List.of("/api/posture", "/api/capabilities")) {
+            assertThat(apiGet(path, null).statusCode()).as(path + " without a key -> 401").isEqualTo(401);
+            assertThat(apiGet(path, ro).statusCode()).as(path + " with a repository:read key -> 200").isEqualTo(200);
+        }
+    }
+
+    @Test
+    public void the_admin_import_trigger_is_authorized_as_a_write() throws Exception {
+        // W9.1: POST /repository/admin/import is a state-changing background-job trigger; it is a repository:write like
+        // any other mutation. No key is 401; a repository:read-only key is refused (403); a write key clears
+        // authorization and reaches the controller (never 401/403 - the missing body/target then answers a 4xx of its
+        // own, which is not an authorization verdict).
+        assertThat(apiPost("/repository/admin/import", null).statusCode()).as("no key -> 401").isEqualTo(401);
+        assertThat(apiPost("/repository/admin/import", ro).statusCode()).as("a read-only key -> 403").isEqualTo(403);
+        assertThat(apiPost("/repository/admin/import", ci).statusCode())
+                .as("a write key clears authorization (reaches the controller, never 401/403)").isNotIn(401, 403);
+    }
+
+    private HttpResponse<byte[]> apiGet(String path, String key) throws IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(root + path)).GET();
+        if (key != null) {
+            request.header("Jenesis-Repository-Key", key);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private HttpResponse<byte[]> apiPost(String path, String key) throws IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(root + path))
+                .POST(HttpRequest.BodyPublishers.noBody());
+        if (key != null) {
+            request.header("Jenesis-Repository-Key", key);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
     private HttpResponse<byte[]> assets(String key) throws IOException, InterruptedException {
         return assets(key, "default");
     }
