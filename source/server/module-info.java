@@ -91,6 +91,7 @@ open module build.jenesis.repository.server {
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.importer;
     requires build.jenesis.repository.posture;
+    requires build.jenesis.repository.observation;
     requires tools.jackson.databind;
     requires org.apache.tomcat.embed.core;
     requires micrometer.observation;
@@ -117,4 +118,6 @@ open module build.jenesis.repository.server {
     uses build.jenesis.repository.server.KeyUsageTrackerProvider;
     uses build.jenesis.repository.server.RateLimiterProvider;
     uses build.jenesis.repository.server.CapabilityContributor;
+    provides build.jenesis.repository.posture.SafetyAdvisor
+            with build.jenesis.repository.server.NodeDivergenceAdvisor;
 }

@@ -305,6 +305,43 @@ public class RepositoryAutoConfiguration {
         return new PostureController(environment);
     }
 
+    /** The multi-node consistency check (WCON.2): the fingerprint compare over the shared store, tuned from the
+     *  {@code jenesis.consistency.*} settings. Reads only the {@code consistency/nodes/} prefix, never a scan. */
+    @Bean
+    @ConditionalOnMissingBean
+    public NodeConsistency nodeConsistency(ArtifactStore store, Environment environment) {
+        return new NodeConsistency(store, NodeConsistency.settingsFrom(environment::getProperty));
+    }
+
+    /** This node's fingerprint publisher (WCON.2): a stable node id and a daemon heartbeat that publishes this node's
+     *  derived-state fingerprint to the shared store, so the fleet has something to compare. Best-effort - it never
+     *  blocks the node it runs on. */
+    @Bean(initMethod = "start", destroyMethod = "close")
+    @ConditionalOnMissingBean
+    public NodeFingerprintPublisher nodeFingerprintPublisher(NodeConsistency consistency, ArtifactStore store,
+                                                             Environment environment) {
+        return new NodeFingerprintPublisher(consistency, store, environment::getProperty);
+    }
+
+    /** The multi-node consistency read (WCON.2) - {@code GET /api/consistency}, the per-node fingerprints and any
+     *  divergence between them, read-authorised like the rest of the wire; the enterprise edition mirrors it as an
+     *  operator-gated {@code /api/admin/consistency}. */
+    @Bean
+    @ConditionalOnMissingBean
+    public ConsistencyController consistencyController(NodeConsistency consistency,
+                                                       NodeFingerprintPublisher publisher) {
+        return new ConsistencyController(consistency, publisher.nodeId());
+    }
+
+    /** The observability face of the consistency check (WCON.2, WO.4): live-node and divergence gauges plus a
+     *  divergence health check, so the overview shows how many instances there are and whether they agree - what makes
+     *  the "these numbers are instance-specific" caveat trustworthy. */
+    @Bean
+    @ConditionalOnMissingBean
+    public NodeConsistencyObservability nodeConsistencyObservability(NodeConsistency consistency) {
+        return new NodeConsistencyObservability(consistency);
+    }
+
     @Bean
     @ConditionalOnMissingBean(name = "repositoryController")
     public RepositoryController repositoryController(RepositoryRouting routing,

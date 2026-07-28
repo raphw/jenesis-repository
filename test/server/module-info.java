@@ -111,6 +111,8 @@ open module build.jenesis.repository.test {
     requires build.jenesis.repository.importer.maven;
     requires build.jenesis.repository.importer.index;
     requires build.jenesis;
+    requires build.jenesis.repository.posture;
+    requires build.jenesis.repository.observation;
     requires tools.jackson.databind;
     requires org.apache.tomcat.embed.core;
     requires java.net.http;
