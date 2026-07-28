@@ -298,6 +298,88 @@ class AuthorizationTest {
                 .isEqualTo(Authorization.Decision.ALLOWED);
     }
 
+    // WANON.1 - the strictly-opt-in anonymous role at the enforcing choke-point.
+
+    @Test
+    void the_anonymous_role_defaults_to_empty_and_rejects_a_keyless_request_exactly_as_enforcing_today()
+            throws IOException {
+        // No anonymous-rights (the default) and a blank one alike: a keyless request is rejected byte-for-byte as an
+        // enforcing deployment rejects it today - UNAUTHORIZED for a read and for a write, for any repository.
+        for (Authorization enforcing : List.of(authorization, authorization.withAnonymousRights(""),
+                authorization.withAnonymousRights("   "))) {
+            assertThat(enforcing.authorize(null, null, Authorization.REPOSITORY_READ))
+                    .isEqualTo(Authorization.Decision.UNAUTHORIZED);
+            assertThat(enforcing.authorize(null, null, Authorization.REPOSITORY_WRITE))
+                    .isEqualTo(Authorization.Decision.UNAUTHORIZED);
+            assertThat(enforcing.authorize("", "releases", null, Authorization.REPOSITORY_READ))
+                    .as("a blank key is keyless too").isEqualTo(Authorization.Decision.UNAUTHORIZED);
+        }
+    }
+
+    @Test
+    void an_anonymous_read_grant_lets_a_keyless_read_through_but_not_a_write_or_admin() throws IOException {
+        Authorization anonRead = authorization.withAnonymousRights("repository:read");
+        assertThat(anonRead.authorize(null, null, Authorization.REPOSITORY_READ))
+                .as("a keyless read is allowed").isEqualTo(Authorization.Decision.ALLOWED);
+        assertThat(anonRead.authorize(null, null, Authorization.REPOSITORY_WRITE))
+                .as("a keyless write is still refused").isEqualTo(Authorization.Decision.UNAUTHORIZED);
+        assertThat(anonRead.authorize(null, null, Authorization.MANAGE_READ))
+                .as("a keyless admin read is still refused").isEqualTo(Authorization.Decision.UNAUTHORIZED);
+        assertThat(anonRead.authorize(null, null, Authorization.MANAGE_WRITE))
+                .as("a keyless admin write is still refused").isEqualTo(Authorization.Decision.UNAUTHORIZED);
+    }
+
+    @Test
+    void an_anonymous_grant_is_scoped_to_its_repository_unless_it_is_the_wildcard() throws IOException {
+        Authorization scoped = authorization.withAnonymousRights("releases=repository:read");
+        assertThat(scoped.authorize(null, "releases", null, Authorization.REPOSITORY_READ))
+                .as("anonymous read on the granted repository").isEqualTo(Authorization.Decision.ALLOWED);
+        assertThat(scoped.authorize(null, "snapshots", null, Authorization.REPOSITORY_READ))
+                .as("anonymous read does not leak to another repository").isEqualTo(Authorization.Decision.UNAUTHORIZED);
+
+        Authorization wildcard = authorization.withAnonymousRights("repository:read");
+        assertThat(wildcard.authorize(null, "releases", null, Authorization.REPOSITORY_READ)).isEqualTo(
+                Authorization.Decision.ALLOWED);
+        assertThat(wildcard.authorize(null, "snapshots", null, Authorization.REPOSITORY_READ))
+                .as("a wildcard-scoped anonymous grant covers every repository").isEqualTo(
+                        Authorization.Decision.ALLOWED);
+    }
+
+    @Test
+    void an_anonymous_write_or_admin_grant_is_honoured_when_explicitly_configured() throws IOException {
+        Authorization anonWrite = authorization.withAnonymousRights("repository:read,repository:write");
+        assertThat(anonWrite.authorize(null, null, Authorization.REPOSITORY_WRITE))
+                .as("an explicit anonymous write grant is honoured").isEqualTo(Authorization.Decision.ALLOWED);
+
+        Authorization anonAll = authorization.withAnonymousRights("*");
+        assertThat(anonAll.authorize(null, "any-repo", null, Authorization.MANAGE_WRITE))
+                .as("an all-privileges anonymous grant covers admin").isEqualTo(Authorization.Decision.ALLOWED);
+    }
+
+    @Test
+    void a_provisioned_key_still_authorizes_independently_of_the_anonymous_role() throws IOException {
+        Authorization anonRead = authorization.withAnonymousRights("repository:read");
+        String key = Authorization.mint("acme");
+        anonRead.grant(key, "*", Authorization.REPOSITORY_READ, Authorization.REPOSITORY_WRITE);
+        assertThat(anonRead.authorize(key, null, Authorization.REPOSITORY_WRITE))
+                .as("a keyed caller keeps its own grants, not the anonymous role").isEqualTo(
+                        Authorization.Decision.ALLOWED);
+        assertThat(anonRead.authorize("not-a-jenesis-key", null, Authorization.REPOSITORY_READ))
+                .as("a present-but-malformed key is a failed auth, never the anonymous role")
+                .isEqualTo(Authorization.Decision.UNAUTHORIZED);
+    }
+
+    @Test
+    void the_write_or_admin_escalation_predicate_classifies_the_grant() {
+        assertThat(Authorization.grantsWriteOrAdmin("")).isFalse();
+        assertThat(Authorization.grantsWriteOrAdmin("repository:read")).isFalse();
+        assertThat(Authorization.grantsWriteOrAdmin("releases=repository:read")).isFalse();
+        assertThat(Authorization.grantsWriteOrAdmin("repository:read,repository:write")).isTrue();
+        assertThat(Authorization.grantsWriteOrAdmin("manage:read")).as("any manage right is admin").isTrue();
+        assertThat(Authorization.grantsWriteOrAdmin("repository:*")).as("a surface wildcard covers write").isTrue();
+        assertThat(Authorization.grantsWriteOrAdmin("*")).as("all-privileges is write and admin").isTrue();
+    }
+
     @Test
     void an_expired_key_is_unauthorized_and_a_reset_expiry_restores_it() throws IOException {
         String key = Authorization.mint("acme");

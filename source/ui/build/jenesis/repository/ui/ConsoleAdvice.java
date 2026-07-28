@@ -30,6 +30,19 @@ public class ConsoleAdvice {
         return environment.getProperty("jenesis.repository.read-only", Boolean.class, false);
     }
 
+    /** The strictly-opt-in anonymous role (WANON.1): the rights a keyless caller is granted
+     *  ({@code jenesis.repository.anonymous-rights}, env {@code JENESIS_REPOSITORY_ANONYMOUS_RIGHTS}), so the console
+     *  renders an explicit "Anonymous access" banner when it is set. Only meaningful under an enforcing deployment; blank
+     *  (the default, or under {@code auth=false} where the instance is already fully open) renders no banner. */
+    @ModelAttribute("anonymousRights")
+    public String anonymousRights() {
+        if (!environment.getProperty("jenesis.repository.auth", Boolean.class, true)) {
+            return "";
+        }
+        String rights = environment.getProperty("jenesis.repository.anonymous-rights", "");
+        return rights == null ? "" : rights.trim();
+    }
+
     /** The number of security-posture advisories the deployment currently raises - the count the header badge shows;
      *  zero renders no badge. Collected once through {@link PostureReport#discover} over the effective configuration. */
     @ModelAttribute("postureCount")

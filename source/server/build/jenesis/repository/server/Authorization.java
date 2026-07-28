@@ -39,15 +39,22 @@ public final class Authorization {
     private final ArtifactStore store;
     private final Duration defaultLifetime;
     private final Duration maxLifetime;
+    // The strictly-opt-in anonymous role (WANON.1): the rights a keyless caller is granted, as scope -> tokens, exactly
+    // the shape a minted credential's grants object has. Empty (the default) means no anonymous access: a keyless
+    // request is rejected byte-for-byte as an enforcing deployment rejects it today. Immutable instance state (never a
+    // mutable static), parsed once from jenesis.repository.anonymous-rights at bean creation.
+    private final Map<String, List<String>> anonymousGrants;
 
     private Authorization(ArtifactStore store) {
-        this(store, Duration.ofDays(90), null);
+        this(store, Duration.ofDays(90), null, Map.of());
     }
 
-    private Authorization(ArtifactStore store, Duration defaultLifetime, Duration maxLifetime) {
+    private Authorization(ArtifactStore store, Duration defaultLifetime, Duration maxLifetime,
+                          Map<String, List<String>> anonymousGrants) {
         this.store = store;
         this.defaultLifetime = defaultLifetime;
         this.maxLifetime = maxLifetime;
+        this.anonymousGrants = anonymousGrants;
     }
 
     /** An open deployment: every request is allowed, the headless default for the free single-token deployment. */
@@ -63,13 +70,80 @@ public final class Authorization {
         return new Authorization(store);
     }
 
+    /** The strictly-opt-in anonymous role (WANON.1): return a copy of this authorization that grants a keyless caller
+     *  the rights in {@code rights} (a comma-list in the existing grant grammar - a bare {@code <surface>:<verb>} token
+     *  granted on every repository, or a {@code <repository>=<token>} entry scoped to one named repository, or the
+     *  all-privileges {@code *}). A blank value grants nothing, so a keyless request is rejected exactly as it is today.
+     *  Only an enforcing authorization consults it; an anonymous (open) one already allows everything. */
+    public Authorization withAnonymousRights(String rights) {
+        return new Authorization(store, defaultLifetime, maxLifetime, parseAnonymousGrants(rights));
+    }
+
+    /** Parse an {@code anonymous-rights} value into an immutable {@code scope -> tokens} map, the shape a credential's
+     *  grants object has (so {@link #authorize} can reuse the same {@link #covers}/{@link #grantedBy} matching). A bare
+     *  token is granted on the {@code *} (every-repository) scope; a {@code <scope>=<token>} entry (the scope a
+     *  repository name, or {@code <repository>:<prefix>} path scope) is granted on that scope. Blank/garbage entries are
+     *  skipped. No new right vocabulary is introduced - a token that names nothing simply confers nothing at match time,
+     *  exactly as an unknown token on a minted credential does. */
+    static Map<String, List<String>> parseAnonymousGrants(String rights) {
+        if (rights == null || rights.isBlank()) {
+            return Map.of();
+        }
+        Map<String, List<String>> grants = new LinkedHashMap<>();
+        for (String element : rights.split(",")) {
+            String entry = element.strip();
+            if (entry.isEmpty()) {
+                continue;
+            }
+            int equals = entry.indexOf('=');
+            String scope = equals < 0 ? "*" : entry.substring(0, equals).strip();
+            String token = (equals < 0 ? entry : entry.substring(equals + 1)).strip();
+            if (scope.isEmpty() || token.isEmpty()) {
+                continue;
+            }
+            grants.computeIfAbsent(scope, unused -> new ArrayList<>()).add(token);
+        }
+        Map<String, List<String>> immutable = new LinkedHashMap<>();
+        grants.forEach((scope, tokens) -> immutable.put(scope, List.copyOf(tokens)));
+        return Map.copyOf(immutable);
+    }
+
+    /** Whether an {@code anonymous-rights} value would let a keyless caller write or administer - it grants the
+     *  all-privileges {@code *}, any {@code <surface>:write} (or a {@code <surface>:*} wildcard covering write), or any
+     *  {@code manage:<verb>} admin right. The loud-warning escalation (WANON.1 guardrail 2): anonymous read is a WARN,
+     *  anonymous write/admin a governance-level CRITICAL. Mirrored by the posture seeder (which cannot depend on this
+     *  module). */
+    public static boolean grantsWriteOrAdmin(String rights) {
+        if (rights == null || rights.isBlank()) {
+            return false;
+        }
+        for (String element : rights.split(",")) {
+            String entry = element.strip();
+            int equals = entry.indexOf('=');
+            String token = (equals < 0 ? entry : entry.substring(equals + 1)).strip();
+            if (token.equals("*")) {
+                return true;
+            }
+            int colon = token.indexOf(':');
+            String surface = colon < 0 ? token : token.substring(0, colon);
+            String verb = colon < 0 ? "" : token.substring(colon + 1).strip();
+            if (surface.equals("manage")) {
+                return true;
+            }
+            if (verb.equals("write") || verb.equals("*")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The deployment-wide default lifetime for a credential minted without an explicit expiry (90 days unless
      *  overridden); a tenant policy may narrow it further (see {@link #policy}). */
     public Authorization withDefaultLifetime(Duration defaultLifetime) {
         if (defaultLifetime == null || defaultLifetime.isZero() || defaultLifetime.isNegative()) {
             throw new IllegalArgumentException("A default credential lifetime must be a positive duration");
         }
-        return new Authorization(store, defaultLifetime, maxLifetime);
+        return new Authorization(store, defaultLifetime, maxLifetime, anonymousGrants);
     }
 
     /** The deployment-wide ceiling on a credential's lifetime (none unless set); no credential of any tenant may
@@ -78,7 +152,7 @@ public final class Authorization {
         if (maxLifetime != null && (maxLifetime.isZero() || maxLifetime.isNegative())) {
             throw new IllegalArgumentException("A maximum credential lifetime must be a positive duration");
         }
-        return new Authorization(store, defaultLifetime, maxLifetime);
+        return new Authorization(store, defaultLifetime, maxLifetime, anonymousGrants);
     }
 
     public Duration defaultLifetime() {
@@ -361,6 +435,13 @@ public final class Authorization {
         if (store == null) {
             return Decision.ALLOWED;
         }
+        // WANON.1 - the one choke-point: an enforcing deployment that sees a request with NO credential decides it
+        // against the strictly-opt-in anonymous grant set, reusing the exact covers()/grantedBy() matching a minted
+        // credential uses (no second code path). Default (empty grants) => UNAUTHORIZED, byte-for-byte today's keyless
+        // rejection. A present-but-malformed key is NOT keyless: it stays a failed authentication attempt below.
+        if (key == null || key.isBlank()) {
+            return anonymousDecision(scope, path, required);
+        }
         if (!wellFormed(key)) {
             return Decision.UNAUTHORIZED;
         }
@@ -386,6 +467,35 @@ public final class Authorization {
             }
         }
         return Decision.FORBIDDEN;
+    }
+
+    /** The verdict for a keyless (no-credential) request under an enforcing deployment (WANON.1): {@code ALLOWED} iff
+     *  the strictly-opt-in anonymous grant set covers the required {@code <surface>:<verb>} for {@code repository} on
+     *  {@code path}, reusing the same {@link #covers}/{@link #grantedBy} logic a minted credential is matched by; else
+     *  {@code UNAUTHORIZED} - exactly the {@code 401} a keyless request takes today. Empty grants (the default) cover
+     *  nothing, so a keyless request is rejected byte-for-byte as it is today. */
+    private Decision anonymousDecision(String scope, String path, String required) {
+        if (anonymousGrants.isEmpty()) {
+            return Decision.UNAUTHORIZED;
+        }
+        String repository = scope == null || scope.isBlank() ? "*" : scope;
+        for (Map.Entry<String, List<String>> grant : anonymousGrants.entrySet()) {
+            if (!covers(grant.getKey(), repository, path)) {
+                continue;
+            }
+            for (String token : grant.getValue()) {
+                if (grantedBy(token, required)) {
+                    return Decision.ALLOWED;
+                }
+            }
+        }
+        return Decision.UNAUTHORIZED;
+    }
+
+    /** Whether a strictly-opt-in anonymous role is configured (a non-empty {@code anonymous-rights}); the console and
+     *  {@code /api/capabilities} read the raw value to advertise it, this is the plain predicate for a decision. */
+    public boolean anonymousEnabled() {
+        return !anonymousGrants.isEmpty();
     }
 
     /** Whether a grant scope - a repository ({@code *} matching any), optionally narrowed by a {@code :<prefix>} path

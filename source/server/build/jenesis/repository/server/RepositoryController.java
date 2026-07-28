@@ -387,6 +387,10 @@ public class RepositoryController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("readOnly", readOnly());
         body.put("auth", Boolean.parseBoolean(settings.apply("auth")));
+        // WANON.1: advertise the strictly-opt-in anonymous role so a console shows an explicit "Anonymous access"
+        // banner and a client knows keyless reads are served. Empty (the default) means no anonymous access. Read off
+        // the same jenesis.repository.* settings the other flags read, so no extra dependency is threaded in.
+        body.put("anonymousRights", anonymousRights());
         response.setHeader("Content-Type", "application/json");
         respond(response, 200, JSON.writeValueAsString(body));
     }
@@ -395,6 +399,13 @@ public class RepositoryController {
      *  toggle from, so no extra dependency is threaded in; unset means read-write. */
     private boolean readOnly() {
         return Boolean.parseBoolean(settings.apply("read-only"));
+    }
+
+    /** The strictly-opt-in anonymous-role grant (WANON.1) advertised on {@code /api/capabilities}, read off the same
+     *  {@code jenesis.repository.*} settings; empty (the default) means no anonymous access. */
+    private String anonymousRights() {
+        String value = settings.apply("anonymous-rights");
+        return value == null ? "" : value.trim();
     }
 
     /** The import SSRF screen is on by default (the secure default); an internal-host migration opts out with

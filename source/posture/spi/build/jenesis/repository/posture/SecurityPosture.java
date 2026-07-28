@@ -95,7 +95,60 @@ public final class SecurityPosture implements SafetyAdvisor {
                     "jenesis.repository.read-only", "true", DOCS + "#jenesis.demo.writable"));
         }
 
+        // 7. Anonymous role enabled (WANON.1): under an enforcing deployment a non-empty anonymous-rights grants a
+        //    keyless caller a defined set of rights instead of rejecting it. Read-only anonymous (the public-mirror
+        //    pattern) is a WARN; anonymous write or any manage/admin right is a governance-level CRITICAL - a keyless
+        //    caller that can mutate or administer. Silent when unset (the default) or under auth=false (already open,
+        //    where jenesis.auth.open above is the advisory and anonymous-rights is redundant). The text names the risk,
+        //    never the configured grant value.
+        if (config.isSet("jenesis.repository.anonymous-rights") && config.flag("jenesis.repository.auth", true)) {
+            if (grantsWriteOrAdmin(config.value("jenesis.repository.anonymous-rights"))) {
+                advisories.add(SecurityAdvisory.deployment("jenesis.anonymous.write", Severity.CRITICAL,
+                        "Anonymous callers may write or administer",
+                        "jenesis.repository.anonymous-rights grants a keyless caller write and/or manage/admin rights, "
+                                + "so anyone on the network can mutate or administer artifacts with no credential (a "
+                                + "public drop-box / open admin) - the loudest anonymous combination.",
+                        "Grant the anonymous caller read only (repository:read) for a public mirror and keep writes and "
+                                + "admin key-gated, or unset anonymous-rights to require a key for every request.",
+                        "jenesis.repository.anonymous-rights", "repository:read", DOCS + "#jenesis.anonymous.write"));
+            } else {
+                advisories.add(SecurityAdvisory.deployment("jenesis.anonymous.enabled", Severity.WARN,
+                        "Anonymous read access is enabled",
+                        "jenesis.repository.anonymous-rights grants a keyless caller a defined set of rights, so a "
+                                + "request with no credential is served against that grant instead of being rejected - "
+                                + "the public-mirror pattern, which must be a deliberate choice.",
+                        "Intended for a public read-only mirror; confirm the grant is read-only and pair it with "
+                                + "jenesis.repository.read-only=true so the mirror is browsable but immutable.",
+                        "jenesis.repository.read-only", "true", DOCS + "#jenesis.anonymous.enabled"));
+            }
+        }
+
         return advisories;
+    }
+
+    /** Whether an {@code anonymous-rights} value would let a keyless caller write or administer - it grants the
+     *  all-privileges {@code *}, any {@code <surface>:write} (or a {@code <surface>:*} wildcard covering write), or any
+     *  {@code manage:<verb>} admin right. Mirrors {@code Authorization.grantsWriteOrAdmin} (the posture SPI cannot
+     *  depend on the server module), so anonymous read is a WARN and anonymous write/admin a CRITICAL. */
+    private static boolean grantsWriteOrAdmin(String rights) {
+        if (rights == null || rights.isBlank()) {
+            return false;
+        }
+        for (String element : rights.split(",")) {
+            String entry = element.strip();
+            int equals = entry.indexOf('=');
+            String token = (equals < 0 ? entry : entry.substring(equals + 1)).strip();
+            if (token.equals("*")) {
+                return true;
+            }
+            int colon = token.indexOf(':');
+            String surface = colon < 0 ? token : token.substring(0, colon);
+            String verb = colon < 0 ? "" : token.substring(colon + 1).strip();
+            if (surface.equals("manage") || verb.equals("write") || verb.equals("*")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The active Spring profiles as a lowercase set, read from {@code spring.profiles.active} (comma-separated). */

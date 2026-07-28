@@ -33,6 +33,9 @@
     <th:block th:if="${readOnly}">
         <p th:replace="~{base :: alert('This instance is in read-only mode - every write is refused.', 'warn')}"></p>
     </th:block>
+    <th:block th:if="${anonymousRights != null and !anonymousRights.isEmpty()}">
+        <p th:replace="~{base :: alert('Anonymous access: ' + ${anonymousRights} + ' - keyless callers are granted these rights with no credential.', 'warn')}"></p>
+    </th:block>
     <!--/* th:if must sit on a wrapping block: on the same element, th:replace (precedence 100) runs BEFORE
          th:if (300), so the empty state would render unconditionally. */-->
     <th:block th:if="${panels.isEmpty()}">

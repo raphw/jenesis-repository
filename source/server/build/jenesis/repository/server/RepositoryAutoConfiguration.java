@@ -94,7 +94,37 @@ public class RepositoryAutoConfiguration {
         // WARN is no longer an ad-hoc line here; it is the jenesis.auth.open security-posture advisory
         // (SecurityPosture), logged once at boot by logSecurityPosture(...) and surfaced on the console and
         // GET /api/posture - one source of truth, no divergent second list.
-        return properties.isAuth() ? Authorization.enforcing(store) : Authorization.anonymous();
+        String anonymousRights = properties.getAnonymousRights().strip();
+        if (!properties.isAuth()) {
+            // WANON.1 guardrail: anonymous-rights is only meaningful under an enforcing deployment. Under auth=false the
+            // instance is ALREADY fully open, so a configured anonymous-rights is redundant and ignored - warn so the
+            // operator is not misled into thinking it is narrowing an open deployment.
+            if (!anonymousRights.isEmpty()) {
+                LOGGER.warn("SECURITY: jenesis.repository.anonymous-rights is set but jenesis.repository.auth=false, so "
+                        + "the deployment is ALREADY fully open (every request is served anonymously) and the "
+                        + "anonymous-rights grant is redundant and ignored. Set jenesis.repository.auth=true to make it "
+                        + "meaningful: keys are then required and a keyless caller is limited to exactly this grant.");
+            }
+            return Authorization.anonymous();
+        }
+        // WANON.1 guardrail 2: a loud startup WARN naming exactly what a keyless caller may do, escalated for
+        // write/admin. This names the exact grant (the posture surface names the risk, never the value); the
+        // jenesis.anonymous.* security-posture advisories carry the governance escalation onto the console and
+        // GET /api/posture. Default (empty) => no anonymous access and no warning, byte-for-byte today's behaviour.
+        if (!anonymousRights.isEmpty()) {
+            if (Authorization.grantsWriteOrAdmin(anonymousRights)) {
+                LOGGER.warn("SECURITY: anonymous access ENABLED with WRITE/ADMIN rights: {}. A keyless caller may "
+                        + "mutate or administer artifacts with NO credential (a public drop-box / open admin) - the "
+                        + "loudest anonymous combination. This is an explicit opt-in; unset "
+                        + "jenesis.repository.anonymous-rights to require a key for every request.", anonymousRights);
+            } else {
+                LOGGER.warn("SECURITY: anonymous access ENABLED: {}. A keyless caller is granted these rights with no "
+                        + "credential (the public-mirror pattern - pair with jenesis.repository.read-only=true for a "
+                        + "browsable-but-immutable mirror). This is an explicit opt-in; unset "
+                        + "jenesis.repository.anonymous-rights to require a key for every request.", anonymousRights);
+            }
+        }
+        return Authorization.enforcing(store).withAnonymousRights(anonymousRights);
     }
 
     @Bean

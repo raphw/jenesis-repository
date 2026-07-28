@@ -34,6 +34,20 @@ public class RepositoryProperties {
      *  boot warning that it is running open so the choice is never silent. */
     private boolean auth = true;
 
+    /** The strictly-opt-in anonymous role (WANON.1): the rights a keyless (no-credential) caller is granted under an
+     *  enforcing deployment ({@code auth=true}). <em>Empty by default</em> - a keyless caller is then rejected exactly
+     *  as enforcing does today. A non-empty value is a comma-list in the existing grant grammar: a bare
+     *  {@code <surface>:<verb>} token ({@code repository:read}, {@code repository:write}, {@code manage:read},
+     *  {@code manage:write}, a per-surface {@code <surface>:*}, or the all-privileges {@code *}) is granted on every
+     *  repository, and a {@code <repository>=<token>} entry scopes a token to one named repository - the same
+     *  {@code <scope>/<surface>:<verb>} vocabulary a minted credential carries, so there is no new right vocabulary.
+     *  Only meaningful under {@code auth=true}; a non-empty value under {@code auth=false} is redundant (already fully
+     *  open) and warns. The env spelling is {@code JENESIS_REPOSITORY_ANONYMOUS_RIGHTS}. Paired with
+     *  {@code jenesis.repository.read-only=true} and {@code anonymous-rights=repository:read} this is the public-mirror
+     *  pattern (WRO.1): reads served anonymously while writes/admin stay key-gated and the store write-gate refuses
+     *  internal writes. */
+    private String anonymousRights = "";
+
     private String quota = "";
 
     private long rateLimit = 0;
@@ -127,6 +141,16 @@ public class RepositoryProperties {
 
     public void setAuth(boolean auth) {
         this.auth = auth;
+    }
+
+    /** The strictly-opt-in anonymous-role grant (WANON.1), empty by default (no anonymous access whatsoever). See the
+     *  field javadoc for the grammar. */
+    public String getAnonymousRights() {
+        return anonymousRights;
+    }
+
+    public void setAnonymousRights(String anonymousRights) {
+        this.anonymousRights = anonymousRights == null ? "" : anonymousRights;
     }
 
     public Map<String, String> getProxy() {

@@ -116,6 +116,43 @@ final class SecurityPostureTest {
     }
 
     @Test
+    void theCoreSeederWarnsOnAnonymousReadAndEscalatesAnonymousWriteOrAdmin() {
+        // Read-only anonymous (the public-mirror pattern) is a WARN on its actual key.
+        List<SecurityAdvisory> read = new SecurityPosture().advise(
+                config("jenesis.repository.auth", "true", "jenesis.repository.anonymous-rights", "repository:read",
+                        "jenesis.repository.rate-limit", "600"));
+        SecurityAdvisory anonymous = read.stream().filter(a -> a.id().equals("jenesis.anonymous.enabled"))
+                .findFirst().orElseThrow();
+        assertThat(anonymous.severity()).isEqualTo(Severity.WARN);
+        assertThat(anonymous.scope()).isEqualTo(Scope.DEPLOYMENT);
+
+        // Anonymous write (or any manage/admin) escalates to a governance-level CRITICAL.
+        List<String> writeIds = new SecurityPosture().advise(
+                        config("jenesis.repository.auth", "true", "jenesis.repository.anonymous-rights",
+                                "repository:read,repository:write", "jenesis.repository.rate-limit", "600"))
+                .stream().map(SecurityAdvisory::id).toList();
+        assertThat(writeIds).contains("jenesis.anonymous.write").doesNotContain("jenesis.anonymous.enabled");
+        SecurityAdvisory writeAdvisory = new SecurityPosture().advise(
+                        config("jenesis.repository.auth", "true", "jenesis.repository.anonymous-rights", "manage:read",
+                                "jenesis.repository.rate-limit", "600"))
+                .stream().filter(a -> a.id().equals("jenesis.anonymous.write")).findFirst().orElseThrow();
+        assertThat(writeAdvisory.severity()).as("any manage/admin anonymous right is CRITICAL")
+                .isEqualTo(Severity.CRITICAL);
+    }
+
+    @Test
+    void theCoreSeederIsSilentOnAnonymousRightsWhenUnsetOrWhenTheInstanceIsAlreadyOpen() {
+        // Unset (the default) => no anonymous advisory at all.
+        assertThat(new SecurityPosture().advise(config("jenesis.repository.rate-limit", "600")))
+                .noneMatch(a -> a.id().startsWith("jenesis.anonymous"));
+        // Under auth=false the instance is already fully open (jenesis.auth.open owns that), so anonymous-rights is
+        // redundant and raises no separate anonymous advisory.
+        assertThat(new SecurityPosture().advise(config("jenesis.repository.auth", "false",
+                "jenesis.repository.anonymous-rights", "repository:read", "jenesis.repository.rate-limit", "600")))
+                .noneMatch(a -> a.id().startsWith("jenesis.anonymous"));
+    }
+
+    @Test
     void noAdvisoryTextEverRepeatsAConfiguredValue() {
         // The posture surface enumerates weaknesses, so it must never echo a secret: prove the rendered text of every
         // seed carries no configured value even when the config holds a "secret".

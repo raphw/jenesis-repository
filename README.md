@@ -388,6 +388,27 @@ proxy caching, import replay) are refused too, and the write-producing backgroun
 advertised on `/api/capabilities` and shown as a console banner. Pair it with a firewalled writer that updates the
 shared store while public read-only pods serve reads from it.
 
+**Anonymous-role access** - a strictly-opt-in, granular anonymous role for an *enforcing* deployment
+(`jenesis.repository.auth=true`): `-Djenesis.repository.anonymous-rights=repository:read` (env
+`JENESIS_REPOSITORY_ANONYMOUS_RIGHTS`, **default empty**). Empty - the default - means *no* anonymous access at
+all: a keyless caller is rejected `401`/`403` exactly as an enforcing deployment does today. A non-empty value is a
+comma-list in the **existing grant grammar** - a bare `<surface>:<verb>` token (`repository:read`,
+`repository:write`, `manage:read`, `manage:write`, a per-surface `<surface>:*`, or the all-privileges `*`) is
+granted on *every* repository, and a `<repository>=<token>` entry scopes a token to one named repository (e.g.
+`releases=repository:read`) - the same `<scope>/<surface>:<verb>` vocabulary a minted credential carries, so there
+is *no new right vocabulary*. It is decided at the **one** authorization choke point (`Authorization` /
+`RepositoryAuthorizationManager`): a request with no credential is matched against the anonymous grant set with the
+*same* logic a minted credential uses - allowed iff the grant covers the required `<scope>:<verb>`, else rejected as
+today. There is no second code path and no per-endpoint opt-in. Strictly-opt-in guardrails: it takes an explicit,
+non-empty config to grant anything; enabling it logs a **loud startup `SECURITY:` WARN** naming exactly what the
+anonymous caller may do, escalated to a governance-level advisory (the `jenesis.anonymous.*` security posture, on
+the console and `GET /api/posture`) when the grant includes `write` or any `manage`/admin right; it is advertised on
+`/api/capabilities` (`anonymousRights`) and shown as an explicit "Anonymous access" console banner; and an
+anonymous-authorized request is audited as principal `anonymous`, never an unattributed blank. A non-empty value
+under `auth=false` is redundant (already fully open) and warns. **Public-mirror synergy (WRO.1):** read-only mode +
+`anonymous-rights=repository:read` is exactly the public mirror - reads served anonymously while writes and admin
+stay key-gated *and* the store write-gate refuses internal writes.
+
 **Config-driven feature enable/disable.** One image can carry *every* discovered module and be trimmed by
 configuration instead of rebuilt - the convention is defined once in the store SPI
 (`build.jenesis.repository.store.Features`) and shared verbatim by every distribution, so a feature keeps the
