@@ -10,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The reusable incremental-derived-index primitive ({@link DirtyIndexFeed}) exercised as a standalone dirty-set feed
@@ -208,6 +209,121 @@ class DirtyIndexFeedTest {
                 .as("O(Delta): one marker read (pending) plus one token re-read (clear), not N")
                 .isEqualTo(2);
         assertThat(index).containsEntry("pkg:new", 2L).hasSize(1001);
+    }
+
+    @Test
+    void a_removed_marker_newer_than_a_pending_upsert_supersedes_it_before_a_sweep() throws IOException {
+        // The coalesce rule for a mixed op: a delete stamped newer than a pending upsert on the same coordinate wins,
+        // so the sweep applies a delete-by-coordinate rather than the superseded upsert - the removed flag rides the
+        // higher version. (The upsert-then-newer-delete direction, distinct from the delete-then-newer-upsert one.)
+        feed.touched("com.acme:app", 100);
+        feed.removed("com.acme:app", 200);
+
+        List<DirtyIndexFeed.Entry> pending = feed.pending();
+        assertThat(pending).as("one coalesced marker, not two").hasSize(1);
+        assertThat(pending.getFirst().removed()).as("the newer delete supersedes the pending upsert").isTrue();
+        assertThat(pending.getFirst().version()).isEqualTo(200L);
+
+        index.put("com.acme:app", 100L);
+        sweep();
+        assertThat(index).as("the sweep applied the delete, not the superseded upsert").doesNotContainKey("com.acme:app");
+    }
+
+    @Test
+    void a_feed_needs_a_non_empty_prefix_and_a_store() {
+        assertThatThrownBy(() -> new DirtyIndexFeed(null, "index/search"))
+                .as("the store is required").isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new DirtyIndexFeed(store, null))
+                .as("the prefix is required").isInstanceOf(NullPointerException.class);
+        // An empty or slash-only prefix strips to nothing: the feed would live at the store root, colliding with every
+        // other feed, so it is rejected at construction rather than silently mis-scoped. (The strip trims surrounding
+        // slashes, not whitespace, so a non-slash prefix is taken verbatim.)
+        for (String blank : List.of("", "/", "///")) {
+            assertThatThrownBy(() -> new DirtyIndexFeed(store, blank))
+                    .as("a prefix that strips to nothing is refused: '" + blank + "'")
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("non-empty prefix");
+        }
+    }
+
+    @Test
+    void a_prefix_is_stripped_of_surrounding_slashes_so_equivalent_prefixes_coincide() throws IOException {
+        // "index/search", "/index/search" and "index/search/" all name the one feed: the slashes are trimmed, so a
+        // marker written through one handle is seen through another - a mis-slashed prefix never forks a second feed.
+        DirtyIndexFeed slashed = new DirtyIndexFeed(store, "/index/search/");
+        slashed.touched("x", 1);
+        assertThat(feed.pending()).as("the trimmed prefix names the same feed the bare one does").hasSize(1);
+    }
+
+    @Test
+    void a_marker_write_that_cannot_land_surfaces_rather_than_silently_dropping() throws IOException {
+        // A marker write races only other writers touching the SAME coordinate, so contention is bounded; but if the
+        // compare-and-set never lands, the mark must fail loudly (an IOException the write path hears about) rather
+        // than silently drop a change the derived index would then never see until the next full reconcile.
+        DirtyIndexFeed contended = new DirtyIndexFeed(new AlwaysConflictingStore(store), "index/search");
+        assertThatThrownBy(() -> contended.touched("com.acme:app", 100))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("could not record dirty marker");
+    }
+
+    /** Forwards to a real store but reports every versioned write as a compare-and-set conflict, so a test can drive
+     *  the marker write's exhausted-attempts path (the loud failure a persistently contended mark takes). */
+    private record AlwaysConflictingStore(ArtifactStore delegate) implements ArtifactStore {
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) {
+            return false;
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
     }
 
     /**

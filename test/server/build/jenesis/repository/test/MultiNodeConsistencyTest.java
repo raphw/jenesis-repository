@@ -95,6 +95,47 @@ class MultiNodeConsistencyTest {
     }
 
     @Test
+    void a_cursor_stalled_exactly_at_the_boundary_is_benign_not_stuck(@TempDir Path root) throws IOException {
+        // The stuck test is strict: stalledFor > stuckAfterMillis. The exact-equality edge (stalledFor ==
+        // stuckAfterMillis) is the boundary the benign-lag classification hinges on and must fall on the benign side -
+        // a node stalled for exactly the budget has not yet overrun it, so it is lag, not a wedged sweep.
+        ArtifactStore store = filesystem(root);
+        long generation = NodeFingerprint.configGeneration(Map.of("k", "v"));
+        over(store).publish(fresh("node-a", 500, generation));
+        long stalledExactly = NOW - SETTINGS.stuckAfterMillis();   // stalledFor == stuckAfterMillis, not strictly over
+        over(store).publish(new NodeFingerprint("node-b", NOW, stalledExactly, 100, "", generation, 0L, 0L, Map.of()));
+
+        ConsistencyReport report = over(store).report(NOW);
+        assertThat(report.converged()).as("a stall of exactly the budget is benign lag, not stuck").isTrue();
+        assertThat(report.divergences()).isEmpty();
+    }
+
+    @Test
+    void two_live_nodes_resolving_a_pointer_differently_are_flagged(@TempDir Path root) throws IOException {
+        // The POINTER_MISMATCH detection in analyze(): a sampled pointer that two live nodes resolve to different
+        // content is a critical split (the fleet serves different bytes at one path). Reported once against the node
+        // whose resolution differs from the freshest live node's - so node-a (the fresher heartbeat) is the reference.
+        ArtifactStore store = filesystem(root);
+        long generation = NodeFingerprint.configGeneration(Map.of("k", "v"));
+        String hashA = "a".repeat(64);
+        String hashB = "b".repeat(64);
+        over(store).publish(new NodeFingerprint("node-a", NOW, NOW, 100, "", generation, 0L, 0L,
+                Map.of("publish/raw/p", hashA)));
+        // node-b is live but its heartbeat is a touch older, so node-a is the reference; it resolves the shared pointer
+        // to different content.
+        over(store).publish(new NodeFingerprint("node-b", NOW - 1000, NOW - 1000, 100, "", generation, 0L, 0L,
+                Map.of("publish/raw/p", hashB)));
+
+        ConsistencyReport report = over(store).report(NOW);
+        assertThat(report.converged()).as("a pointer split diverges the fleet").isFalse();
+        assertThat(report.divergences()).singleElement().satisfies(divergence -> {
+            assertThat(divergence.kind()).isEqualTo(NodeDivergence.Kind.POINTER_MISMATCH);
+            assertThat(divergence.nodeId()).as("reported against the node differing from the reference").isEqualTo("node-b");
+            assertThat(divergence.detail()).contains("publish/raw/p");
+        });
+    }
+
+    @Test
     void a_config_generation_mismatch_is_flagged(@TempDir Path root) throws IOException {
         ArtifactStore store = filesystem(root);
         long generationA = NodeFingerprint.configGeneration(Map.of("jenesis.repository.read-only", "false"));

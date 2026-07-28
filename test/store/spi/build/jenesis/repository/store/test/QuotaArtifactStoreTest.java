@@ -244,6 +244,128 @@ class QuotaArtifactStoreTest {
                 .hasSize(4).containsOnly(1000);
     }
 
+    @Test
+    void a_corrupt_usage_counter_reads_as_zero_rather_than_throwing() throws IOException {
+        // The persisted counter is a plain number; a garbage value (a truncated write, a manual edit) must not blow up
+        // the read path - used() parses it back to 0, the safe floor the next recompute reconcile corrects, and the
+        // observability read degrades to "0 used" rather than throwing through the non-throwing metrics() call.
+        ArtifactStore raw = delegate();
+        raw.writeVersioned("quota/used", "not-a-number".getBytes(StandardCharsets.UTF_8), null);
+        QuotaArtifactStore store = new QuotaArtifactStore(raw, 1000);
+
+        assertThat(store.used()).as("a corrupt counter floors to zero").isZero();
+        assertThat(store.metrics()).singleElement()
+                .satisfies(metric -> assertThat(metric.value()).isEqualTo(0.0));
+    }
+
+    @Test
+    void an_externally_recomputed_total_is_written_and_re_read() throws IOException {
+        // store(total) is the tenant-wide reconcile's overwrite seam (a tenant sums across its repositories, where a
+        // single store's own recompute cannot reach); the written total round-trips through the counter.
+        QuotaArtifactStore store = new QuotaArtifactStore(delegate(), 5000);
+        store.write("blobs/aaa", bytes(200));
+        store.store(4321);
+        assertThat(store.used()).as("the externally computed total overwrites the counter").isEqualTo(4321);
+    }
+
+    @Test
+    void a_persistently_contended_store_leaves_the_stale_counter_for_the_next_reconcile() throws IOException {
+        // store(total) retries the compare-and-set, but if contention never clears it forfeits rather than spinning:
+        // the stale counter stands until the next reconcile corrects it - the documented drift model, never a hang.
+        ArtifactStore raw = delegate();
+        raw.writeVersioned("quota/used", "700".getBytes(StandardCharsets.UTF_8), null);
+        QuotaArtifactStore store = new QuotaArtifactStore(new ConflictingCounterStore(raw), 5000);
+
+        store.store(4321);   // every counter compare-and-set conflicts
+
+        assertThat(store.used()).as("the recomputed total could not land; the stale counter stands").isEqualTo(700);
+    }
+
+    @Test
+    void a_dropped_counter_delta_under_sustained_contention_drifts_toward_over_counting() throws IOException {
+        // adjust() is best-effort: if the compare-and-set never lands the delta is dropped (and logged), the counter
+        // drifting toward under-count on a write - the blob is really stored, so the safe direction is that a later
+        // recompute finds MORE bytes than the counter shows and corrects up, never a phantom-freed over-admit.
+        ArtifactStore raw = delegate();
+        QuotaArtifactStore store = new QuotaArtifactStore(new ConflictingCounterStore(raw), 1000);
+
+        store.write("blobs/aaa", bytes(300));   // the blob lands, but the counter increment cannot
+
+        assertThat(store.exists("blobs/aaa")).as("the blob is really stored").isTrue();
+        assertThat(store.used()).as("the increment was dropped under contention - the counter drifts").isZero();
+        // A recompute from the live blobs heals the drift back to truth.
+        assertThat(new QuotaArtifactStore(raw, 1000).recompute()).as("the reconcile corrects the drift up").isEqualTo(300);
+    }
+
+    /** Forwards to a real store but reports every write of the quota counter ({@code quota/used}) as a compare-and-set
+     *  conflict, so a test can drive the counter's exhausted-retry paths - store()'s stale-counter forfeit and
+     *  adjust()'s dropped-delta drift - while blob writes and reads pass through untouched. */
+    private record ConflictingCounterStore(ArtifactStore delegate) implements ArtifactStore {
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            if (key.equals("quota/used")) {
+                return false;
+            }
+            return delegate.writeVersioned(key, content, expected);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+    }
+
     /** Forwards to a real store but fails {@link ArtifactStore#delete} for one key, standing in for a delete that
      *  the backend rejects (a permission error, a transient outage), so the counter can be asserted to hold when the
      *  blob it names is still stored. */

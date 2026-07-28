@@ -43,6 +43,21 @@ class RecentLogsTest {
     }
 
     @Test
+    void a_non_positive_read_limit_is_clamped_to_one_most_recent_entry() {
+        // recent()'s limit is clamped to at least one (Math.max(1, limit)), so a caller passing 0 or a negative page
+        // size gets the single most-recent entry rather than an empty or exception-throwing read - the tail read stays
+        // usable whatever the client asks for.
+        LogRingBuffer ring = new LogRingBuffer(10);
+        for (int i = 1; i <= 3; i++) {
+            record(ring, INFO, "app", "entry " + i, null);
+        }
+        assertThat(ring.recent(null, null, null, null, 0)).extracting(LogEntry::message)
+                .as("a zero limit still yields the most recent one").containsExactly("entry 3");
+        assertThat(ring.recent(null, null, null, null, -5)).extracting(LogEntry::message)
+                .as("a negative limit is clamped the same way").containsExactly("entry 3");
+    }
+
+    @Test
     void a_non_positive_capacity_is_clamped_so_the_ring_is_always_usable() {
         LogRingBuffer ring = new LogRingBuffer(0);
         assertThat(ring.capacity()).isEqualTo(1);

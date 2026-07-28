@@ -102,6 +102,21 @@ final class SecurityPostureTest {
     }
 
     @Test
+    void theWritableDemoAdvisoryStaysSilentWhenTheDemoIsReadOnly() {
+        // Seed 6 is a compound condition (demo=true AND !read-only): the both-true firing is pinned elsewhere and the
+        // demo-absent silence by the secure-default test, but the intermediate branch - demo on yet read-only on, an
+        // immutable public demo, the recommended safe configuration - must independently NOT fire. This pins the
+        // second half of the &&: a demo that is read-only is browsable-but-immutable, exactly the advisory's own fix.
+        List<String> ids = new SecurityPosture().advise(config(
+                        "jenesis.repository.demo", "true",
+                        "jenesis.repository.read-only", "true",
+                        "jenesis.repository.rate-limit", "600"))
+                .stream().map(SecurityAdvisory::id).toList();
+        assertThat(ids).as("a read-only demo is the safe configuration and raises no writable-demo advisory")
+                .doesNotContain("jenesis.demo.writable");
+    }
+
+    @Test
     void theCoreSeederFlagsTheRealFootgunsOnTheirActualKeys() {
         Configuration config = config(
                 "jenesis.repository.auth", "false",

@@ -134,6 +134,33 @@ class PublicationObserverTest {
     }
 
     @Test
+    void an_unpublish_of_a_corrupt_pointer_notifies_with_no_blob_identity() throws IOException {
+        // A pointer whose content is not the lower-case SHA-256 hex a link() writes (a manual edit, a truncated write)
+        // must never masquerade as a hash on the removal event: the removal is still observed, but the descriptor
+        // carries the path only, its blob identity left unset rather than a bogus hash.
+        List<ArtifactDescriptor> removed = new ArrayList<>();
+        PublicationObserver observer = new PublicationObserver() {
+            @Override
+            public void onPublished(ArtifactDescriptor artifact, ArtifactStore store) {
+            }
+
+            @Override
+            public void onDeleted(ArtifactDescriptor artifact, ArtifactStore store) {
+                removed.add(artifact);
+            }
+        };
+        store.writeVersioned("publish/raw/corrupt", "not-a-valid-hash".getBytes(StandardCharsets.UTF_8), null);
+        Publication publication = new Publication(store, List.of(), List.of(observer));
+
+        publication.unpublish("/raw/corrupt");
+
+        assertThat(removed).as("the removal is still observed").hasSize(1);
+        assertThat(removed.getFirst().path()).isEqualTo("/raw/corrupt");
+        assertThat(removed.getFirst().hash()).as("a non-hash pointer never masquerades as a blob identity").isNull();
+        assertThat(publication.blob("/raw/corrupt")).as("the corrupt pointer is gone").isEmpty();
+    }
+
+    @Test
     void a_layout_aware_eviction_enriches_the_removal_it_describes() throws IOException {
         List<ArtifactDescriptor> removed = new ArrayList<>();
         PublicationObserver observer = new PublicationObserver() {
