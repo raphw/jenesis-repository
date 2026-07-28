@@ -380,17 +380,32 @@ public class RepositoryController {
      * Advertises the deployment-wide capabilities a client or console reads to adapt its behaviour - today the
      * read-only flag (so a console shows a banner and hides write affordances, and a mirror client knows writes are
      * refused) and whether the wire is credential-gated. Read like every other {@code /api} surface; a distribution
-     * with more capabilities extends the map without a client change.
+     * with more capabilities extends the map without a client change - through the {@link CapabilityContributor} SPI
+     * (below), not a bean override.
+     *
+     * <p>The base map ({@code readOnly}, {@code auth}, {@code anonymousRights}) is built here, then every
+     * {@code ServiceLoader}-discovered {@link CapabilityContributor} is {@linkplain CapabilityContributor#merge merged}
+     * into it: a richer distribution (the enterprise edition) contributes its formats / import-sources / module-flags
+     * onto this one free-served endpoint by shipping a contributor module - the server already {@code uses} the SPI, so
+     * no core change is needed. With no contributor installed (the free product) the served map is exactly the base map,
+     * byte-for-byte unchanged. On a key conflict the base key wins (see {@link CapabilityContributor}'s merge rule), so a
+     * contributor can only extend the free product's own flags, never shadow them.
      */
     @GetMapping("/api/capabilities")
     public void capabilities(HttpServletResponse response) throws IOException {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("readOnly", readOnly());
-        body.put("auth", Boolean.parseBoolean(settings.apply("auth")));
+        Map<String, Object> base = new LinkedHashMap<>();
+        base.put("readOnly", readOnly());
+        base.put("auth", Boolean.parseBoolean(settings.apply("auth")));
         // WANON.1: advertise the strictly-opt-in anonymous role so a console shows an explicit "Anonymous access"
         // banner and a client knows keyless reads are served. Empty (the default) means no anonymous access. Read off
         // the same jenesis.repository.* settings the other flags read, so no extra dependency is threaded in.
-        body.put("anonymousRights", anonymousRights());
+        base.put("anonymousRights", anonymousRights());
+        // WFE.1: collect the free-core CapabilityContributor SPI and merge each contribution onto the base map, so a
+        // richer distribution extends the one free /api/capabilities without a bean override (retiring the enterprise
+        // WebMvcRegistrations mapping-suppression stopgap). Base keys win a conflict; with no contributor the body is
+        // the base map unchanged. Discovered per request through the same ServiceLoader seam the formats/import-sources
+        // use, so a distribution plugs in with no core change.
+        Map<String, Object> body = CapabilityContributor.merge(base, ServiceLoader.load(CapabilityContributor.class));
         response.setHeader("Content-Type", "application/json");
         respond(response, 200, JSON.writeValueAsString(body));
     }

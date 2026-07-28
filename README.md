@@ -219,6 +219,21 @@ with ...` it from a module on the path:
 | A console panel                    | `Panel`                 | `build.jenesis.repository.ui.Panel`                  |
 | An after-commit publish / removal observer | `PublicationObserver` | `build.jenesis.repository.store.PublicationObserver` |
 | An upload screen (gate/quarantine) | `PublishInterceptor` (a `PublicationObserver` sub-interface) | `build.jenesis.repository.store.PublicationObserver` |
+| An extra entry on `/api/capabilities` | `CapabilityContributor` | `build.jenesis.repository.server.CapabilityContributor` |
+
+**Extending `/api/capabilities` without a client change.** The capabilities endpoint
+advertises the deployment-wide flags a console or client reads to adapt (`readOnly`,
+`auth`, `anonymousRights`). A richer distribution adds to that map by shipping a
+`CapabilityContributor` - the server builds its base map, then merges every
+`ServiceLoader`-discovered contributor onto it, so an edition contributes its extra
+capabilities (supported formats, import sources, module flags) onto the *one*
+free-served `/api/capabilities` with **no bean override and no client change**. The
+merge rule is fixed and safe: contributors *extend* the base map, a **base key always
+wins** a conflict (so a contributor can never shadow the free product's own flags), and
+among contributors the first discovered wins; new keys are appended after the base keys.
+With no contributor installed - the free product - the served map is the base map,
+byte-for-byte unchanged. This replaces the earlier stopgap where an enterprise edition
+dropped the free mapping to serve its own richer `/api/capabilities` controller.
 
 A format may additionally implement any of three optional capabilities, detected
 by `instanceof` so a format that has no use for them is unaffected: `ProxyFormat` to gain

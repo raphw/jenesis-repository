@@ -132,4 +132,9 @@ open module build.jenesis.repository.test {
             with build.jenesis.repository.test.RecordingObserver,
                     build.jenesis.repository.test.MarkerInterceptor,
                     build.jenesis.repository.test.CountingInterceptor;
+    // WFE.1: register a test CapabilityContributor so the running free server discovers it via ServiceLoader exactly
+    // as a richer distribution would, proving /api/capabilities merges a contributor's data through the SPI (no bean
+    // override). The free server module already `uses` the SPI.
+    provides build.jenesis.repository.server.CapabilityContributor
+            with build.jenesis.repository.test.TestCapabilityContributor;
 }
