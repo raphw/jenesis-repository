@@ -118,6 +118,7 @@ open module build.jenesis.repository.server {
     uses build.jenesis.repository.server.KeyUsageTrackerProvider;
     uses build.jenesis.repository.server.RateLimiterProvider;
     uses build.jenesis.repository.server.CapabilityContributor;
+    uses build.jenesis.repository.server.ImportEdgeProvider;
     provides build.jenesis.repository.posture.SafetyAdvisor
             with build.jenesis.repository.server.NodeDivergenceAdvisor;
 }

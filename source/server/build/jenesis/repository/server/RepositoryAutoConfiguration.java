@@ -16,7 +16,11 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Condition;
+import org.springframework.context.annotation.ConditionContext;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.core.env.Environment;
+import org.springframework.core.type.AnnotatedTypeMetadata;
 import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -359,5 +363,42 @@ public class RepositoryAutoConfiguration {
         // serving seam (NONE here, a router in a multi-repository distribution) drives a read of a proxy/group repo.
         return new RepositoryController(routing, dispatcher, importSources, fetcher, batch,
                 key -> environment.getProperty("jenesis.repository." + key), store, routed);
+    }
+
+    /**
+     * The free single-tenant import edge ({@code POST /repository/admin/import}, {@code GET /repository/admin/import/<id>}),
+     * registered as its own controller bean so a richer distribution can OWN the import edge without a cross-layer
+     * mapping override (WFE.1). It is registered only when {@link FreeImportEdgeCondition no ImportEdgeProvider is
+     * installed}: when a distribution ships an {@link ImportEdgeProvider} - the enterprise edition's tenant-scoped,
+     * audited import edge - this bean is not created, so its mapping never joins the handler mapping and the
+     * distribution's own controller is the only import edge, retiring the {@code WebMvcRegistrations}
+     * mapping-suppression stopgap. With no provider installed (the free product) the edge is served exactly as before.
+     * Named so an embedder can still contribute its own {@code importEdgeController} bean and have this back off.
+     */
+    @Bean
+    @ConditionalOnMissingBean(name = "importEdgeController")
+    @Conditional(FreeImportEdgeCondition.class)
+    public ImportEdgeController importEdgeController(RepositoryRouting routing,
+                                                    List<ImportSourceProvider> importSources,
+                                                    ProxyFormat.Fetcher fetcher,
+                                                    Environment environment) {
+        return new ImportEdgeController(routing, importSources, fetcher,
+                key -> environment.getProperty("jenesis.repository." + key));
+    }
+
+    /**
+     * Matches when <em>no</em> {@link ImportEdgeProvider} is installed, so the free {@link ImportEdgeController} is
+     * registered only while a richer distribution has not claimed the import edge (WFE.1). Installs the shared
+     * {@link Features} lookup against the effective {@link Environment} first, so the same {@code jenesis.repository.*}
+     * enable/disable toggles gate the provider discovery here as everywhere else (and a provider missing its required
+     * config is inert - the free edge is then served).
+     */
+    static final class FreeImportEdgeCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+            Features.configure(context.getEnvironment()::getProperty);
+            return !ImportEdgeProvider.installed();
+        }
     }
 }
