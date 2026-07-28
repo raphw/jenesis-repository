@@ -13,6 +13,7 @@ import build.jenesis.repository.server.NodeDivergenceAdvisor;
 import build.jenesis.repository.server.NodeFingerprint;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import build.jenesis.repository.store.Tenants;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -147,6 +148,52 @@ class MultiNodeConsistencyTest {
         assertThat(report.converged()).isFalse();
         assertThat(report.divergences()).anySatisfy(divergence ->
                 assertThat(divergence.kind()).isEqualTo(NodeDivergence.Kind.CONFIG_MISMATCH));
+    }
+
+    @Test
+    void two_nodes_with_the_same_config_and_tenant_set_agree() {
+        // WCON.2: the tenant set is folded into the generation, but two nodes over the same config AND the same tenant
+        // directory still land on one value - order-independent, so a set discovered in any order agrees.
+        Map<String, String> config = Map.of("jenesis.repository.store", "filesystem");
+        long a = NodeFingerprint.configGeneration(config, List.of("acme", "globex"));
+        long b = NodeFingerprint.configGeneration(config, List.of("globex", "acme"));
+        assertThat(a).as("same config + same tenant set (any order) -> equal generation").isEqualTo(b);
+    }
+
+    @Test
+    void the_same_config_with_a_different_tenant_set_diverges(@TempDir Path root) throws IOException {
+        // The new detection: two nodes route byte-for-byte the same config, but one has grown a tenant the other has
+        // not - a real multi-tenant split the config-key hash alone would miss. The folded tenant set catches it.
+        Map<String, String> config = Map.of("jenesis.repository.store", "filesystem");
+        long onFewer = NodeFingerprint.configGeneration(config, List.of("acme"));
+        long onMore = NodeFingerprint.configGeneration(config, List.of("acme", "globex"));
+        assertThat(onFewer).as("same config but different tenant sets -> different generation").isNotEqualTo(onMore);
+
+        ArtifactStore store = filesystem(root);
+        over(store).publish(fresh("node-a", 100, onFewer));
+        over(store).publish(fresh("node-b", 100, onMore));
+        ConsistencyReport report = over(store).report(NOW);
+        assertThat(report.converged()).as("a tenant-set split diverges the fleet").isFalse();
+        assertThat(report.divergences()).anySatisfy(divergence ->
+                assertThat(divergence.kind()).isEqualTo(NodeDivergence.Kind.CONFIG_MISMATCH));
+    }
+
+    @Test
+    void the_single_default_tenant_deployment_folds_its_one_tenant_and_stays_stable() throws IOException {
+        // A free single-tenant deployment folds exactly its one tenant (what TenantsProvider.resolve answers with no
+        // tenants module installed - Tenants.fixed(tenant).list()), so every free node agrees. Folding one tenant is a
+        // real, additive contribution: it is distinct from folding no tenant set at all (the config-only overload).
+        Map<String, String> config = Map.of("jenesis.repository.store", "filesystem");
+        long defaultTenant = NodeFingerprint.configGeneration(config, Tenants.fixed("default").list());
+        long alsoDefault = NodeFingerprint.configGeneration(config, List.of("default"));
+        assertThat(defaultTenant).as("the fixed single-tenant directory folds its one tenant, deterministically")
+                .isEqualTo(alsoDefault);
+
+        long configOnly = NodeFingerprint.configGeneration(config);
+        assertThat(configOnly).as("the config-only overload folds no tenant set - byte-identical to the historic form")
+                .isEqualTo(NodeFingerprint.configGeneration(config, List.of()));
+        assertThat(defaultTenant).as("folding one tenant is additive - distinct from folding no tenant set")
+                .isNotEqualTo(configOnly);
     }
 
     @Test

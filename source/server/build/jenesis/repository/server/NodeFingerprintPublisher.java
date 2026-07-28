@@ -2,6 +2,7 @@ package build.jenesis.repository.server;
 
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.QuotaArtifactStore;
+import build.jenesis.repository.store.TenantsProvider;
 
 import module java.base;
 
@@ -40,7 +41,7 @@ public final class NodeFingerprintPublisher implements AutoCloseable {
         // multi-node deployment sets jenesis.consistency.enabled=true so its nodes publish and can be compared.
         this.enabled = "true".equalsIgnoreCase(String.valueOf(config.apply("jenesis.consistency.enabled")));
         this.nodeId = resolveNodeId(config);
-        this.configGeneration = NodeFingerprint.configGeneration(mustMatch(config));
+        this.configGeneration = NodeFingerprint.configGeneration(mustMatch(config), tenantSet(store, config));
         this.heartbeatMillis = Math.max(1000L, millis(config, "jenesis.consistency.heartbeat",
                 consistency.settings().sweepIntervalMillis()));
         this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -112,6 +113,27 @@ public final class NodeFingerprintPublisher implements AutoCloseable {
             settings.put(key, value == null ? "" : value);
         }
         return settings;
+    }
+
+    /** This deployment's tenant set, read once at boot through the same {@code TenantsProvider} seam the rest of the
+     *  free core resolves the {@link build.jenesis.repository.store.Tenants} directory through: the single configured
+     *  tenant with no tenants module installed, the store-backed scopes with one. Folded into the config generation so
+     *  two nodes that route the same config but keep different tenant directories are caught as inconsistent (WCON.2),
+     *  with multi-tenancy riding this one seam rather than a parallel fingerprint. Best-effort like the heartbeat write:
+     *  if the directory cannot be listed, fall back to the single configured tenant so the fold stays stable rather than
+     *  failing the node. */
+    private static Collection<String> tenantSet(ArtifactStore store, UnaryOperator<String> config) {
+        String tenant = config.apply("jenesis.repository.tenant");
+        if (tenant == null || tenant.isBlank()) {
+            tenant = "default";
+        }
+        try {
+            return TenantsProvider.resolve(store, config, tenant).list();
+        } catch (IOException | RuntimeException unavailable) {
+            LOGGER.debug("consistency tenant-set read fell back to the configured tenant '{}': {}", tenant,
+                    unavailable.toString());
+            return List.of(tenant);
+        }
     }
 
     /** A stable node id: the explicit setting, else the hostname, else a generated per-process id (with a warning that

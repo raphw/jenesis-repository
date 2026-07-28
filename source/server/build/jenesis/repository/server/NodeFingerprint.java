@@ -52,11 +52,35 @@ public record NodeFingerprint(String nodeId, long heartbeatMillis, long cursorAd
      * caller passes the effective values under the keys that matter; a differing value on any key yields a different
      * generation, so two nodes that disagree are caught without shipping (or leaking) the values themselves. Order
      * independent (the entries are sorted), so two nodes that computed the same settings in any order agree.
+     *
+     * <p>This config-only overload folds no tenant set; it is the exact byte form the check has always hashed, so a
+     * caller that has no tenant directory to fold (a plain config comparison, the existing tests) is unchanged.
      */
     public static long configGeneration(Map<String, String> mustMatch) {
+        return configGeneration(mustMatch, List.of());
+    }
+
+    /**
+     * The same stable generation, additionally folding the deployment's <em>tenant set</em> into the hash (WCON.2).
+     * Beyond the must-match settings, two nodes that route the same config but keep <em>different tenant directories</em>
+     * are a real split - a multi-tenant edition where one node has grown a tenant the other has not is inconsistent even
+     * though every config key matches. The free core reads this set from the {@link build.jenesis.repository.store.Tenants}
+     * directory the {@code TenantsProvider} SPI resolves (the single configured tenant with no tenants module installed,
+     * the store-backed scopes with one), so multi-tenancy rides that one seam rather than a parallel fingerprint.
+     *
+     * <p>The tenant set is sorted and de-duplicated (a {@link TreeSet}), so two nodes that discovered the same tenants in
+     * any order agree, and it is namespaced under a {@code tenant/} line no config key can spell, so it can never collide
+     * with a config contribution. An empty set appends nothing, so this reduces byte-for-byte to the config-only form -
+     * a single-default-tenant free deployment folds exactly its one tenant and every free node agrees.
+     */
+    public static long configGeneration(Map<String, String> mustMatch, Collection<String> tenants) {
         StringBuilder canonical = new StringBuilder();
         new TreeMap<>(mustMatch).forEach((key, value) ->
                 canonical.append(key).append('=').append(value == null ? "" : value).append('\n'));
+        if (tenants != null && !tenants.isEmpty()) {
+            new TreeSet<>(tenants).forEach(tenant ->
+                    canonical.append("tenant/").append(tenant == null ? "" : tenant).append('\n'));
+        }
         // A 64-bit FNV-1a over the canonical form: cheap, dependency-free and stable across runs (String.hashCode is
         // stable too, but a wider hash makes an accidental collision between two distinct configs vanishingly unlikely).
         long hash = 0xcbf29ce484222325L;
