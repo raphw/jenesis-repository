@@ -7,6 +7,7 @@ import build.jenesis.repository.format.ArtifactLayout;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
+import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.format.java.JavaLayout;
 import build.jenesis.repository.format.java.bridge.ModuleView;
 import build.jenesis.repository.store.ArtifactStore;
@@ -23,10 +24,14 @@ import build.jenesis.repository.store.ArtifactStore;
  * module name reaches the same blob - the bridge between the two layouts, exposed only between them and never on the
  * public SPI. Discovered like any other format; the core knows nothing of it.
  */
-public final class MavenFormat implements RepositoryFormat, ProxyFormat, ArtifactLayout {
+public final class MavenFormat implements RepositoryFormat, ProxyFormat, ArtifactLayout, RepositoryImporter {
 
     private static final List<ModuleView> MODULE_VIEWS = ServiceLoader.load(ModuleView.class)
             .stream().map(ServiceLoader.Provider::get).toList();
+
+    /** The migration-import capability (WSPI.2 (c)), delegated to the layout-only {@link MavenImporter} - the format
+     *  IS the discovered importer now (an {@code instanceof} capability), and the importer class stays as its delegate. */
+    private final MavenImporter importer = new MavenImporter();
 
     /** The package-ecosystem name the neutral descriptor carries - the OSV name "Maven" that advisory feeds and
      *  quality inspectors key on - distinct from {@link #name()} "maven", the format id that routes the {@code /maven/}
@@ -330,5 +335,23 @@ public final class MavenFormat implements RepositoryFormat, ProxyFormat, Artifac
         int space = body.indexOf(' ');
         String hex = space > 0 ? body.substring(0, space) : body;
         return hex.length() == 40 && hex.chars().allMatch(c -> Character.digit(c, 16) >= 0) ? hex : null;
+    }
+
+    // --- RepositoryImporter capability (WSPI.2 (c)): delegated to MavenImporter. importTarget avoids the erasure
+    //     clash with this format's ArtifactLayout.describe(String); imports avoids the clash with handles(String). ---
+
+    @Override
+    public boolean imports(String sourceFormat) {
+        return importer.imports(sourceFormat);
+    }
+
+    @Override
+    public Optional<ArtifactDescriptor> importTarget(String sourcePath) {
+        return importer.importTarget(sourcePath);
+    }
+
+    @Override
+    public void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException {
+        importer.importArtifact(path, content, store);
     }
 }

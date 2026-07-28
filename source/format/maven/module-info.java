@@ -18,6 +18,4 @@ module build.jenesis.repository.format.maven {
     uses build.jenesis.repository.format.java.bridge.ModuleView;
     provides build.jenesis.repository.format.RepositoryFormat
             with build.jenesis.repository.format.maven.MavenFormat;
-    provides build.jenesis.repository.format.RepositoryImporter
-            with build.jenesis.repository.format.maven.MavenImporter;
 }

@@ -46,9 +46,9 @@ class OciImporterTest {
 
     @Test
     void it_handles_the_docker_source_formats() {
-        assertThat(importer.handles("docker")).isTrue();
-        assertThat(importer.handles("oci")).isTrue();
-        assertThat(importer.handles("raw")).isFalse();
+        assertThat(importer.imports("docker")).isTrue();
+        assertThat(importer.imports("oci")).isTrue();
+        assertThat(importer.imports("raw")).isFalse();
     }
 
     @Test

@@ -53,8 +53,8 @@ a deployment simply runs whichever plug-ins are on its module path:
  - **Storage backends** (`ArtifactStoreProvider`, returning an `ArtifactStore`) -
    filesystem, S3 / MinIO, Google Cloud Storage and Azure Blob ship in the core; a
    new backend is a single provider.
- - **Importers** (`RepositoryImporter`) - migrate one ecosystem off an incumbent
-   manager (see *Importing from another repository*, below).
+ - **Importers** (`RepositoryImporter`, an opt-in capability a format adds) - migrate one
+   ecosystem off an incumbent manager (see *Importing from another repository*, below).
  - **Import sources** (`ImportSourceProvider`) - connect to an incumbent manager and
    walk its assets; Nexus and Artifactory ship as modules, another incumbent is one more.
  - **Console panels** (`Panel`) - contribute a page to the web console.
@@ -215,19 +215,22 @@ with ...` it from a module on the path:
 |---------|-----------|--------------------|
 | A repository format / file handler | `RepositoryFormat`      | `build.jenesis.repository.format.RepositoryFormat`   |
 | A storage backend                  | `ArtifactStoreProvider` | `build.jenesis.repository.store.ArtifactStoreProvider` |
-| A migration importer               | `RepositoryImporter`    | `build.jenesis.repository.format.RepositoryImporter` |
 | An import source (incumbent connector) | `ImportSourceProvider` | `build.jenesis.repository.importer.ImportSourceProvider` |
 | A console panel                    | `Panel`                 | `build.jenesis.repository.ui.Panel`                  |
 | An after-commit publish / removal observer | `PublicationObserver` | `build.jenesis.repository.store.PublicationObserver` |
 | An upload screen (gate/quarantine) | `PublishInterceptor` (a `PublicationObserver` sub-interface) | `build.jenesis.repository.store.PublicationObserver` |
 
-A format may additionally implement one or both of two optional capabilities, detected
+A format may additionally implement any of three optional capabilities, detected
 by `instanceof` so a format that has no use for them is unaffected: `ProxyFormat` to gain
-pull-through mirroring (the OCI format does exactly that to mirror Docker Hub), and
+pull-through mirroring (the OCI format does exactly that to mirror Docker Hub),
 `ArtifactLayout` to expose the neutral coordinate behind a request path - its
 `{ecosystem, coordinate, version}` and prerelease flag, and the paths a version occupies -
 so post-processing, inventory and cleanup key on the coordinate a format supplies rather
-than parsing its layout.
+than parsing its layout, and `RepositoryImporter` to absorb one ecosystem's artifacts from
+an incumbent manager during a migration (its `imports(sourceFormat)` / `importTarget` /
+`importArtifact` named off the format's own `handles` / `describe` so one object carries
+both). The import orchestrator filters the discovered formats by this capability rather
+than running a second discovery pass.
 
 Sits on cloud infra by design
 -----------------------------
@@ -279,7 +282,7 @@ Modules
 
     source/                   all module sources (not a module itself)
       format/                 repository formats
-        spi/                  the RepositoryFormat / RepositoryImporter SPIs
+        spi/                  the RepositoryFormat SPI + its instanceof capabilities (Proxy/Layout/Importer)
         java/ maven/ ...      the built-in layouts (java, maven, jenesis, oci, raw)
       store/                  storage backends
         spi/                  the ArtifactStore SPI + content-addressed Publication
@@ -327,7 +330,7 @@ console's metrics-overview page and its `/api/admin/observability` admin API.
 | `build.jenesis.repository.format.maven`    | `source/format/maven`        | The Maven layout (`/repository/maven/...`): stores the blob, stores and serves a published `maven-metadata.xml` verbatim (computing it on read only under the `maven-metadata-compute` opt-in), proxies Maven Central (its `maven-metadata.xml` proxied fresh as a mutable index). When a modular jar is published, it cross-publishes the jar's module view into the Jenesis layout over the bridge (it `uses` the `ModuleView` the Jenesis layout provides) - the one required cross-publish, and it goes one way. |
 | `build.jenesis.repository.format.jenesis`  | `source/format/jenesis`      | The Jenesis module layout (`/repository/module/...`, `/repository/artifact/...`): stores and serves modules over the same content-addressed blob. It `provides` the `ModuleView` the Maven layout uses to mirror a published modular jar in by module name; a module published here stays in the module layout (it is not mirrored back to Maven). |
 | `build.jenesis.repository.format.oci`      | `source/format/oci`          | The OCI / Docker registry format (`/v2/` Distribution API), so `docker push` / `docker pull` work over the same store. Self-contained (SPI + store only): an OCI `sha256:` digest *is* the content-addressed `blobs/<hex>` key, so layers, configs and manifests dedupe with everything else. |
-| `build.jenesis.repository.format.raw`      | `source/format/raw`          | The generic (raw) layout (`/repository/raw/...`): a plain content-addressed file store over the same `Publication` primitives - `PUT` stores a file, `GET` serves it back. It also `provides` a `RepositoryImporter`, so raw/generic assets migrate in alongside Maven and OCI. |
+| `build.jenesis.repository.format.raw`      | `source/format/raw`          | The generic (raw) layout (`/repository/raw/...`): a plain content-addressed file store over the same `Publication` primitives - `PUT` stores a file, `GET` serves it back. It also carries the `RepositoryImporter` capability, so raw/generic assets migrate in alongside Maven and OCI. |
 | `build.jenesis.repository.importer`   | `source/importer/spi`          | The import-source SPI - the read half of a migration. An `ImportSource` walks a foreign repository's assets; an `ImportSourceProvider` builds one for a named incumbent from an `ImportRequest`. A connector is a module that `provides` a provider, discovered with `ServiceLoader`, so the server supports another incumbent without knowing it. A connector reads and writes its own JSON with Jackson. |
 | `build.jenesis.repository.importer.nexus`    | `source/importer/nexus`        | The Sonatype Nexus 3 connector: `provides` an `ImportSourceProvider` that pages the components REST API by continuation token (format reported per asset, so mixed repositories migrate in one pass). Import SPI + format SPI only. |
 | `build.jenesis.repository.importer.artifactory` | `source/importer/artifactory` | The JFrog Artifactory connector: `provides` an `ImportSourceProvider` that reads the storage listing (a repository has one package type, supplied up front). Import SPI + format SPI only. |
@@ -502,9 +505,10 @@ discovers with `ServiceLoader`: the built-in ones page the Nexus components REST
 token, read the Artifactory storage listing, walk any Maven-layout tree vendor-neutrally (the `maven`
 source, below), walk any format's own published index through the format module itself (the `index`
 source, below) and drain another jenesis over `/api/assets`, and another incumbent is one more module -
-the server names none of them. The write half is a `RepositoryImporter` per format (in
-`build.jenesis.repository.format`, discovered the same way). `RepositoryImport` walks a source and
-routes each asset to the importer that handles its format, writing it through the format's own publish
+the server names none of them. The write half is the `RepositoryImporter` capability a format opts into
+(in `build.jenesis.repository.format`, an `instanceof` capability on the one discovered `RepositoryFormat`
+seam - not a second discovered service). `RepositoryImport` walks a source and routes each asset to the
+format that `imports` its source format, writing it through the format's own publish
 path so the imported repository serves its own indexes rather than copying the source's (a source
 `maven-metadata.xml` is dropped; under the `maven-metadata-compute` opt-in the Maven layout derives one
 from the imported version folders). The core imports **Maven** (with the module-layout bridge), **OCI / Docker** and

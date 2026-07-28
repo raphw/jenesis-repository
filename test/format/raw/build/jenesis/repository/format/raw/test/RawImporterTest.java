@@ -34,9 +34,9 @@ class RawImporterTest {
 
     @Test
     void it_handles_the_generic_source_formats() {
-        assertThat(importer.handles("raw")).isTrue();
-        assertThat(importer.handles("generic")).isTrue();
-        assertThat(importer.handles("maven")).isFalse();
+        assertThat(importer.imports("raw")).isTrue();
+        assertThat(importer.imports("generic")).isTrue();
+        assertThat(importer.imports("maven")).isFalse();
     }
 
     @Test

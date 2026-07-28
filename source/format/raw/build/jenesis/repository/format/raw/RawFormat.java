@@ -1,10 +1,12 @@
 package build.jenesis.repository.format.raw;
 
 import module java.base;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
+import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactStore;
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamException;
@@ -18,11 +20,15 @@ import javax.xml.stream.XMLStreamWriter;
  * and a {@code DELETE} removes the pointer. No metadata, no protocol - just the content-addressed store behind a
  * file API, so it is a thin plugin over the same primitives every other layout uses.
  */
-public final class RawFormat implements RepositoryFormat, ProxyFormat {
+public final class RawFormat implements RepositoryFormat, ProxyFormat, RepositoryImporter {
 
     // Reused across listings rather than rebuilt per request: newInstance() runs the full JAXP provider lookup, and the
     // factory is safe to share for creating writers once configured.
     private static final XMLOutputFactory XML_OUTPUT = XMLOutputFactory.newInstance();
+
+    /** The migration-import capability (WSPI.2 (c)), delegated to the layout-only {@link RawImporter} - the format IS
+     *  the discovered importer now (an {@code instanceof} capability), and the importer class stays as its delegate. */
+    private final RawImporter importer = new RawImporter();
 
     @Override
     public String name() {
@@ -130,5 +136,22 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat {
         }
         exchange.setResponseHeader("Content-Type", "text/html");
         exchange.respond(200, out.toByteArray());
+    }
+
+    // --- RepositoryImporter capability (WSPI.2 (c)): delegated to RawImporter. ---
+
+    @Override
+    public boolean imports(String sourceFormat) {
+        return importer.imports(sourceFormat);
+    }
+
+    @Override
+    public Optional<ArtifactDescriptor> importTarget(String sourcePath) {
+        return importer.importTarget(sourcePath);
+    }
+
+    @Override
+    public void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException {
+        importer.importArtifact(path, content, store);
     }
 }

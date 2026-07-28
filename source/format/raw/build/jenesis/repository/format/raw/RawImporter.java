@@ -17,12 +17,12 @@ import build.jenesis.repository.store.ArtifactStore;
 public final class RawImporter implements RepositoryImporter {
 
     @Override
-    public boolean handles(String format) {
-        return format.equals("raw") || format.equals("generic");
+    public boolean imports(String sourceFormat) {
+        return sourceFormat.equals("raw") || sourceFormat.equals("generic");
     }
 
     @Override
-    public Optional<ArtifactDescriptor> describe(String sourcePath) {
+    public Optional<ArtifactDescriptor> importTarget(String sourcePath) {
         String relative = sourcePath.startsWith("/") ? sourcePath.substring(1) : sourcePath;
         // A raw asset carries no ecosystem coordinate; the target request path it lands on is its screen identity, so
         // the edge gates the /raw/ path the asset will serve from.

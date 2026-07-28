@@ -112,7 +112,6 @@ open module build.jenesis.repository.server {
     requires spring.boot.starter.security;
     exports build.jenesis.repository.server;
     uses build.jenesis.repository.format.RepositoryFormat;
-    uses build.jenesis.repository.format.RepositoryImporter;
     uses build.jenesis.repository.importer.ImportSourceProvider;
     uses build.jenesis.repository.server.TokenExchangeProvider;
     uses build.jenesis.repository.server.KeyUsageTrackerProvider;

@@ -22,7 +22,7 @@ public final class OciImporter implements RepositoryImporter {
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
     @Override
-    public Optional<ArtifactDescriptor> describe(String sourcePath) {
+    public Optional<ArtifactDescriptor> importTarget(String sourcePath) {
         // Structural exception: an OCI push is not a single-body write - a manifest references blobs pushed as their
         // own assets - so OCI owns its screening choke point through its own manifest choreography (T26.7), not the
         // import edge. Empty tells the walk to lay each OCI asset out unscreened here; the manifest gate screens it.
@@ -30,8 +30,8 @@ public final class OciImporter implements RepositoryImporter {
     }
 
     @Override
-    public boolean handles(String format) {
-        return format.equals("docker") || format.equals("oci");
+    public boolean imports(String sourceFormat) {
+        return sourceFormat.equals("docker") || sourceFormat.equals("oci");
     }
 
     @Override

@@ -4,6 +4,8 @@ import module java.base;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
+import build.jenesis.repository.format.RepositoryImporter;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -17,9 +19,13 @@ import tools.jackson.databind.json.JsonMapper;
  * pointer ({@code oci/<name>/tags/<tag>} to a digest); a manifest's media type is kept in a sidecar so a pull
  * returns it verbatim. Stateless: the dispatcher passes the tenant-and-repository-scoped store on each call.
  */
-public final class OciFormat implements RepositoryFormat, ProxyFormat {
+public final class OciFormat implements RepositoryFormat, ProxyFormat, RepositoryImporter {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** The migration-import capability (WSPI.2 (c)), delegated to the layout-only {@link OciImporter} - the format IS
+     *  the discovered importer now (an {@code instanceof} capability), and the importer class stays as its delegate. */
+    private final OciImporter importer = new OciImporter();
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
@@ -852,5 +858,23 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    // --- RepositoryImporter capability (WSPI.2 (c)): delegated to OciImporter. importTarget returns empty - OCI owns
+    //     its own manifest screening choke point, so the import walk lays each OCI asset out unscreened. ---
+
+    @Override
+    public boolean imports(String sourceFormat) {
+        return importer.imports(sourceFormat);
+    }
+
+    @Override
+    public Optional<ArtifactDescriptor> importTarget(String sourcePath) {
+        return importer.importTarget(sourcePath);
+    }
+
+    @Override
+    public void importArtifact(String path, InputStream content, ArtifactStore store) throws IOException {
+        importer.importArtifact(path, content, store);
     }
 }

@@ -13,6 +13,4 @@ module build.jenesis.repository.format.raw {
     exports build.jenesis.repository.format.raw to build.jenesis.repository.format.raw.test;
     provides build.jenesis.repository.format.RepositoryFormat
             with build.jenesis.repository.format.raw.RawFormat;
-    provides build.jenesis.repository.format.RepositoryImporter
-            with build.jenesis.repository.format.raw.RawImporter;
 }

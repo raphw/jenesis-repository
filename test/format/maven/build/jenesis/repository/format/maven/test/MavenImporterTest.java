@@ -35,9 +35,9 @@ class MavenImporterTest {
 
     @Test
     void it_handles_the_maven_source_formats() {
-        assertThat(importer.handles("maven")).isTrue();
-        assertThat(importer.handles("maven2")).isTrue();
-        assertThat(importer.handles("raw")).isFalse();
+        assertThat(importer.imports("maven")).isTrue();
+        assertThat(importer.imports("maven2")).isTrue();
+        assertThat(importer.imports("raw")).isFalse();
     }
 
     @Test

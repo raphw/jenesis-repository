@@ -1,6 +1,7 @@
 package build.jenesis.repository.server;
 
 import module java.base;
+import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.importer.ImportSource;
 import build.jenesis.repository.store.ArtifactDescriptor;
@@ -10,24 +11,26 @@ import build.jenesis.repository.store.Publication;
 
 /**
  * Drives a migration off an incumbent repository manager: it enumerates an {@link ImportSource} and routes each
- * asset to the first {@link RepositoryImporter} that {@link RepositoryImporter#handles handles} its format,
- * writing it into the content-addressed store so the imported repository serves and indexes it as its own. The
- * importers are discovered with {@link java.util.ServiceLoader}, so the format coverage of an import is simply the
- * set of importers on the module path: the core ships the Maven, Docker (OCI) and raw importers, and other format
- * importers can be added through the same SPI. An asset whose format has no importer is counted as skipped rather
- * than failing the import, so a mixed-format source migrates the formats this deployment understands and reports
- * the rest - the same listing then drives a second pass once those importers are on the path.
+ * asset to the first {@link RepositoryFormat} that also carries the {@link RepositoryImporter} capability and
+ * {@link RepositoryImporter#imports imports} its format, writing it into the content-addressed store so the imported
+ * repository serves and indexes it as its own. Formats are discovered with {@link java.util.ServiceLoader} and
+ * filtered by {@code instanceof RepositoryImporter} (WSPI.2 (c): the importer is a format capability, not a second
+ * discovered service), so the format coverage of an import is simply the set of importing formats on the module path:
+ * the core ships Maven, Docker (OCI) and raw with the capability, and another format adds it by implementing the
+ * interface. An asset whose format has no importing format is counted as skipped rather than failing the import, so a
+ * mixed-format source migrates the formats this deployment understands and reports the rest - the same listing then
+ * drives a second pass once those formats are on the path.
  *
  * <p>The import walk is an ingress <em>edge</em> (EPIC 26): it screens each asset before the demoted, layout-only
  * importer lays it out, so a migration off an incumbent lands the same {@link build.jenesis.repository.store.PublishInterceptor}
  * gate a deploy or batch upload passes - the deploy edge ({@link ScreenedDispatch}) and the import edge share the one
  * {@link Publication#screen} + restream + {@link Publication#published} choreography. For each asset the importer
- * {@link RepositoryImporter#describe describes} the target coordinate it will occupy; the edge
+ * {@link RepositoryImporter#importTarget describes} the target coordinate it will occupy; the edge
  * {@link Publication#screen screens} the asset against that descriptor and, on {@code ACCEPT}, restreams the stored
  * {@code blobs/<hash>} into {@link RepositoryImporter#importArtifact} then fires {@link Publication#published}. A
  * {@code QUARANTINE} is held (the screen diverted its blob to {@code /quarantine<target-path>}, never laid out) and a
  * {@code REJECT} is skipped; either way the walk continues to the next asset, so one screened-out artifact never
- * aborts a migration. An importer that {@link RepositoryImporter#describe describes} nothing (OCI, which owns its own
+ * aborts a migration. An importer that {@link RepositoryImporter#importTarget describes} nothing (OCI, which owns its own
  * manifest choke point) has its bytes laid out unscreened here. With the free edition's empty discovered chain the
  * screen degrades to a store-then-restream and an accepted import is byte-for-byte what the pre-edge importer wrote.
  */
@@ -36,11 +39,17 @@ public final class RepositoryImport {
     private final List<RepositoryImporter> importers;
 
     public RepositoryImport() {
-        this(ServiceLoader.load(RepositoryImporter.class).stream().map(ServiceLoader.Provider::get).toList());
+        this(ServiceLoader.load(RepositoryFormat.class).stream().map(ServiceLoader.Provider::get).toList());
     }
 
-    public RepositoryImport(List<RepositoryImporter> importers) {
-        this.importers = List.copyOf(importers);
+    /** Filter the discovered (or supplied) formats to those carrying the {@link RepositoryImporter} capability - the
+     *  {@code instanceof} split that replaces the second ServiceLoader pass. A base format without the capability is
+     *  simply absent from the importer set, so its assets are skipped exactly as a missing importer's were. */
+    public RepositoryImport(List<RepositoryFormat> formats) {
+        this.importers = formats.stream()
+                .filter(format -> format instanceof RepositoryImporter)
+                .map(format -> (RepositoryImporter) format)
+                .toList();
     }
 
     /** Import every asset of {@code source} into {@code store}, returning the counts of what was imported and skipped. */
@@ -61,7 +70,7 @@ public final class RepositoryImport {
             // count as skipped, exactly as if its importer module were absent.
             if (Features.enabled(format)) {
                 for (RepositoryImporter importer : importers) {
-                    if (importer.handles(format)) {
+                    if (importer.imports(format)) {
                         screenAndLayout(importer, path, content, store, imported, held, rejected, listener);
                         return;
                     }
@@ -82,7 +91,7 @@ public final class RepositoryImport {
     private void screenAndLayout(RepositoryImporter importer, String path, ImportSource.Content content,
                                  ArtifactStore store, AtomicInteger imported, AtomicInteger held,
                                  AtomicInteger rejected, Listener listener) throws IOException {
-        Optional<ArtifactDescriptor> described = importer.describe(path);
+        Optional<ArtifactDescriptor> described = importer.importTarget(path);
         if (described.isEmpty()) {
             // No target coordinate to screen against (OCI owns its own manifest choke point): lay the asset out from
             // the source stream unchanged, exactly as before this edge screened.

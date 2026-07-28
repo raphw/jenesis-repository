@@ -16,12 +16,12 @@ import build.jenesis.repository.store.ArtifactStore;
 public final class MavenImporter implements RepositoryImporter {
 
     @Override
-    public boolean handles(String format) {
-        return format.equals("maven2") || format.equals("maven");
+    public boolean imports(String sourceFormat) {
+        return sourceFormat.equals("maven2") || sourceFormat.equals("maven");
     }
 
     @Override
-    public Optional<ArtifactDescriptor> describe(String sourcePath) {
+    public Optional<ArtifactDescriptor> importTarget(String sourcePath) {
         String relative = sourcePath.startsWith("/") ? sourcePath.substring(1) : sourcePath;
         // The coordinate-enriched descriptor MavenFormat parses from the /maven/ path an asset lands on, so the edge
         // screens against the real Maven coordinate/version. Empty for a generated maven-metadata.xml (which the import
