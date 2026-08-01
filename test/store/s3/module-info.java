@@ -99,6 +99,7 @@ open module build.jenesis.repository.store.s3.test {
     requires software.amazon.awssdk.regions;
     requires software.amazon.awssdk.auth;
     requires software.amazon.awssdk.http.urlconnection;
+    requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
 }

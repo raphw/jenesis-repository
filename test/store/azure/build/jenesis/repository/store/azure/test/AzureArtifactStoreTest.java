@@ -107,6 +107,21 @@ public class AzureArtifactStoreTest {
     }
 
     @Test
+    public void open_streams_a_stored_blob_back_and_a_missing_key_throws() throws IOException {
+        byte[] body = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+        store.write("blobs/opened", new ByteArrayInputStream(body));
+        try (InputStream in = store.open("blobs/opened")) {
+            assertThat(in.readAllBytes()).as("open() streams the stored bytes back").isEqualTo(body);
+        }
+        assertThatThrownBy(() -> {
+            try (InputStream in = store.open("blobs/absent")) {
+                in.readAllBytes();
+            }
+        }).as("open() on a missing blob surfaces an IOException, never a silent empty stream")
+                .isInstanceOf(IOException.class);
+    }
+
+    @Test
     public void list_returns_the_immediate_children_under_a_prefix() throws IOException {
         store.write("publish/maven/g/a/1.0/a-1.0.jar", new ByteArrayInputStream(new byte[]{1}));
         store.write("publish/maven/g/a/1.0/a-1.0.pom", new ByteArrayInputStream(new byte[]{2}));

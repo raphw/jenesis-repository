@@ -124,6 +124,28 @@ class PageTest {
     }
 
     @Test
+    void page_hides_an_atomic_writes_in_flight_upload_temp_file() throws IOException {
+        // page()'s native filesystem override filters a live .upload*.tmp exactly as list() does - a distinct code
+        // path from the list() filter - so a concurrent atomic write's spool file (a sibling in the directory until it
+        // is renamed into place) is never paged out as if it were a stored child.
+        ArtifactStore store = store();
+        store.writeVersioned("dir/one", "1".getBytes(StandardCharsets.UTF_8), null);
+        store.writeVersioned("dir/two", "2".getBytes(StandardCharsets.UTF_8), null);
+        Files.createFile(root.resolve("dir").resolve(".upload98765.tmp"));
+
+        List<String> names = new ArrayList<>();
+        store.page("dir", "", 10, names::add);
+        assertThat(names).as("the in-flight upload temp file is filtered, only the real entries page")
+                .containsExactly("one", "two");
+
+        // The temp file sorts before "one", so a cap-then-emit that failed to filter would surface it as the first
+        // (and only) name of a one-element page; assert it still does not.
+        List<String> first = new ArrayList<>();
+        store.page("dir", "", 1, first::add);
+        assertThat(first).containsExactly("one");
+    }
+
+    @Test
     void containers_and_leaves_page_alike_and_a_full_traversal_matches_list() throws IOException {
         ArtifactStore store = store();
         store.writeVersioned("dir/leaf", new byte[0], null);
