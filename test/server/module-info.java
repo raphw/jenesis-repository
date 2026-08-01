@@ -124,7 +124,6 @@ open module build.jenesis.repository.test {
     requires tools.jackson.databind;
     requires org.apache.tomcat.embed.core;
     requires java.net.http;
-    requires jdk.httpserver;
     requires org.slf4j;
     requires ch.qos.logback.classic;
     requires ch.qos.logback.core;
