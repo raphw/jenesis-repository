@@ -62,11 +62,15 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     semantics (enterprise always encrypts; MinIO's SSE ETag ≠ content MD5). The test is
     `@Disabled` with a pointer here until `SearchIndexTask`'s manifest CAS is hardened
     for SSE ETags. This is orthogonal to the container mechanism.
-  - **Container-FIXTURE helpers still to migrate** (heavier images, own validation):
-    the Keycloak rig (`Keycloak.java` — a `docker compose` stack behind
-    `KeycloakTokenExchangeE2ETest` / `KeycloakSsoBrowserTest`, three copies) and the
-    sigstore `Compose.java` rig. Both are compose stacks → Testcontainers
-    `ComposeContainer` (not a drop-in `GenericContainer` swap); heavy boots.
+  - **Container-FIXTURE helpers migrated (DONE this session, real runs):** the Keycloak
+    rig — three `Keycloak.java` copies (`server`, `auth/saml`, `browser`) — is re-backed on
+    a bridged Testcontainers `GenericContainer` (realm via `withCopyToContainer`,
+    mapped-port issuer, discovery-doc wait), and the sigstore rig on a Testcontainers
+    `ComposeContainer` (`withExposedService` ambassador, `Compose.java` deleted). Validated:
+    `KeycloakTokenExchangeE2ETest` (129.5s), `KeycloakSamlRoundTripTest` (41.2s),
+    `KeycloakSsoBrowserTest` (in the 136s browser run), and `SigstoreKeylessInteropTest`
+    (real 7-service stack) all green. (Enterprise-side detail; kept here since the rule
+    spans both repos.)
   - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture** (Testcontainers
     does not replace these): the format `*RealClient` tests run the real ecosystem
     client (composer/cargo/npm/…) via `docker run` as a one-shot client action against
@@ -93,7 +97,7 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     now that a daemon is up). The migration compiles and matches the validated Nexus twin;
     a `ulimit -Hn` guard was added so the test self-skips where the host caps nofile too
     low and still runs on a normal CI host.
-  - Still to migrate: `SeleniumContainer` (below).
+  - Migrated: `SeleniumContainer` (below).
   - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture:**
     `OciDockerTest` / `OciProxyTest` drive the host `docker push`/`pull` against the
     in-process Jenesis registry to prove a real Docker client interoperates —
@@ -101,12 +105,18 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     and `NexusSourceTest` are not docker tests at all — `imports("docker")` / a format
     name string.)
 
-- **`SeleniumContainer` (both repos)** is a docker-CLI helper too, not yet a
-  Testcontainers class. It runs the node under **host networking** so the in-container
-  browser reaches the ephemeral-port console the test boots on the host loopback — a
-  Testcontainers rewrite must replace that with `Testcontainers.exposeHostPorts(port)` +
-  the `host.testcontainers.internal` gateway address in the console browser tests, so it
-  is a real change (not a drop-in), tracked with the rest.
+- **`SeleniumContainer` (both repos) — migrated (DONE this session, real runs).** It is
+  now a Testcontainers `GenericContainer` that **deliberately keeps host networking**
+  (`withNetworkMode("host")`): the in-container browser must reach the ephemeral-port
+  console — and, on the SSO leg, the mapped-port Keycloak — on one host-loopback identity
+  that agrees with the console's callback and the issuer, which bridged Testcontainers
+  networking cannot provide (the in-JVM console cannot resolve
+  `host.testcontainers.internal`; a bridged browser's `localhost` is not the host's). The
+  `Testcontainers.exposeHostPorts` / gateway rewrite was therefore rejected in favour of
+  keeping the loopback identity — the migration is the Testcontainers-managed lifecycle
+  (pull/boot/cleanup via Ryuk), not the topology. `webDriverUrl()` and the consumers are
+  unchanged; readiness is a `/status` poll. Validated: free `ConsoleBrowserTest` (15.5s)
+  and enterprise `ConsoleBrowserTest` + `KeycloakSsoBrowserTest` (136s) green.
 
 ## (3) Proxy → Mockito — BLOCKED for servlet mocks (empirically verified)
 
