@@ -16,33 +16,61 @@ ledger of what remains, what is a **deliberate** exception, and what must migrat
 
 ## (1) HTTP mocking → WireMock
 
-Already on WireMock: free 6 modules, enterprise 38 modules.
+Already on WireMock: free 6 modules, enterprise 38 modules. A full read-through of
+every remaining `com.sun.net.httpserver` / `HttpServer.create` / `ServerSocket`
+stub across both repos was done this session and classified below (KEEP =
+socket-level fault WireMock can't model, or a rule-(4) case where WireMock would be
+the greater evil; MIGRATE = plain request/response stub).
 
-**Deliberate residuals (keep — WireMock cannot model these at the wire level):**
+**KEEP — genuine socket-level faults (WireMock cannot model at the wire level):**
 
-- `enterprise …/gateway/test/FaultUpstream.java` — a real loopback socket that
-  models socket-level faults (half-close, connection reset, an `ETag`→`304`
-  revalidation wire) the plain stub duties of which already moved to the
-  WireMock-backed `LoopbackUpstream`. Documented in its own Javadoc.
-- `enterprise …/ai/test/RecordedModelServer.java`, `emulator/test/EmulatorTest`,
-  `forwarding/test/{ForwardingTest,CentralPortalTransportTest}` — **REVIEW**:
-  confirm each is a socket-level need; if it is a plain request/response stub,
-  migrate to WireMock.
-- `enterprise …/cli/test/CliDispatcherTest` — **REVIEW**.
+- `enterprise …/gateway/test/FaultUpstream.java` — the deliberate fault double behind
+  `HttpFetcherWireTest`, split from its WireMock-backed sibling `LoopbackUpstream.java`.
+  Real faults: `truncated()` (short read), `stall()` (read-timeout hang), the JDK HEAD
+  Content-Length workaround. Documented in its own Javadoc.
+- `free …/proxy/test/HttpFetcherTimeoutTest` — accept-then-hang past the request timeout,
+  the free mirror of `FaultUpstream.stall()`. Canonical read-timeout socket fault → keep.
 
-**Genuine stragglers to migrate (free):**
+**KEEP — rule (4) (migrating would make the test worse, not a socket fault):**
 
-- `proxy/test/HttpFetcher{Fetch,Head,Redirect,Timeout}Test` — these test the real
-  `HttpFetcher` against a `jdk.httpserver` stub. `HttpFetcherWireTest` already uses
-  WireMock (`LoopbackUpstream`); fold the four remaining into it **unless** they
-  need a socket fault WireMock cannot express (timeout/half-close may — REVIEW).
-- `server/test/MavenTreeImportTest` — **REVIEW**.
-- `store/{gcs,s3,azure}/test/*` fail-loud + conditional-write stubs (added this
-  session + pre-existing) — these drive the **S3 / Azure SDK** against an
-  in-process stub. The stateless fail-loud branch (HEAD→403) is a clean WireMock
-  candidate; the **stateful** GCS `x-goog-if-generation-match` CAS stub is not a
-  clean WireMock fit and is a case where the hand-rolled stub is the lesser evil —
-  REVIEW against rule (4) before forcing WireMock.
+- `free …/proxy/test/HttpFetcherFetchCapTest` — streams 64 MiB from a small buffer to
+  prove the fetch cap; WireMock's `withBody` would materialise the whole 64 MiB in
+  memory. The streaming is the point → keep.
+- `free …/store/gcs/test/GcsConditionalWriteTest`'s **stateful CAS core**
+  (`x-goog-if-generation-match`, monotonic generation counter, 412 on mismatch). Not a
+  socket fault, but WireMock models per-key compare-and-set only via a stateful
+  `ResponseTransformer` — hand-rolled logic relocated, not removed. The in-process stub
+  is the clearer expression → keep (rule 4). (Its stateless branches — fail-loud HEAD
+  403, `NoSuchBucket` 404 — would migrate cleanly but aren't worth splitting the file.)
+
+**Already compliant / not a stub:**
+
+- `enterprise …/ai/test/RecordedModelServer.java` — already `WireMockServer`; the
+  `jdk.httpserver` import is vestigial (value types only).
+- `enterprise …/server/test/KeycloakTokenExchangeE2ETest` — no in-process stub; a
+  Testcontainers real Keycloak (the hermetic `OidcTokenExchangeE2ETest` it references is
+  already WireMock).
+
+**MIGRATE — plain request/response stubs (tracked; each a passing test today, so the
+value is idiom-consistency and the cost includes adding the `wiremock.standalone` alias
+where a module lacks it — noted per item):**
+
+- `enterprise …/cli/test/CliDispatcherTest` — ~18 JSON/status API routes with per-test
+  mutable status/body → one stub per route, re-stub/Scenario for the mutable status,
+  query params from the journal. Module **already** has the alias (pure rewrite).
+- `free …/server/test/MavenTreeImportTest` — Maven origin: seeded files, generated
+  autoindex HTML, a one-shot 500 → a WireMock **Scenario**. Module **already** has alias.
+- `enterprise …/emulator/test/EmulatorTest` — plain status codes for the load mix (the
+  truncation is the client's own request). Needs the alias.
+- `enterprise …/forwarding/test/{ForwardingTest,CentralPortalTransportTest}` — PUT→201
+  loop-guard target; multipart upload + status poll + 401 (journal for the body). Needs
+  the alias.
+- `free …/proxy/test/{HttpFetcherHeadTest,HttpFetcherRedirectTest}` — plain HEAD (WireMock
+  does Content-Length natively) and 302 chains / loop / SSRF-refuse. Keep `Timeout` +
+  `FetchCap`. Needs the alias.
+- `free …/store/azure/test/AzureFailLoudTest` (every request → 403; trivial) and
+  `store/s3/test/S3GetRequestTest` (HEAD 403/404 + a ranged GET needing per-`Range`
+  stubs). Need the alias.
 
 ## (2) Docker → Testcontainers
 
