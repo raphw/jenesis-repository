@@ -2,6 +2,7 @@ package build.jenesis.repository.format.oci;
 
 import module java.base;
 import build.jenesis.repository.format.FormatExchange;
+import build.jenesis.repository.format.PrivateHosts;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.format.RepositoryImporter;
@@ -601,7 +602,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         if (challenge == null || !challenge.regionMatches(true, 0, "Bearer ", 0, "Bearer ".length())) {
             return first;
         }
-        String token = token(challenge.substring("Bearer ".length()), fetcher);
+        String token = token(challenge.substring("Bearer ".length()), fetcher, url.getHost());
         if (token == null) {
             return first;
         }
@@ -628,7 +629,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             if (challenge == null || !challenge.regionMatches(true, 0, "Bearer ", 0, "Bearer ".length())) {
                 return Optional.empty();
             }
-            token = token(challenge.substring("Bearer ".length()), fetcher);
+            token = token(challenge.substring("Bearer ".length()), fetcher, url.getHost());
         }
         if (token == null) {
             return Optional.empty();
@@ -793,7 +794,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         return new Page(List.copyOf(values), next);
     }
 
-    private String token(String challenge, ProxyFormat.Fetcher fetcher) throws IOException {
+    private String token(String challenge, ProxyFormat.Fetcher fetcher, String upstreamHost) throws IOException {
         Map<String, String> params = new LinkedHashMap<>();
         for (String part : challenge.split(",")) {
             int equals = part.indexOf('=');
@@ -816,7 +817,24 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
                 separator = '&';
             }
         }
-        Optional<ProxyFormat.Fetched> response = fetcher.fetch(URI.create(url.toString()), Map.of());
+        URI realmUri;
+        try {
+            realmUri = URI.create(url.toString());
+        } catch (IllegalArgumentException malformed) {
+            return null;   // a realm that is not a valid URI cannot be exchanged for a token
+        }
+        // The bearer-token realm is chosen by the upstream's WWW-Authenticate challenge. It is trusted when it names
+        // the SAME host the operator configured as the upstream - an internal mirror's own token endpoint, so a
+        // private address there is expected. It is an SSRF when it names a DIFFERENT host that resolves to a private,
+        // loopback, link-local or cloud-metadata address: the upstream is then steering the proxy into the proxy's OWN
+        // internal network. Refuse only that cross-host-to-private hop (no token, so the caller lets the local 404
+        // stand); the fetcher screens redirect hops on the same guard.
+        String realmHost = realmUri.getHost();
+        if (realmHost == null
+                || (!realmHost.equalsIgnoreCase(upstreamHost) && PrivateHosts.resolvesToPrivate(realmHost))) {
+            return null;
+        }
+        Optional<ProxyFormat.Fetched> response = fetcher.fetch(realmUri, Map.of());
         if (response.isEmpty() || response.get().status() != 200) {
             return null;
         }

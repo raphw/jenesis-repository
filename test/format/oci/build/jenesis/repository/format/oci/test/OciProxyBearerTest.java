@@ -72,6 +72,60 @@ class OciProxyBearerTest {
     }
 
     @Test
+    void a_401_bearer_realm_pointing_at_a_private_host_is_refused_and_never_fetched() throws IOException {
+        String type = "application/vnd.oci.image.manifest.v1+json";
+        byte[] manifest = ("{\"mediaType\":\"" + type + "\"}").getBytes(StandardCharsets.UTF_8);
+        // The realm in the upstream's 401 challenge points at the cloud-metadata IP. token() must screen it and refuse
+        // (no token), so the proxy never issues a request to 169.254.169.254 - the SSRF the realm hop would otherwise
+        // drive into the internal network, exactly as the fetcher screens a redirect Location.
+        String metadataRealm = "Bearer realm=\"http://169.254.169.254/latest/meta-data/\",service=\"x\",scope=\"y\"";
+        List<URI> fetched = new ArrayList<>();
+        ProxyFormat.Fetcher fetcher = (url, headers) -> {
+            fetched.add(url);
+            if (headers.containsKey("Authorization")) {
+                return Optional.of(new ProxyFormat.Fetched(200, manifest, Map.of("Content-Type", type)));
+            }
+            return Optional.of(new ProxyFormat.Fetched(401, new byte[0], Map.of("WWW-Authenticate", metadataRealm)));
+        };
+
+        FakeExchange get = new FakeExchange("GET", "/v2/app/manifests/1.0", new byte[0],
+                Map.of(), Map.of("Accept", type));
+        boolean served = format.proxy(get, store, UPSTREAM, fetcher);
+
+        assertThat(served).as("the token realm is refused (SSRF), so the 401 stands and nothing is served").isFalse();
+        assertThat(fetched).as("the proxy never issues a request to the private cloud-metadata realm host")
+                .noneMatch(url -> "169.254.169.254".equals(url.getHost()));
+    }
+
+    @Test
+    void a_realm_on_the_same_host_as_a_private_upstream_is_trusted_and_exchanged() throws IOException {
+        // An internal-mirror upstream on a private/loopback host, whose token realm names that SAME host, is the
+        // operator's own registry - trusted, not an SSRF - so the token is still exchanged and the pull succeeds. Only
+        // a realm on a DIFFERENT private host (steering into the proxy's own network) is refused.
+        URI loopbackUpstream = URI.create("http://127.0.0.1/");
+        String type = "application/vnd.oci.image.manifest.v1+json";
+        byte[] manifest = ("{\"mediaType\":\"" + type + "\"}").getBytes(StandardCharsets.UTF_8);
+        String sameHostRealm = "Bearer realm=\"http://127.0.0.1/token\",service=\"x\",scope=\"y\"";
+        ProxyFormat.Fetcher fetcher = (url, headers) -> {
+            if (url.toString().startsWith("http://127.0.0.1/token")) {
+                return Optional.of(new ProxyFormat.Fetched(200,
+                        "{\"token\":\"TKN-mirror\"}".getBytes(StandardCharsets.UTF_8), Map.of()));
+            }
+            if (headers.containsKey("Authorization")) {
+                return Optional.of(new ProxyFormat.Fetched(200, manifest, Map.of("Content-Type", type)));
+            }
+            return Optional.of(new ProxyFormat.Fetched(401, new byte[0], Map.of("WWW-Authenticate", sameHostRealm)));
+        };
+
+        FakeExchange get = new FakeExchange("GET", "/v2/app/manifests/1.0", new byte[0],
+                Map.of(), Map.of("Accept", type));
+        boolean served = format.proxy(get, store, loopbackUpstream, fetcher);
+
+        assertThat(served).as("a same-host (internal-mirror) realm is trusted, so the token exchange proceeds").isTrue();
+        assertThat(get.status()).isEqualTo(200);
+    }
+
+    @Test
     void a_blob_pull_rides_the_same_bearer_flow_over_the_streamed_download() throws IOException {
         byte[] layer = "layer-bytes-over-bearer".getBytes(StandardCharsets.UTF_8);
         String hex = sha256(layer);
