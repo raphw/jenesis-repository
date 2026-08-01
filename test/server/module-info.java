@@ -93,6 +93,7 @@
  */
 open module build.jenesis.repository.test {
     requires build.jenesis.repository.server;
+    requires build.jenesis.repository.server.spi;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;
     requires build.jenesis.repository.format;
@@ -137,12 +138,12 @@ open module build.jenesis.repository.test {
     // WFE.1: register a test CapabilityContributor so the running free server discovers it via ServiceLoader exactly
     // as a richer distribution would, proving /api/capabilities merges a contributor's data through the SPI (no bean
     // override). The free server module already `uses` the SPI.
-    provides build.jenesis.repository.server.CapabilityContributor
+    provides build.jenesis.repository.server.spi.CapabilityContributor
             with build.jenesis.repository.test.TestCapabilityContributor;
     // WFE.1: register a test ImportEdgeProvider so the running free server discovers it via ServiceLoader exactly as a
     // richer distribution would, proving the free import edge yields (its mapping is not registered) when a distribution
     // owns the edge - no WebMvcRegistrations suppression. Inert by default (a required-config gate), activated only by
     // the yield test, so every other import test still sees the free edge served.
-    provides build.jenesis.repository.server.ImportEdgeProvider
+    provides build.jenesis.repository.server.spi.ImportEdgeProvider
             with build.jenesis.repository.test.TestImportEdgeProvider;
 }

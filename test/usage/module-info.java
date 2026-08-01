@@ -90,7 +90,7 @@
  */
 open module build.jenesis.repository.usage.test {
     requires build.jenesis.repository.usage;
-    requires build.jenesis.repository.server;
+    requires build.jenesis.repository.server.spi;
     requires build.jenesis.repository.observation;
     requires build.jenesis.repository.store;
     requires build.jenesis.repository.store.filesystem;

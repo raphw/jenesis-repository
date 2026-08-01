@@ -132,7 +132,13 @@ open module build.jenesis.repository.ui.test {
     requires build.jenesis.repository.observation;
     requires build.jenesis.repository.posture;
     requires java.net.http;
+    requires spring.core;
+    requires spring.beans;
+    requires spring.context;
+    requires spring.web;
     requires spring.security.core;
+    requires spring.security.oauth2.client;
+    requires spring.security.oauth2.core;
     requires org.junit.jupiter;
     requires org.assertj.core;
 }

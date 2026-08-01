@@ -1,4 +1,4 @@
-package build.jenesis.repository.server;
+package build.jenesis.repository.server.spi;
 
 import module java.base;
 

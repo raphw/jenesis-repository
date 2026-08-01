@@ -1,9 +1,9 @@
 package build.jenesis.repository.oidc;
 
 import module java.base;
-import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.TokenExchange;
-import build.jenesis.repository.server.TokenExchangeProvider;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.TokenExchange;
+import build.jenesis.repository.server.spi.TokenExchangeProvider;
 
 /**
  * Discovers the OIDC token exchange: tokens are validated against the tenant's trust policy with Spring Security's

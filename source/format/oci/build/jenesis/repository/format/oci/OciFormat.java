@@ -35,6 +35,12 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             "application/vnd.docker.distribution.manifest.list.v2+json");
 
     /** The chunks of an in-flight chunked upload, staged by session id before they are finalized into a blob. */
+    /** The manifest PUT body is buffered whole (it is metadata, never a layer blob) to hand the same bytes to the
+     *  screen, so it must be bounded: a hostile authenticated pusher must not be able to OOM the shared JVM with a
+     *  multi-GB "manifest". 4 MiB is far above any real image manifest / index (a few KiB) yet caps the buffer.
+     *  Package-private so the migration-import path ({@link OciImporter}) bounds an imported manifest identically. */
+    static final int MAX_MANIFEST = 4 * 1024 * 1024;
+
     private static final String UPLOADS = "oci/uploads/";
 
     /** One start-time marker per open upload session, in its own namespace - kept out of the session's numbered
@@ -295,12 +301,31 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
                 return;
             }
             // Route the manifest through the OCI choke point (EPIC 26): OciManifests.ingest screens it against its
-            // neutral oci coordinate and maps the verdict onto the native withheld/<hex> marker. The manifest is small
-            // metadata, so buffering it here (never a layer blob) to hand the same bytes to the screen is fine.
+            // neutral oci coordinate and maps the verdict onto the native withheld/<hex> marker. Buffer it whole (it is
+            // metadata, never a layer blob) to hand the same bytes to the screen - but BOUNDED: OCI opts out of the
+            // ingress edge screen, so a manifest PUT reaches here with the raw request stream; an uncapped readAllBytes
+            // would let an authenticated pusher OOM the shared JVM (a cross-tenant DoS). Read one byte past the cap and
+            // refuse a body that overflows it, the manifest-side counterpart of the NuGet .nuspec readNBytes cap.
+            byte[] body = exchange.requestStream().readNBytes(MAX_MANIFEST + 1);
+            if (body.length > MAX_MANIFEST) {
+                exchange.setResponseHeader("Content-Type", "application/json");
+                exchange.respond(413, ("{\"errors\":[{\"code\":\"MANIFEST_INVALID\",\"message\":"
+                        + "\"manifest exceeds the " + MAX_MANIFEST + "-byte limit\"}]}").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             OciManifests.Ingested ingested = OciManifests.ingest(
-                    name, reference, exchange.requestStream().readAllBytes(),
-                    exchange.requestHeader("Content-Type"), store);
+                    name, reference, body, exchange.requestHeader("Content-Type"), store);
             String hex = ingested.hex();
+            // A push BY DIGEST must actually hash to that digest - the manifest-side counterpart of the blob store()
+            // content-address check. Without this a client could PUT /manifests/sha256:<X> with a body that hashes to
+            // Y, and the registry would accept it and answer Docker-Content-Digest: sha256:Y, silently disagreeing
+            // with the reference the client (and any content-addressed puller) used. Refuse the mismatch as invalid.
+            if (reference.startsWith("sha256:") && !reference.substring("sha256:".length()).equalsIgnoreCase(hex)) {
+                exchange.setResponseHeader("Content-Type", "application/json");
+                exchange.respond(400, ("{\"errors\":[{\"code\":\"MANIFEST_INVALID\",\"message\":"
+                        + "\"the manifest body does not hash to the referenced digest\"}]}").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             switch (ingested.disposition()) {
                 case ACCEPT -> {
                     exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);

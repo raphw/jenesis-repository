@@ -3,7 +3,7 @@ package build.jenesis.repository.ratelimit;
 import build.jenesis.repository.observation.HealthCheck;
 import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilitySource;
-import build.jenesis.repository.server.RateLimiter;
+import build.jenesis.repository.server.spi.RateLimiter;
 
 import module java.base;
 

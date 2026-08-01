@@ -31,6 +31,28 @@ class ConsistencyPanelTest {
                 .contains("Jenesis-Repository-Key").contains("repository:read");
         assertThat(body).as("it degrades cleanly to single-node").contains("Single node");
         assertThat(body).as("it names the detect-not-block contract").contains("stuck diverged");
-        assertThat(body).as("dynamic text is escaped before it reaches the DOM").contains("jconEsc");
+    }
+
+    @Test
+    void every_api_derived_field_reaches_the_dom_through_an_html_escaper() {
+        // Stronger than substring-checking the bare identifier "jconEsc": prove the escaper actually neutralises the
+        // three markup metacharacters, and that the untrusted, API-derived fields a malicious node would control (the
+        // node id and each divergence's kind/detail/reason) are passed THROUGH that escaper before they are
+        // interpolated into innerHTML - so a node id like <script> or a crafted divergence reason cannot inject markup.
+        // (A full JS-execution assertion is not possible here: no script engine is on the module path in this JDK.)
+        String body = new ConsistencyPanel().render(null);
+
+        assertThat(body).as("the escaper maps & < > to their HTML entities")
+                .contains("replace(/&/g,'&amp;')")
+                .contains("replace(/</g,'&lt;')")
+                .contains("replace(/>/g,'&gt;')");
+        assertThat(body).as("the local node id is escaped, never interpolated raw").contains("esc(d.localNodeId)");
+        assertThat(body).as("each node's id is escaped before it reaches the DOM").contains("esc(n.nodeId)");
+        assertThat(body).as("a divergence's kind, node and free-text detail are all escaped")
+                .contains("esc(x.kind)").contains("esc(x.nodeId)").contains("esc(x.detail)");
+        // No untrusted field is dropped into innerHTML without the escaper: the only '+n.' / '+x.' / '+d.localNodeId'
+        // interpolations of API data are the esc()-wrapped ones asserted above (the raw counts liveCount/nodeCount are
+        // server-computed numbers, not attacker-controlled strings).
+        assertThat(body).doesNotContain("+n.nodeId").doesNotContain("+x.detail").doesNotContain("+d.localNodeId+");
     }
 }

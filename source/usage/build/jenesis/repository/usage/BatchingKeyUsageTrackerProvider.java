@@ -1,9 +1,9 @@
 package build.jenesis.repository.usage;
 
 import module java.base;
-import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.KeyUsageTracker;
-import build.jenesis.repository.server.KeyUsageTrackerProvider;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.KeyUsageTracker;
+import build.jenesis.repository.server.spi.KeyUsageTrackerProvider;
 
 /**
  * Discovers the batching usage tracker: recording is off unless {@code track-key-usage} switches it on, and a

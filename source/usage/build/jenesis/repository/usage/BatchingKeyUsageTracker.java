@@ -5,8 +5,8 @@ import build.jenesis.repository.observation.HealthCheck;
 import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilitySource;
 import build.jenesis.repository.observation.TaskStatus;
-import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.KeyUsageTracker;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.KeyUsageTracker;
 
 import module java.base;
 

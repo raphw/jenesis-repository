@@ -1,4 +1,5 @@
 package build.jenesis.repository.server;
+import build.jenesis.repository.server.spi.Authorization;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 

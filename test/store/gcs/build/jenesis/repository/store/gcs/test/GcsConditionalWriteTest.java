@@ -94,6 +94,14 @@ public class GcsConditionalWriteTest {
                     exchange.sendResponseHeaders(200, -1);
                 }
                 case "GET" -> {
+                    if (key.endsWith("no-generation-header")) {
+                        // A generic S3-compatible endpoint (not GCS's XML API) answers a GET with a body but no
+                        // x-goog-generation header; readVersioned must fail fast rather than fabricate a token.
+                        byte[] headerless = "present-but-headerless".getBytes(StandardCharsets.UTF_8);
+                        exchange.sendResponseHeaders(200, headerless.length);
+                        exchange.getResponseBody().write(headerless);
+                        return;
+                    }
                     Stored existing = objects.get(key);
                     if (existing == null) {
                         respond(exchange, 404, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
@@ -147,6 +155,28 @@ public class GcsConditionalWriteTest {
         assertThat(second).isNotEqualTo(first);
         assertThat(objects).containsKey("acme/" + key);
         assertThat(second).isEqualTo(Long.toString(objects.get("acme/" + key).generation()));
+    }
+
+    @Test
+    public void read_versioned_fails_fast_when_the_endpoint_omits_the_generation_header() {
+        // The version token is the object generation, carried in the x-goog-generation response header; an endpoint
+        // that omits it (a generic S3-compatible store mistakenly pointed at the gcs backend) must surface a clear
+        // IOException naming the missing header, never fabricate a token that would later mis-compare.
+        assertThatThrownBy(() -> store.readVersioned("no-generation-header"))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("x-goog-generation");
+    }
+
+    @Test
+    public void open_streams_a_stored_blob_back_and_a_missing_key_throws() throws IOException {
+        byte[] body = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+        assertThat(store.writeVersioned("blobs/opened", body, null)).isTrue();
+        try (InputStream in = store.open("blobs/opened")) {
+            assertThat(in.readAllBytes()).as("open() streams the stored bytes back").isEqualTo(body);
+        }
+        assertThatThrownBy(() -> store.open("blobs/absent"))
+                .as("open() on a missing key surfaces an IOException, never a silent empty stream")
+                .isInstanceOf(IOException.class);
     }
 
     @Test

@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * WFE.1 - the free import edge yields when a distribution owns it, end-to-end. The real free server boots with
  * {@link TestImportEdgeProvider} activated (its required-config key set), so the server discovers an installed
- * {@link build.jenesis.repository.server.ImportEdgeProvider} via {@link java.util.ServiceLoader} exactly as a richer
+ * {@link build.jenesis.repository.server.spi.ImportEdgeProvider} via {@link java.util.ServiceLoader} exactly as a richer
  * distribution would. The {@link build.jenesis.repository.server.RepositoryAutoConfiguration} then does not register the
  * free {@code ImportEdgeController}, so its {@code /repository/admin/import} mapping never joins the handler mapping and
  * the repo-less import edge is no longer served - the request falls through to the format catch-all and is a

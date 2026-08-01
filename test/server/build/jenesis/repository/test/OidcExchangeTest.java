@@ -1,8 +1,8 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.Authorization;
+import build.jenesis.repository.server.spi.Authorization;
 import build.jenesis.repository.oidc.OidcExchange;
-import build.jenesis.repository.server.TokenExchange;
+import build.jenesis.repository.server.spi.TokenExchange;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.github.tomakehurst.wiremock.WireMockServer;
@@ -105,6 +105,31 @@ class OidcExchangeTest {
         assertThat(exchange.exchange("acme",
                 jwt("jenesis", "repo:evil/app:ref:refs/heads/main", Instant.now().plusSeconds(300))))
                 .as("subject outside the pattern").isNull();
+    }
+
+    @Test
+    void a_token_matching_only_the_second_of_a_tenants_trusts_is_exchanged_against_that_trust() throws IOException {
+        // The reason exchange() is a loop: a tenant can carry several trusts, and a token that does not match the
+        // first (here by audience) must fall through to a later one that does. Provision a decoy trust ordered before
+        // "github" (trusts iterate by name) whose audience the token does not carry; the token's audience matches only
+        // "github", so it must be exchanged against "github" - carrying github's grant, not the decoy's.
+        authorization.setTrust("acme", new Authorization.Trust("aaa-decoy", issuer, "other-audience",
+                "repo:acme/app:*", "wrong-scope", "repository:read", Duration.ofMinutes(15)));
+
+        TokenExchange.Exchanged exchanged = exchange.exchange("acme",
+                jwt("jenesis", "repo:acme/app:ref:refs/heads/main", Instant.now().plusSeconds(300)));
+
+        assertThat(exchanged).as("the token fell through the decoy and matched the second trust").isNotNull();
+        assertThat(exchanged.trust()).as("exchanged against the trust it actually matched").isEqualTo("github");
+        assertThat(authorization.authorize(exchanged.key(), "releases", Authorization.REPOSITORY_WRITE))
+                .as("the minted key carries the matched trust's grant, not the decoy's").isEqualTo(Authorization.Decision.ALLOWED);
+
+        // And a token matching only the decoy's audience is exchanged against the decoy - proving both trusts are live
+        // and the loop selects by the token, not by iteration order alone.
+        TokenExchange.Exchanged viaDecoy = exchange.exchange("acme",
+                jwt("other-audience", "repo:acme/app:ci", Instant.now().plusSeconds(300)));
+        assertThat(viaDecoy).isNotNull();
+        assertThat(viaDecoy.trust()).isEqualTo("aaa-decoy");
     }
 
     @Test

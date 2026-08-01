@@ -5,7 +5,7 @@ import build.jenesis.repository.observation.HealthCheck;
 import build.jenesis.repository.observation.Metric;
 import build.jenesis.repository.observation.ObservabilityReport;
 import build.jenesis.repository.observation.TaskStatus;
-import build.jenesis.repository.server.Authorization;
+import build.jenesis.repository.server.spi.Authorization;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.usage.BatchingKeyUsageTracker;

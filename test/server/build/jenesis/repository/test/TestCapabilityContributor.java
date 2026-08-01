@@ -1,6 +1,6 @@
 package build.jenesis.repository.test;
 
-import build.jenesis.repository.server.CapabilityContributor;
+import build.jenesis.repository.server.spi.CapabilityContributor;
 
 import module java.base;
 

@@ -1,7 +1,7 @@
 package build.jenesis.repository.oidc;
 
-import build.jenesis.repository.server.Authorization;
-import build.jenesis.repository.server.TokenExchange;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.TokenExchange;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;

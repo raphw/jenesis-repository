@@ -1,4 +1,6 @@
 package build.jenesis.repository.server;
+import build.jenesis.repository.server.spi.Authorization;
+import build.jenesis.repository.server.spi.RateLimiter;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
