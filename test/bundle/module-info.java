@@ -182,6 +182,9 @@
  */
 open module build.jenesis.repository.bundle.test {
     requires build.jenesis.repository.bundle;
+    requires build.jenesis.repository.ui;
+    requires spring.boot;
+    requires spring.context;
     requires java.net.http;
     requires org.junit.jupiter;
     requires org.assertj.core;

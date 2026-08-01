@@ -201,4 +201,35 @@ final class SecurityPostureTest {
                     .doesNotContain("SECRETVALUE");
         }
     }
+
+    @Test
+    void severityCollapsesToTheWorstOfTwo() {
+        // Mirrors SignalDescriptorTest.health_severity_collapses_to_the_worst: worst() returns the more severe of the
+        // two (a later constant is more severe) and is symmetric across the argument order.
+        assertThat(Severity.INFO.worst(Severity.WARN)).isEqualTo(Severity.WARN);
+        assertThat(Severity.WARN.worst(Severity.INFO)).isEqualTo(Severity.WARN);
+        assertThat(Severity.WARN.worst(Severity.CRITICAL)).isEqualTo(Severity.CRITICAL);
+        assertThat(Severity.CRITICAL.worst(Severity.WARN)).isEqualTo(Severity.CRITICAL);
+        assertThat(Severity.CRITICAL.worst(Severity.INFO)).isEqualTo(Severity.CRITICAL);
+        assertThat(Severity.INFO.worst(Severity.INFO)).isEqualTo(Severity.INFO);
+    }
+
+    @Test
+    void configurationOfAUnaryOperatorReadsThroughTheLookup() {
+        // The production factory wraps the Spring Environment (Configuration.of(environment::getProperty)); prove the
+        // typed helpers all read through the supplied lookup, and that a null lookup fails fast at construction.
+        Map<String, String> backing = Map.of("a", "true", "n", "600", "s", "value");
+        Configuration config = Configuration.of(key -> backing.get(key));
+
+        assertThat(config.value("s")).as("value() reads the lookup").isEqualTo("value");
+        assertThat(config.value("missing")).as("an unset key reads null").isNull();
+        assertThat(config.optional("s")).contains("value");
+        assertThat(config.optional("missing")).isEmpty();
+        assertThat(config.flag("a", false)).as("flag() reads through the lookup").isTrue();
+        assertThat(config.flag("missing", true)).as("an unset flag falls back to the default").isTrue();
+        assertThat(config.number("n", 0)).as("number() reads through the lookup").isEqualTo(600);
+        assertThat(config.number("missing", 42)).isEqualTo(42);
+
+        assertThatThrownBy(() -> Configuration.of(null)).isInstanceOf(NullPointerException.class);
+    }
 }
