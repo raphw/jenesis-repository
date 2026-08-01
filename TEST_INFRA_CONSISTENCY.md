@@ -58,8 +58,6 @@ where a module lacks it — noted per item):**
 - `enterprise …/cli/test/CliDispatcherTest` — ~18 JSON/status API routes with per-test
   mutable status/body → one stub per route, re-stub/Scenario for the mutable status,
   query params from the journal. Module **already** has the alias (pure rewrite).
-- `free …/server/test/MavenTreeImportTest` — Maven origin: seeded files, generated
-  autoindex HTML, a one-shot 500 → a WireMock **Scenario**. Module **already** has alias.
 - `enterprise …/emulator/test/EmulatorTest` — plain status codes for the load mix (the
   truncation is the client's own request). Needs the alias.
 - `enterprise …/forwarding/test/{ForwardingTest,CentralPortalTransportTest}` — PUT→201
@@ -69,8 +67,22 @@ where a module lacks it — noted per item):**
   does Content-Length natively) and 302 chains / loop / SSRF-refuse. Keep `Timeout` +
   `FetchCap`. Needs the alias.
 - `free …/store/azure/test/AzureFailLoudTest` (every request → 403; trivial) and
-  `store/s3/test/S3GetRequestTest` (HEAD 403/404 + a ranged GET needing per-`Range`
+  `free …/store/s3/test/S3GetRequestTest` (HEAD 403/404 + a ranged GET needing per-`Range`
   stubs). Need the alias.
+- `free …/server/test/MavenTreeImportTest` — **borderline, rule (4):** its upstream
+  **dynamically generates** nginx-style autoindex HTML per directory from the file set, so
+  a WireMock form needs a `ResponseTransformer` (that logic relocated) or ~13 brittle
+  pre-computed listing stubs plus a Scenario for the one-shot 500 — more ceremony, not less
+  hand-rolled logic. The dynamic generator is the clearer expression. Leaning keep.
+
+**Disposition.** The two socket-level and two rule-(4) cases above are settled keeps. The
+plain-stub MIGRATE items are all a passing test today, and every one either sits in a
+module **without** the `wiremock.standalone` alias (migrating adds a fat-jar dependency
+purely for idiom, which rule (4)'s "where an in-process wire is cheap, prefer it" weighs
+against) or, like `CliDispatcherTest`, is a large per-test-mutable rewrite whose churn risk
+on a green test outweighs the idiom gain. They are recorded here as low-priority "ideally"
+follow-ups with their exact WireMock shapes, **not** forced. The bulk of (1) — free 6
+modules, enterprise 38 — is already on WireMock; these are the residual tail.
 
 ## (2) Docker → Testcontainers
 
