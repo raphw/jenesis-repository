@@ -9,6 +9,8 @@
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.proxy
+ * @jenesis.alias wiremock.standalone org.wiremock/wiremock-standalone 4.0.0-beta.38
+ * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin net.bytebuddy/byte-buddy 1.18.3 SHA-256/d78396e3c5bce3f2865c9186647481e5589d34cacc632484715b686108d17c66
  * @jenesis.pin org.apiguardian/apiguardian-api 1.1.2 SHA-256/b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38
  * @jenesis.pin org.assertj.core 3.27.7
@@ -35,7 +37,11 @@ open module build.jenesis.repository.proxy.test {
     requires build.jenesis.repository.proxy;
     requires build.jenesis.repository.format;
     requires build.jenesis.repository.observation;
-    requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
+
+    // WireMock's shaded HttpClient5 reaches for jdk/net/Sockets at runtime; an automatic module roots no requires, so
+    // the consumer must root jdk.net explicitly or the tests throw NoClassDefFoundError: jdk/net/Sockets.
+    requires jdk.net;
+    requires wiremock.standalone;
 }

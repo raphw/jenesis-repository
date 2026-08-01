@@ -2,18 +2,25 @@ package build.jenesis.repository.proxy.test;
 
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.proxy.HttpFetcher;
-import module jdk.httpserver;
 import module org.junit.jupiter.api;
 
 import module java.base;
 
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.http.RequestMethod;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.head;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The fetcher answers a {@code HEAD} with a real HTTP {@code HEAD}: it returns the upstream status and response headers
  * with no body pulled - the size/metadata a repository serves a client {@code HEAD} from without fetching an uncached
  * large artifact - and follows redirects on the same manual chain as {@code GET}, dropping a caller credential when it
- * crosses to another origin. {@code Fetcher.NONE} answers empty here as it does for every capability.
+ * crosses to another origin. {@code Fetcher.NONE} answers empty here as it does for every capability. Driven against a
+ * WireMock upstream whose request journal proves the issued method and the dropped header.
  */
 class HttpFetcherHeadTest {
 
@@ -23,63 +30,50 @@ class HttpFetcherHeadTest {
 
     @Test
     void a_head_returns_status_and_headers_without_reading_a_body() throws IOException {
-        Map<String, String> methodSeen = new ConcurrentHashMap<>();
-        HttpServer server = server(exchange -> {
-            methodSeen.put("method", exchange.getRequestMethod());
-            // A real upstream answers a HEAD with the artifact's size and validators and no body; these pass-through
-            // headers stand in for that metadata (Content-Length is server-managed, so it is not asserted here).
-            exchange.getResponseHeaders().add("ETag", "\"abc\"");
-            exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
-            exchange.getResponseHeaders().add("X-Artifact-Length", "1048576");
-            exchange.sendResponseHeaders(200, -1); // -1: headers only, no response body
-            exchange.close();
-        });
+        WireMockServer server = start();
+        // A real upstream answers a HEAD with the artifact's size and validators and no body; these pass-through
+        // headers stand in for that metadata (Content-Length is server-managed, so it is not asserted here).
+        server.stubFor(head(urlPathEqualTo("/big-artifact")).willReturn(aResponse().withStatus(200)
+                .withHeader("ETag", "\"abc\"")
+                .withHeader("Content-Type", "application/octet-stream")
+                .withHeader("X-Artifact-Length", "1048576")));
         try {
             ProxyFormat.Head head = fetcher.head(
-                    URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/big-artifact"),
-                    Map.of()).orElseThrow();
+                    URI.create("http://127.0.0.1:" + server.port() + "/big-artifact"), Map.of()).orElseThrow();
 
-            assertThat(methodSeen).as("a genuine HTTP HEAD is issued, so the body is never pulled")
-                    .containsEntry("method", "HEAD");
+            assertThat(server.getAllServeEvents()).as("a genuine HTTP HEAD is issued, so the body is never pulled")
+                    .isNotEmpty()
+                    .allSatisfy(event -> assertThat(event.getRequest().getMethod()).isEqualTo(RequestMethod.HEAD));
             assertThat(head.status()).isEqualTo(200);
             assertThat(head.header("etag")).as("headers read case-insensitively").isEqualTo("\"abc\"");
             assertThat(head.header("Content-Type")).isEqualTo("application/octet-stream");
             assertThat(head.header("X-Artifact-Length")).isEqualTo("1048576");
         } finally {
-            server.stop(0);
+            server.stop();
         }
     }
 
     @Test
     void a_cross_origin_redirect_keeps_the_method_and_drops_the_authorization_header() throws IOException {
-        Map<String, String> targetSaw = new ConcurrentHashMap<>();
-        HttpServer target = server(exchange -> {
-            targetSaw.put("method", exchange.getRequestMethod());
-            String auth = exchange.getRequestHeaders().getFirst("Authorization");
-            if (auth != null) {
-                targetSaw.put("Authorization", auth);
-            }
-            exchange.sendResponseHeaders(200, -1);
-            exchange.close();
-        });
-        HttpServer origin = server(exchange -> {
-            exchange.getResponseHeaders().add("Location",
-                    "http://127.0.0.1:" + target.getAddress().getPort() + "/blob");
-            exchange.sendResponseHeaders(302, -1);
-            exchange.close();
-        });
+        WireMockServer target = start();
+        target.stubFor(head(urlPathEqualTo("/blob")).willReturn(aResponse().withStatus(200)));
+        WireMockServer origin = start();
+        origin.stubFor(head(urlPathEqualTo("/asset")).willReturn(aResponse().withStatus(302)
+                .withHeader("Location", "http://127.0.0.1:" + target.port() + "/blob")));
         try {
             ProxyFormat.Head head = fetcher.head(
-                    URI.create("http://127.0.0.1:" + origin.getAddress().getPort() + "/asset"),
+                    URI.create("http://127.0.0.1:" + origin.port() + "/asset"),
                     Map.of("Authorization", "Basic c3VwZXItc2VjcmV0")).orElseThrow();
 
             assertThat(head.status()).isEqualTo(200);
-            assertThat(targetSaw).as("the redirected request stays a HEAD").containsEntry("method", "HEAD");
-            assertThat(targetSaw).as("the credential must not travel to the other-origin redirect target")
-                    .doesNotContainKey("Authorization");
+            assertThat(target.getAllServeEvents()).as("the redirected request stays a HEAD")
+                    .isNotEmpty()
+                    .allSatisfy(event -> assertThat(event.getRequest().getMethod()).isEqualTo(RequestMethod.HEAD));
+            assertThat(target.getAllServeEvents()).as("the credential must not travel to the other-origin redirect target")
+                    .allSatisfy(event -> assertThat(event.getRequest().getHeader("Authorization")).isNull());
         } finally {
-            origin.stop(0);
-            target.stop(0);
+            origin.stop();
+            target.stop();
         }
     }
 
@@ -88,9 +82,9 @@ class HttpFetcherHeadTest {
         assertThat(ProxyFormat.Fetcher.NONE.head(URI.create("http://example.invalid/x"), Map.of())).isEmpty();
     }
 
-    private static HttpServer server(com.sun.net.httpserver.HttpHandler handler) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/", handler);
+    private static WireMockServer start() {
+        WireMockServer server = new WireMockServer(
+                WireMockConfiguration.options().bindAddress("127.0.0.1").dynamicPort());
         server.start();
         return server;
     }
