@@ -7,6 +7,9 @@ import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import module org.junit.jupiter.api;
 
 import module java.base;
@@ -17,7 +20,7 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link NexusSource} importer against a real Sonatype Nexus, not a hand-written fake. It boots the
- * {@code sonatype/nexus3} OSS image with the docker CLI, publishes a modular jar into its {@code maven-releases} repo
+ * {@code sonatype/nexus3} OSS image with Testcontainers, publishes a modular jar into its {@code maven-releases} repo
  * with the real {@code mvn} client (so the components the importer reads are exactly what Maven produces), then walks
  * the live Components REST API with {@link RepositoryImport}, migrating into a filesystem store. The migrated store is
  * served by a real {@link RepositoryApplication} and the artifacts are pulled back over HTTP - the jar (byte for byte),
@@ -43,7 +46,7 @@ public class NexusImportTest {
     @TempDir
     static Path work;
 
-    private String container;
+    private GenericContainer<?> container;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -54,16 +57,18 @@ public class NexusImportTest {
 
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(exec(30, null, "docker", "version").code() == 0, "Docker is required for the Nexus import test");
+        requireOrSkip(DockerClientFactory.instance().isDockerAvailable(), "Docker is required for the Nexus import test");
         requireOrSkip(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Nexus import test");
         client = HttpClient.newHttpClient();
 
         // boot a real Nexus (OSS edition) and wait for it to come up.
-        container = expect(exec(300, null, "docker", "run", "-d", "-p", "0:8081", IMAGE), "docker run");
-        nexus = "http://localhost:" + mappedPort(container, "8081");
-        awaitReady(nexus + "/service/rest/v1/status");
-        password = expect(exec(30, null, "docker", "exec", container, "cat", "/nexus-data/admin.password"),
-                "read admin password");
+        container = new GenericContainer<>(IMAGE)
+                .withExposedPorts(8081)
+                .waitingFor(Wait.forHttp("/service/rest/v1/status").forPort(8081)
+                        .forStatusCode(200).withStartupTimeout(Duration.ofMinutes(4)));
+        container.start();
+        nexus = "http://" + container.getHost() + ":" + container.getMappedPort(8081);
+        password = container.execInContainer("cat", "/nexus-data/admin.password").getStdout().strip();
 
         // seed it with the real Maven client: deploy a modular jar into the default maven-releases repo.
         jar = automaticModuleJar(MODULE);
@@ -99,7 +104,7 @@ public class NexusImportTest {
             running.close();
         }
         if (container != null) {
-            exec(60, null, "docker", "rm", "-f", container);
+            container.stop();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
@@ -154,40 +159,11 @@ public class NexusImportTest {
         return settings.append("</settings>").toString();
     }
 
-    private void awaitReady(String statusUrl) throws IOException, InterruptedException {
-        for (int attempt = 0; attempt < 90; attempt++) {
-            try {
-                HttpResponse<Void> response = client.send(HttpRequest.newBuilder(URI.create(statusUrl))
-                        .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.discarding());
-                if (response.statusCode() == 200) {
-                    return;
-                }
-            } catch (IOException stillStarting) {
-                // Nexus is not accepting connections yet.
-            }
-            Thread.sleep(2000);
-        }
-        throw new IOException("Nexus did not become ready at " + statusUrl);
-    }
-
-    private String mappedPort(String container, String containerPort) throws IOException, InterruptedException {
-        String mapping = expect(exec(30, null, "docker", "port", container, containerPort), "docker port");
-        String first = mapping.lines().findFirst().orElseThrow();
-        return first.substring(first.lastIndexOf(':') + 1);
-    }
-
     private byte[] get(String path) throws IOException, InterruptedException {
         HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create(base + path)).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).as("GET " + path).isEqualTo(200);
         return response.body();
-    }
-
-    private static String expect(Exec result, String what) throws IOException {
-        if (result.code() != 0) {
-            throw new IOException(what + " failed (" + result.code() + "): " + result.diagnostic());
-        }
-        return result.stdout().strip();
     }
 
     // Standard out and error are captured separately: an image pull's progress - and a platform-mismatch

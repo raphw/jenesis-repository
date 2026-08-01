@@ -7,6 +7,10 @@ import build.jenesis.repository.server.RepositoryApplication;
 import build.jenesis.repository.server.RepositoryImport;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import com.github.dockerjava.api.model.Ulimit;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import module org.junit.jupiter.api;
 
 import module java.base;
@@ -17,7 +21,7 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
  * Proves the {@link ArtifactorySource} importer against a real, free JFrog Artifactory - exercising the OSS fallback,
- * not a fake. It boots the {@code artifactory-oss} image with the docker CLI and seeds its default local repo with a
+ * not a fake. It boots the {@code artifactory-oss} image with Testcontainers and seeds its default local repo with a
  * real {@code mvn deploy}, then migrates it with {@link RepositoryImport}. A free instance gates the deep File List API
  * behind Pro (a {@code 400}), so the walk falls back to the OSS-available per-folder Folder Info crawl - this test is
  * the end-to-end proof that the fallback is seamless. The migrated store is served by a real
@@ -49,7 +53,7 @@ public class ArtifactoryOssImportTest {
     @TempDir
     static Path work;
 
-    private String container;
+    private GenericContainer<?> container;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -57,16 +61,47 @@ public class ArtifactoryOssImportTest {
     private byte[] jar;
     private RepositoryImport.Result result;
 
+    /** Artifactory refuses to boot unless it can raise nofile well above the default, and a container can never
+     *  exceed the host's hard limit - so on a host whose {@code ulimit -Hn} is below {@code minimum} the container
+     *  only ever reaches "created" and never starts. Detect that and skip (as a missing Docker daemon skips) rather
+     *  than fail. If the probe itself cannot determine the limit, treat it as sufficient so a normal CI host still
+     *  runs the test. */
+    private boolean openFilesHardLimitAtLeast(int minimum) {
+        try {
+            Exec limit = exec(10, null, "bash", "-lc", "ulimit -Hn");
+            if (limit.code() != 0) {
+                return true;
+            }
+            String value = limit.stdout().strip();
+            return value.equals("unlimited") || (value.matches("\\d+") && Long.parseLong(value) >= minimum);
+        } catch (IOException probeFailed) {
+            return true;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return true;
+        }
+    }
+
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(exec(30, null, "docker", "version").code() == 0, "Docker is required for the Artifactory import test");
+        requireOrSkip(DockerClientFactory.instance().isDockerAvailable(), "Docker is required for the Artifactory import test");
         requireOrSkip(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Artifactory import test");
+        requireOrSkip(openFilesHardLimitAtLeast(32768),
+                "Artifactory 6.x refuses to boot unless nofile is raised well above the default, and a container "
+                        + "cannot exceed the host's open-files hard limit; this environment caps it below 32768, so "
+                        + "the container never starts here (as it would on any CI host with a sufficient ulimit)");
         client = HttpClient.newHttpClient();
 
         // boot a real Artifactory (OSS edition) and wait for it to come up.
-        container = expect(exec(300, null, "docker", "run", "-d", "--ulimit", "nofile=32768:32768",
-                "-p", "0:8081", IMAGE), "docker run");
-        upstream = "http://localhost:" + mappedPort(container, "8081") + "/artifactory";
+        container = new GenericContainer<>(IMAGE)
+                .withExposedPorts(8081)
+                // Artifactory 6.x refuses to boot on the default nofile=1024 ulimit; raise it as the docker-run flag did.
+                .withCreateContainerCmdModifier(cmd -> cmd.getHostConfig()
+                        .withUlimits(new Ulimit[]{new Ulimit("nofile", 32768L, 32768L)}))
+                .waitingFor(Wait.forHttp("/artifactory/api/system/ping").forPort(8081)
+                        .forStatusCode(200).withStartupTimeout(Duration.ofMinutes(4)));
+        container.start();
+        upstream = "http://" + container.getHost() + ":" + container.getMappedPort(8081) + "/artifactory";
         awaitReady(upstream + "/api/system/ping");
 
         // seed the default local repo with the real Maven client.
@@ -104,7 +139,7 @@ public class ArtifactoryOssImportTest {
             running.close();
         }
         if (container != null) {
-            exec(60, null, "docker", "rm", "-f", container);
+            container.stop();
         }
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
@@ -176,24 +211,11 @@ public class ArtifactoryOssImportTest {
         throw new IOException("Artifactory did not become ready at " + pingUrl);
     }
 
-    private String mappedPort(String container, String containerPort) throws IOException, InterruptedException {
-        String mapping = expect(exec(30, null, "docker", "port", container, containerPort), "docker port");
-        String first = mapping.lines().findFirst().orElseThrow();
-        return first.substring(first.lastIndexOf(':') + 1);
-    }
-
     private byte[] get(String path) throws IOException, InterruptedException {
         HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create(base + path)).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).as("GET " + path).isEqualTo(200);
         return response.body();
-    }
-
-    private static String expect(Exec result, String what) throws IOException {
-        if (result.code() != 0) {
-            throw new IOException(what + " failed (" + result.code() + "): " + result.diagnostic());
-        }
-        return result.stdout().strip();
     }
 
     // Standard out and error are captured separately: an image pull's progress - and a platform-mismatch

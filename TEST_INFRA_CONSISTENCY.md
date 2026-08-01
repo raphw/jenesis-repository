@@ -82,11 +82,18 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
   `Docker.java` copies deleted. Validated by **real container runs** (MinIO + Azurite
   start and the store round-trips / conditional-CAS pass green). The free build stays
   green with no daemon (the tests skip, as CI runs today).
-  - **Container-FIXTURE helpers still to migrate** (heavy images, slow boot): the
-    Artifactory-OSS import test (`ArtifactoryOssImportTest`, ~1 GB image, multi-minute
-    boot) and the Nexus import test (`NexusImportTest` — `docker run` + a `docker exec`
-    to read the admin password → `GenericContainer` + `execInContainer`). Plus
-    `SeleniumContainer` (below).
+  - **DONE:** the Nexus and Artifactory import fixtures migrated off `docker`-CLI to
+    `GenericContainer` (Nexus reads its admin password via `execInContainer`; Artifactory
+    keeps its mandatory `nofile` ulimit via `withCreateContainerCmdModifier`). `mvn` and
+    the OCI docker-client tests in the same module are untouched. **`NexusImportTest`
+    validated by a real Testcontainers run** (boot + `mvn deploy` + import + serve, green).
+    `ArtifactoryOssImportTest` could not be run *here* — this sandbox's open-files hard
+    limit is 4096 and Artifactory 6.x demands ≥32768, which a container cannot exceed, so
+    it fails to start under any mechanism (the old docker-CLI form would fail identically
+    now that a daemon is up). The migration compiles and matches the validated Nexus twin;
+    a `ulimit -Hn` guard was added so the test self-skips where the host caps nofile too
+    low and still runs on a normal CI host.
+  - Still to migrate: `SeleniumContainer` (below).
   - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture:**
     `OciDockerTest` / `OciProxyTest` drive the host `docker push`/`pull` against the
     in-process Jenesis registry to prove a real Docker client interoperates —
