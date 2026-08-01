@@ -78,6 +78,30 @@ class HttpFetcherRedirectTest {
     }
 
     @Test
+    void a_redirect_loop_terminates_after_the_maximum_hops() throws IOException {
+        // A handler that always 302s to itself - a redirect loop. The manual chain is bounded by MAX_REDIRECTS (5),
+        // so the fetch cannot spin forever: after the fifth hop the guard stops following and returns the redirect
+        // response itself (the last 302) rather than looping. The handler is hit MAX_REDIRECTS + 1 times - the
+        // initial request plus one re-issue per followed hop.
+        AtomicInteger hits = new AtomicInteger();
+        HttpServer server = server(exchange -> {
+            hits.incrementAndGet();
+            redirect(exchange, "/loop"); // same-origin self-redirect
+        });
+        try {
+            ProxyFormat.Fetched fetched = fetcher.fetch(
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/loop"), Map.of())
+                    .orElseThrow();
+
+            assertThat(fetched.status()).as("the loop terminates on the last redirect rather than following forever")
+                    .isEqualTo(302);
+            assertThat(hits.get()).as("the initial request plus exactly MAX_REDIRECTS followed hops").isEqualTo(6);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void a_redirect_to_a_private_host_is_refused() throws IOException {
         Map<String, String> targetSaw = new ConcurrentHashMap<>();
         HttpServer target = server(exchange -> {
