@@ -59,10 +59,13 @@ public final class AzureArtifactStore implements ArtifactStore {
         try {
             String sas = blob.generateSas(values);
             return Optional.of(URI.create(blob.getBlobUrl() + "?" + sas));
-        } catch (IllegalStateException noSharedKey) {
+        } catch (RuntimeException noSharedKey) {
             // generateSas requires an account-key (shared-key) credential; a client built from a token/AAD credential
-            // cannot sign a service SAS here, so degrade to streaming (Optional.empty) rather than fail the read. A
-            // user-delegation-key SAS for AAD-authenticated deployments is a wave-2 follow-up.
+            // cannot sign a service SAS here, so degrade to streaming (Optional.empty) rather than fail the read. The
+            // SDK signals the missing key inconsistently across builds (IllegalStateException in some, a
+            // NullPointerException dereferencing the absent credential in azure-storage-blob 12.35.0), so catch any
+            // RuntimeException from the signing attempt rather than a single subtype. A user-delegation-key SAS for
+            // AAD-authenticated deployments is a wave-2 follow-up.
             return Optional.empty();
         }
     }

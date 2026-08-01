@@ -15,12 +15,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * always runs: with a shared-key client, a scoped {@code presign(key, ttl)} mints a read-only SAS URI over the
  * fully-qualified (scope-prefixed) blob.
  *
- * <p>The no-shared-key degradation the store documents (lines 62-67: {@code catch (IllegalStateException)} ->
- * {@link Optional#empty}) is deliberately not asserted here: under the pinned {@code azure-storage-blob 12.35.0},
- * {@code generateSas} on a client without a shared-key credential throws a {@link NullPointerException}
- * ("storageSharedKeyCredentials"), not an {@link IllegalStateException}, so the store's catch does not fire and
- * {@code presign} propagates rather than answering empty - asserting empty would require widening the catch in
- * production, which is out of scope for a test-only pass.
+ * <p>The no-shared-key degradation the store documents ({@code catch (RuntimeException)} -> {@link Optional#empty})
+ * is asserted by {@link #presign_without_a_shared_key_credential_degrades_to_empty()}: under the pinned
+ * {@code azure-storage-blob 12.35.0}, {@code generateSas} on a client built from only an endpoint (no shared-key
+ * credential) throws a {@link NullPointerException} ("storageSharedKeyCredentials"), not an
+ * {@link IllegalStateException}. The store catches any {@link RuntimeException} from the signing attempt, so a
+ * keyless client falls back to streaming (empty) rather than failing the read.
  */
 class AzurePresignTest {
 
@@ -46,5 +46,20 @@ class AzurePresignTest {
                 .as("a real service SAS carries the signature, a read permission and a bounded expiry")
                 .contains("sig=").contains("sp=r").contains("se=");
         assertThat(url.getHost()).isEqualTo(ACCOUNT + ".blob.core.windows.net");
+    }
+
+    @Test
+    void presign_without_a_shared_key_credential_degrades_to_empty() {
+        // A client built from only an endpoint carries no shared-key credential, so generateSas cannot sign a
+        // service SAS. Under azure-storage-blob 12.35.0 that surfaces as a NullPointerException rather than an
+        // IllegalStateException; presign must catch it and fall back to streaming (empty), not propagate.
+        BlobContainerClient container = new BlobServiceClientBuilder()
+                .endpoint("https://" + ACCOUNT + ".blob.core.windows.net")
+                .buildClient().getBlobContainerClient("repo");
+        ArtifactStore store = new AzureArtifactStore(container).scope("acme");
+
+        assertThat(store.presign("blobs/x", TTL))
+                .as("a keyless client cannot sign a SAS, so presign degrades to empty (stream instead of redirect)")
+                .isEmpty();
     }
 }
