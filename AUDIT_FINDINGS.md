@@ -5,10 +5,10 @@ defects (posture wildcard fail-open, OCI manifest digest-verify, ui panel manife
 vacuous security test were fixed in Round A, and the 39 test-gaps were closed with focused,
 non-tautological tests (integrated commit b126283, build green).
 
-Residual (1, documented — needs a production change + a free-core re-pin, so deferred):
-- store/azure keyless-presign degrade catches IllegalStateException but azure-storage-blob
-  12.35.0 throws NullPointerException, so the catch is a no-op. Low blast radius (the provider
-  installs a shared-key presigner in production). See the follow-up note below.
+Residual: none. The one documented residual (store/azure keyless-presign degrade) is now
+CLOSED — the catch was widened from IllegalStateException to RuntimeException so a keyless
+client falls back to streaming rather than propagating, with an offline degrade test
+(commit b1c9433, exported as free-core 0.9.3 and re-pinned into enterprise).
 
 ---
 
