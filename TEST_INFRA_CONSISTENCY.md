@@ -62,11 +62,16 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     semantics (enterprise always encrypts; MinIO's SSE ETag ≠ content MD5). The test is
     `@Disabled` with a pointer here until `SearchIndexTask`'s manifest CAS is hardened
     for SSE ETags. This is orthogonal to the container mechanism.
-  - **Remaining docker-CLI helpers to migrate** (separate images, own validation): the
-    Keycloak helper behind `server/…/KeycloakTokenExchangeE2ETest`, `Compose.java`, and
-    the format `*RealClient`/`*QualityInspector` docker helpers under `gateway`/format
-    modules. Same recipe: re-back on `GenericContainer`, one image at a time, each
-    proven by a real run.
+  - **Container-FIXTURE helpers still to migrate** (heavier images, own validation):
+    the Keycloak rig (`Keycloak.java` — a `docker compose` stack behind
+    `KeycloakTokenExchangeE2ETest` / `KeycloakSsoBrowserTest`, three copies) and the
+    sigstore `Compose.java` rig. Both are compose stacks → Testcontainers
+    `ComposeContainer` (not a drop-in `GenericContainer` swap); heavy boots.
+  - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture** (Testcontainers
+    does not replace these): the format `*RealClient` tests run the real ecosystem
+    client (composer/cargo/npm/…) via `docker run` as a one-shot client action against
+    the in-process `RepositoryApplication` and assert its exit code — the docker client
+    doing exactly what it is for, with no long-lived container to "manage". Kept.
 - **Free**: the earlier claim that Testcontainers "cannot be a module dependency in
   this build" (repeated in the old `Docker.java` Javadocs) is **stale** — the
   `@jenesis.alias org.testcontainers …` mechanism works in free exactly as in
@@ -77,10 +82,17 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
   `Docker.java` copies deleted. Validated by **real container runs** (MinIO + Azurite
   start and the store round-trips / conditional-CAS pass green). The free build stays
   green with no daemon (the tests skip, as CI runs today).
-  - **Remaining free helpers to migrate** (own images + validation): the OCI-registry
-    tests (`OciDockerTest`/`OciImporterTest`/`OciProxyTest`), the Nexus/Artifactory
-    import tests (`NexusImportTest`/`NexusSourceTest`/`ArtifactoryOssImportTest` — heavy
-    images, slow boot), and `SeleniumContainer` (below).
+  - **Container-FIXTURE helpers still to migrate** (heavy images, slow boot): the
+    Artifactory-OSS import test (`ArtifactoryOssImportTest`, ~1 GB image, multi-minute
+    boot) and the Nexus import test (`NexusImportTest` — `docker run` + a `docker exec`
+    to read the admin password → `GenericContainer` + `execInContainer`). Plus
+    `SeleniumContainer` (below).
+  - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture:**
+    `OciDockerTest` / `OciProxyTest` drive the host `docker push`/`pull` against the
+    in-process Jenesis registry to prove a real Docker client interoperates —
+    Testcontainers cannot issue a host-side `docker push`, so these stay. (`OciImporterTest`
+    and `NexusSourceTest` are not docker tests at all — `imports("docker")` / a format
+    name string.)
 
 - **`SeleniumContainer` (both repos)** is a docker-CLI helper too, not yet a
   Testcontainers class. It runs the node under **host networking** so the in-container
