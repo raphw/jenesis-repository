@@ -11,6 +11,8 @@
  * @jenesis.test build.jenesis.repository.store.azure
  * @jenesis.pin com.azure.storage.blob 12.35.0
  * @jenesis.alias org.testcontainers org.testcontainers/testcontainers 2.0.5
+ * @jenesis.alias wiremock.standalone org.wiremock/wiremock-standalone 4.0.0-beta.38
+ * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin com.github.docker-java/docker-java-api 3.7.1 SHA-256/dad153d484b1f4ef009e2fdbad27e07aeb3191122da52b8985507ac504300081
  * @jenesis.pin com.github.docker-java/docker-java-transport 3.7.1 SHA-256/d15eec8034bf0f92c2a48ca9172691804048115c96dc853272f9486fa2695c3c
  * @jenesis.pin com.github.docker-java/docker-java-transport-zerodep 3.7.1 SHA-256/b89bdb1754160323597f9ea32a7fe7a4a3aa8f5b3b43b88e8d71fff3b267ab21
@@ -93,8 +95,12 @@ open module build.jenesis.repository.store.azure.test {
     requires build.jenesis.repository.store.azure;
     requires build.jenesis.repository.store;
     requires com.azure.storage.blob;
-    requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
     requires org.testcontainers;
+
+    // WireMock's shaded HttpClient5 reaches for jdk/net/Sockets at runtime; an automatic module roots no requires, so
+    // the consumer must root jdk.net explicitly or the tests throw NoClassDefFoundError: jdk/net/Sockets.
+    requires jdk.net;
+    requires wiremock.standalone;
 }
