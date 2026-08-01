@@ -360,6 +360,14 @@ class OciFormatTest {
         FakeExchange invalid = new FakeExchange("GET", "/v2/_catalog", new byte[0], Map.of("n", "abc"), Map.of());
         format.handle(invalid, store);
         assertThat(invalid.status()).isEqualTo(400);
+
+        // A non-positive n is refused the same way (not a 500): with images present, n=0 would empty the page list then
+        // read getLast() off it, and n=-1 would index a subList with a negative fromIndex - each an unhandled crash.
+        for (String bad : List.of("0", "-1")) {
+            FakeExchange nonPositive = new FakeExchange("GET", "/v2/_catalog", new byte[0], Map.of("n", bad), Map.of());
+            format.handle(nonPositive, store);
+            assertThat(nonPositive.status()).as("n=" + bad + " is a 400, not a 500").isEqualTo(400);
+        }
     }
 
     @Test
