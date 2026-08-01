@@ -64,6 +64,12 @@ public class S3GetRequestTest {
             String path = exchange.getRequestURI().getPath();
             String key = path.startsWith("/repo/") ? path.substring("/repo/".length()) : "";
             exchange.getRequestBody().readAllBytes();
+            if ("HEAD".equals(exchange.getRequestMethod())) {
+                // exists()/size() issue a HEAD (headObject). Only a 404 means absent; a non-404 - here a 403 auth
+                // failure, as a 503 throttle would be - must fail the request loudly, never be reported as absent.
+                exchange.sendResponseHeaders(key.endsWith("faulted") ? 403 : 404, -1);
+                return;
+            }
             if (!"GET".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(501, -1);
                 return;
@@ -121,6 +127,20 @@ public class S3GetRequestTest {
         }
         assertThatThrownBy(() -> store.open("blobs/absent"))
                 .as("open() on a missing key surfaces an IOException, never a silent empty stream")
+                .isInstanceOf(IOException.class);
+    }
+
+    @Test
+    public void exists_and_size_fail_loud_on_a_non_404_head() {
+        // The existence screen must distinguish absent (404 -> false / -1) from a backend fault: a 403 auth failure
+        // (like a 503 throttle) has to surface, or a live artifact reads as a silent 404 miss (and writeBlob's
+        // exists() dedup probe could skip re-uploading it during the outage). The stub answers a HEAD on "*/faulted"
+        // with a 403, so exists() must throw (never return false) and size() must throw IOException (never return -1).
+        assertThatThrownBy(() -> store.exists("blobs/faulted"))
+                .as("a non-404 HEAD makes exists() fail loud, never report the object absent")
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> store.size("blobs/faulted"))
+                .as("a non-404 HEAD makes size() throw IOException, never return -1")
                 .isInstanceOf(IOException.class);
     }
 

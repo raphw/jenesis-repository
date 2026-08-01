@@ -86,6 +86,7 @@ open module build.jenesis.repository.store.azure.test {
     requires build.jenesis.repository.store.azure;
     requires build.jenesis.repository.store;
     requires com.azure.storage.blob;
+    requires jdk.httpserver;
     requires org.junit.jupiter;
     requires org.assertj.core;
 }

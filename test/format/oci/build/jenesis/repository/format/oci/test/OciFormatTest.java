@@ -224,6 +224,58 @@ class OciFormatTest {
     }
 
     @Test
+    void a_manifest_push_over_the_size_cap_is_refused_and_never_stored() throws IOException {
+        // The manifest PUT buffers the body whole to hand the same bytes to the compliance screen, so it is capped
+        // (readNBytes(MAX_MANIFEST + 1)): a body past 4 MiB is refused 413 MANIFEST_INVALID before ingest, or an
+        // authenticated pusher could PUT a multi-GB "manifest" and OOM the shared JVM (a cross-tenant DoS). This is
+        // the manifest-side counterpart of the NuGet .nuspec readNBytes cap.
+        byte[] oversized = new byte[4 * 1024 * 1024 + 1];
+        FakeExchange put = new FakeExchange("PUT", "/v2/app/manifests/big", oversized,
+                Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
+        format.handle(put, store);
+        assertThat(put.status()).as("a manifest past the 4 MiB cap is refused, not buffered").isEqualTo(413);
+        assertThat(put.responseText()).contains("MANIFEST_INVALID").contains("exceeds");
+
+        FakeExchange pull = new FakeExchange("GET", "/v2/app/manifests/big");
+        format.handle(pull, store);
+        assertThat(pull.status()).as("the refused oversized manifest left nothing behind on the registry").isEqualTo(404);
+    }
+
+    @Test
+    void a_manifest_pushed_by_a_digest_its_body_does_not_hash_to_is_refused() throws IOException {
+        // A push BY DIGEST must actually hash to that digest - the manifest-side content-address check. Without it a
+        // client could PUT /manifests/sha256:<X> with a body hashing to Y and the registry would accept it and answer
+        // Docker-Content-Digest: sha256:Y, silently disagreeing with the digest the client and any content-addressed
+        // puller trusted.
+        byte[] manifest = "{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\"}"
+                .getBytes(StandardCharsets.UTF_8);
+        String wrong = sha256("a different manifest".getBytes(StandardCharsets.UTF_8));
+        assertThat(wrong).isNotEqualTo(sha256(manifest));
+
+        FakeExchange put = new FakeExchange("PUT", "/v2/app/manifests/sha256:" + wrong, manifest,
+                Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
+        format.handle(put, store);
+        assertThat(put.status()).as("a manifest that does not hash to its referenced digest is refused").isEqualTo(400);
+        assertThat(put.responseText()).contains("MANIFEST_INVALID").contains("does not hash");
+    }
+
+    @Test
+    void a_manifest_push_to_a_reference_that_is_neither_a_digest_nor_a_valid_tag_is_refused() throws IOException {
+        // A reference that is neither a digest nor a well-formed tag would land as an oci/<name>/tags/<ref> store key,
+        // so a traversal- or over-long reference could aim the tag-pointer write at a neighbouring key space; it is
+        // refused 400 before anything is stored. An over-128-char reference is not a valid tag (isTag caps length).
+        String overlong = "x".repeat(129);
+        FakeExchange put = new FakeExchange("PUT", "/v2/app/manifests/" + overlong, "{}".getBytes(StandardCharsets.UTF_8),
+                Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
+        format.handle(put, store);
+        assertThat(put.status()).as("a reference that is neither a digest nor a valid tag is refused").isEqualTo(400);
+
+        FakeExchange pull = new FakeExchange("GET", "/v2/app/manifests/" + overlong);
+        format.handle(pull, store);
+        assertThat(pull.status()).as("the refused reference created no tag pointer").isEqualTo(404);
+    }
+
+    @Test
     void the_tag_list_enumerates_the_pushed_tags() throws IOException {
         FakeExchange put = new FakeExchange("PUT", "/v2/app/manifests/1.0",
                 "{}".getBytes(StandardCharsets.UTF_8), Map.of(), Map.of());
