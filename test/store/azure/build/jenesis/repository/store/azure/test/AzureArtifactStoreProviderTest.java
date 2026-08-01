@@ -7,6 +7,9 @@ import build.jenesis.repository.store.ArtifactStoreProvider;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,19 +34,30 @@ public class AzureArtifactStoreProviderTest {
     private static final String KEY =
             "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 
-    private Docker azurite;
+    private GenericContainer<?> azurite;
     private String connectionString;
+
+    private static boolean dockerAvailable() {
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
 
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(Docker.available(), "Docker is required for the Azure Blob (Azurite) provider integration test");
-        azurite = Docker.start(IMAGE, BLOB_PORT,
-                "azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", Integer.toString(BLOB_PORT),
-                "--skipApiVersionCheck");
-        int port = azurite.hostPort(BLOB_PORT);
+        requireOrSkip(dockerAvailable(), "Docker is required for the Azure Blob (Azurite) provider integration test");
+        azurite = new GenericContainer<>(IMAGE)
+                .withCommand("azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", Integer.toString(BLOB_PORT),
+                        "--skipApiVersionCheck")
+                .withExposedPorts(BLOB_PORT)
+                .waitingFor(Wait.forListeningPort());
+        azurite.start();
+        int port = azurite.getMappedPort(BLOB_PORT);
         connectionString = "DefaultEndpointsProtocol=http;AccountName=" + ACCOUNT
                 + ";AccountKey=" + KEY
-                + ";BlobEndpoint=http://127.0.0.1:" + port + "/" + ACCOUNT + ";";
+                + ";BlobEndpoint=http://" + azurite.getHost() + ":" + port + "/" + ACCOUNT + ";";
         awaitReady();
     }
 
@@ -68,7 +82,7 @@ public class AzureArtifactStoreProviderTest {
     @AfterAll
     public void stop() {
         if (azurite != null) {
-            azurite.close();
+            azurite.stop();
         }
     }
 

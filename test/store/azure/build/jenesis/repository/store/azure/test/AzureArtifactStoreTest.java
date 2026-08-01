@@ -7,6 +7,9 @@ import build.jenesis.repository.store.ArtifactStore;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,23 +35,34 @@ public class AzureArtifactStoreTest {
     private static final String KEY =
             "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 
-    private Docker azurite;
+    private GenericContainer<?> azurite;
     private BlobServiceClient service;
     private BlobContainerClient container;
     private ArtifactStore store;
 
+    private static boolean dockerAvailable() {
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(Docker.available(), "Docker is required for the Azure Blob (Azurite) integration test");
+        requireOrSkip(dockerAvailable(), "Docker is required for the Azure Blob (Azurite) integration test");
         // --skipApiVersionCheck: the azure-storage-blob SDK sends a newer x-ms-version than the pinned
         // Azurite image recognises; the flag tells Azurite to accept any API version.
-        azurite = Docker.start(IMAGE, BLOB_PORT,
-                "azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", Integer.toString(BLOB_PORT),
-                "--skipApiVersionCheck");
-        int port = azurite.hostPort(BLOB_PORT);
+        azurite = new GenericContainer<>(IMAGE)
+                .withCommand("azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", Integer.toString(BLOB_PORT),
+                        "--skipApiVersionCheck")
+                .withExposedPorts(BLOB_PORT)
+                .waitingFor(Wait.forListeningPort());
+        azurite.start();
+        int port = azurite.getMappedPort(BLOB_PORT);
         String connectionString = "DefaultEndpointsProtocol=http;AccountName=" + ACCOUNT
                 + ";AccountKey=" + KEY
-                + ";BlobEndpoint=http://127.0.0.1:" + port + "/" + ACCOUNT + ";";
+                + ";BlobEndpoint=http://" + azurite.getHost() + ":" + port + "/" + ACCOUNT + ";";
         service = new BlobServiceClientBuilder().connectionString(connectionString).buildClient();
         container = service.getBlobContainerClient("repo");
         awaitReady();
@@ -73,7 +87,7 @@ public class AzureArtifactStoreTest {
     @AfterAll
     public void stop() {
         if (azurite != null) {
-            azurite.close();
+            azurite.stop();
         }
     }
 

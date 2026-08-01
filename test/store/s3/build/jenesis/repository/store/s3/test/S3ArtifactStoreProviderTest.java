@@ -9,6 +9,9 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,21 +39,36 @@ public class S3ArtifactStoreProviderTest {
     // KMS with a fixed test key so the encrypted round-trips this suite drives are honored.
     private static final String KMS_SECRET_KEY = "minio-default-key:OSMM+vkKUTCvQs9YL/CVMIMt43HFhkUpqJxTmGl6rYw=";
 
-    private Docker minio;
+    private GenericContainer<?> minio;
+    private String host;
     private int port;
+
+    private static boolean dockerAvailable() {
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
 
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(Docker.available(), "Docker is required for the S3 (MinIO) provider integration test");
-        minio = Docker.start(IMAGE, API_PORT, Map.of("MINIO_KMS_SECRET_KEY", KMS_SECRET_KEY), "server", "/data");
-        port = minio.hostPort(API_PORT);
+        requireOrSkip(dockerAvailable(), "Docker is required for the S3 (MinIO) provider integration test");
+        minio = new GenericContainer<>(IMAGE)
+                .withCommand("server", "/data")
+                .withExposedPorts(API_PORT)
+                .withEnv("MINIO_KMS_SECRET_KEY", KMS_SECRET_KEY)
+                .waitingFor(Wait.forHttp("/minio/health/ready").forPort(API_PORT));
+        minio.start();
+        host = minio.getHost();
+        port = minio.getMappedPort(API_PORT);
         awaitReady();
     }
 
     private void awaitReady() throws InterruptedException {
         // create() swallows a bucket-creation failure, so wait for MinIO to answer before driving the provider.
         try (S3Client probe = S3Client.builder()
-                .endpointOverride(URI.create("http://localhost:" + port))
+                .endpointOverride(URI.create("http://" + host + ":" + port))
                 .region(Region.US_EAST_1)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
                 .httpClient(UrlConnectionHttpClient.create())
@@ -74,14 +92,14 @@ public class S3ArtifactStoreProviderTest {
     @AfterAll
     public void stop() {
         if (minio != null) {
-            minio.close();
+            minio.stop();
         }
     }
 
     private UnaryOperator<String> config(String bucket) {
         Map<String, String> values = Map.of(
                 "JENESIS_AWS_BUCKET", bucket,
-                "JENESIS_AWS_ENDPOINT", "http://localhost:" + port,
+                "JENESIS_AWS_ENDPOINT", "http://" + host + ":" + port,
                 // The MinIO container speaks plaintext http, so opt past the https-endpoint secure default.
                 "JENESIS_AWS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_AWS_ACCESS_KEY_ID", ACCESS_KEY,

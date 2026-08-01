@@ -4,6 +4,9 @@ import module java.base;
 import module org.junit.jupiter.api;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static build.jenesis.repository.store.gcs.test.Requirement.requireOrSkip;
@@ -30,18 +33,30 @@ public class GcsArtifactStoreTest {
     private static final String ACCESS_KEY = "minioadmin";
     private static final String SECRET_KEY = "minioadmin";
 
-    private Docker minio;
+    private GenericContainer<?> minio;
     private ArtifactStore root;
     private ArtifactStore store;
 
+    private static boolean dockerAvailable() {
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(Docker.available(), "Docker is required for the GCS (MinIO) integration test");
-        minio = Docker.start(IMAGE, API_PORT, "server", "/data");
-        int port = minio.hostPort(API_PORT);
+        requireOrSkip(dockerAvailable(), "Docker is required for the GCS (MinIO) integration test");
+        minio = new GenericContainer<>(IMAGE)
+                .withCommand("server", "/data")
+                .withExposedPorts(API_PORT)
+                .waitingFor(Wait.forHttp("/minio/health/ready").forPort(API_PORT));
+        minio.start();
+        int port = minio.getMappedPort(API_PORT);
         Map<String, String> values = Map.of(
                 "JENESIS_GCS_BUCKET", "repo",
-                "JENESIS_GCS_ENDPOINT", "http://localhost:" + port,
+                "JENESIS_GCS_ENDPOINT", "http://" + minio.getHost() + ":" + port,
                 // The emulator speaks plaintext http, so opt past the https-endpoint secure default.
                 "JENESIS_GCS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_GCS_REGION", "us-east-1",
@@ -75,7 +90,7 @@ public class GcsArtifactStoreTest {
     @AfterAll
     public void stop() {
         if (minio != null) {
-            minio.close();
+            minio.stop();
         }
     }
 

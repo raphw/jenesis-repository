@@ -9,6 +9,9 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,17 +40,30 @@ public class S3ArtifactStoreTest {
     // KMS with a fixed test key so the encrypted round-trips this suite drives are honored.
     private static final String KMS_SECRET_KEY = "minio-default-key:OSMM+vkKUTCvQs9YL/CVMIMt43HFhkUpqJxTmGl6rYw=";
 
-    private Docker minio;
+    private GenericContainer<?> minio;
     private S3Client s3;
     private ArtifactStore store;
 
+    private static boolean dockerAvailable() {
+        try {
+            return DockerClientFactory.instance().isDockerAvailable();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(Docker.available(), "Docker is required for the S3 (MinIO) integration test");
-        minio = Docker.start(IMAGE, API_PORT, Map.of("MINIO_KMS_SECRET_KEY", KMS_SECRET_KEY), "server", "/data");
-        int port = minio.hostPort(API_PORT);
+        requireOrSkip(dockerAvailable(), "Docker is required for the S3 (MinIO) integration test");
+        minio = new GenericContainer<>(IMAGE)
+                .withCommand("server", "/data")
+                .withExposedPorts(API_PORT)
+                .withEnv("MINIO_KMS_SECRET_KEY", KMS_SECRET_KEY)
+                .waitingFor(Wait.forHttp("/minio/health/ready").forPort(API_PORT));
+        minio.start();
+        int port = minio.getMappedPort(API_PORT);
         s3 = S3Client.builder()
-                .endpointOverride(URI.create("http://localhost:" + port))
+                .endpointOverride(URI.create("http://" + minio.getHost() + ":" + port))
                 .region(Region.US_EAST_1)
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(ACCESS_KEY, SECRET_KEY)))
@@ -80,7 +96,7 @@ public class S3ArtifactStoreTest {
             s3.close();
         }
         if (minio != null) {
-            minio.close();
+            minio.stop();
         }
     }
 
