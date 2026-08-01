@@ -367,6 +367,150 @@ class MavenSourceTest {
                 .hasMessageContaining("repository index");
     }
 
+    @Test
+    void a_directory_tree_deeper_than_the_depth_cap_fails_the_walk() {
+        // A self-referential autoindex chain: every level lists a single subdirectory "d/", so the listing walk
+        // descends without bound until the depth cap (64) trips - the directory-listing counterpart of the
+        // Artifactory folder-crawl cap.
+        Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
+        StringBuilder path = new StringBuilder(ROOT);
+        for (int level = 0; level <= 70; level++) {
+            responses.put(path.toString(), ok("<a href=\"d/\">d/</a>"));
+            path.append("d/");
+        }
+        MavenSource source = source(new FakeFetcher(responses));
+        assertThatThrownBy(() -> source.forEach((format, walked, content) -> { }, cursor -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("depth");
+    }
+
+    private static Map<String, ProxyFormat.Fetched> indexFallback(byte[] indexBytes) {
+        Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
+        responses.put("https://mirror.example/repo/", status(403));
+        responses.put("https://mirror.example/repo/.index/nexus-maven-repository-index.properties",
+                ok("nexus.index.id=repo\n"));
+        responses.put("https://mirror.example/repo/.index/nexus-maven-repository-index.gz",
+                new ProxyFormat.Fetched(200, indexBytes, Map.of()));
+        return responses;
+    }
+
+    private static List<String> walk(Map<String, ProxyFormat.Fetched> responses) throws IOException {
+        List<String> paths = new ArrayList<>();
+        new MavenSource(URI.create("https://mirror.example/repo"), ".", new FakeFetcher(responses))
+                .forEach((format, path, content) -> paths.add(path), cursor -> { });
+        return paths;
+    }
+
+    @Test
+    void a_refreshed_pom_without_a_packaging_element_derives_the_default_jar() throws IOException {
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = indexFallback(index(List.of(
+                record("u", "org.p|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"))));
+        responses.put(root + "org/p/lib/maven-metadata.xml", ok("""
+                <metadata><versioning><versions>
+                  <version>1.0</version><version>2.0</version>
+                </versions></versioning></metadata>"""));
+        responses.put(root + "org/p/lib/2.0/lib-2.0.pom", ok("<project></project>"));
+
+        assertThat(walk(responses)).as("a pom that declares no packaging derives the default jar artifact")
+                .contains("org/p/lib/2.0/lib-2.0.pom", "org/p/lib/2.0/lib-2.0.jar");
+    }
+
+    @Test
+    void an_unparseable_refreshed_pom_is_imported_but_yields_no_primary_artifact() throws IOException {
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = indexFallback(index(List.of(
+                record("u", "org.p|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"))));
+        responses.put(root + "org/p/lib/maven-metadata.xml", ok("""
+                <metadata><versioning><versions>
+                  <version>1.0</version><version>2.0</version>
+                </versions></versioning></metadata>"""));
+        responses.put(root + "org/p/lib/2.0/lib-2.0.pom", ok("this is not a pom at all >>> {{{"));
+
+        List<String> paths = walk(responses);
+        assertThat(paths).as("the pom itself is still imported").contains("org/p/lib/2.0/lib-2.0.pom");
+        assertThat(paths).as("an unparseable pom (packaging()==null) derives no primary artifact")
+                .doesNotContain("org/p/lib/2.0/lib-2.0.jar");
+    }
+
+    @Test
+    void broken_or_versionless_metadata_lists_no_versions_to_refresh() throws IOException {
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = indexFallback(index(List.of(
+                record("u", "org.a|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"),
+                record("u", "org.b|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"))));
+        responses.put(root + "org/a/lib/maven-metadata.xml", ok("<<< not metadata at all"));
+        responses.put(root + "org/b/lib/maven-metadata.xml", ok("<metadata></metadata>"));
+
+        assertThat(walk(responses))
+                .as("unparseable and versioning-less metadata alike yield no versions, so only the index records import")
+                .containsExactlyInAnyOrder(
+                        "org/a/lib/1.0/lib-1.0.jar", "org/a/lib/1.0/lib-1.0.pom",
+                        "org/b/lib/1.0/lib-1.0.jar", "org/b/lib/1.0/lib-1.0.pom");
+    }
+
+    @FunctionalInterface
+    private interface IndexBody {
+        void write(DataOutputStream out) throws IOException;
+    }
+
+    /** A GZIP index stream with a valid header (version byte, timestamp) followed by whatever corruption {@code body}
+     *  writes, so a test can drive {@link build.jenesis.repository.importer.maven.MavenSource}'s index reader past a
+     *  malformed record and assert it refuses the stream rather than trusting it. */
+    private static byte[] rawIndex(IndexBody body) {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(bytes))) {
+                out.writeByte(1);
+                out.writeLong(1L);
+                body.write(out);
+            }
+            return bytes.toByteArray();
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    void an_implausible_index_field_count_fails_the_walk() {
+        MavenSource source = new MavenSource(URI.create("https://mirror.example/repo"), ".",
+                new FakeFetcher(indexFallback(rawIndex(out -> out.writeInt(2000)))));
+        assertThatThrownBy(() -> source.forEach((format, path, content) -> { }, cursor -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("field count")
+                .hasMessageContaining("corrupted");
+    }
+
+    @Test
+    void an_implausible_index_field_length_fails_the_walk() {
+        MavenSource source = new MavenSource(URI.create("https://mirror.example/repo"), ".",
+                new FakeFetcher(indexFallback(rawIndex(out -> {
+                    out.writeInt(1);            // one field
+                    out.writeByte(0);           // uncompressed
+                    out.writeUTF("u");
+                    out.writeInt(17 * 1024 * 1024);   // a declared length above the 16 MiB field cap
+                }))));
+        assertThatThrownBy(() -> source.forEach((format, path, content) -> { }, cursor -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("field length")
+                .hasMessageContaining("corrupted");
+    }
+
+    @Test
+    void a_truncated_index_field_value_fails_the_walk() {
+        MavenSource source = new MavenSource(URI.create("https://mirror.example/repo"), ".",
+                new FakeFetcher(indexFallback(rawIndex(out -> {
+                    out.writeInt(1);            // one field
+                    out.writeByte(0);           // uncompressed
+                    out.writeUTF("u");
+                    out.writeInt(64);           // declares 64 value bytes
+                    out.write(new byte[5]);     // but only 5 are present before the stream ends
+                }))));
+        assertThatThrownBy(() -> source.forEach((format, path, content) -> { }, cursor -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("Truncated");
+    }
+
     private static Map<String, String> record(String... fields) {
         Map<String, String> record = new LinkedHashMap<>();
         for (int at = 0; at < fields.length; at += 2) {

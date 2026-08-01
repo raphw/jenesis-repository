@@ -463,6 +463,124 @@ class AuthorizationTest {
         assertThat(credential.lastUsedAddress()).isEqualTo("10.0.0.9");
     }
 
+    @Test
+    void a_non_byte_aligned_cidr_masks_the_partial_byte_and_an_ipv6_masked_range_is_honoured() throws IOException {
+        String key = Authorization.mint("acme");
+        String hash = Authorization.hash(key);
+        authorization.provision("acme", hash, "k", null);
+        authorization.setAllowedAddresses("acme", hash, "192.168.1.0/26, 10.10.0.0/20, 2001:db8:a000::/36");
+
+        // /26 -> bits%8 == 2, so the fourth byte is compared under a 0xC0 mask (192.168.1.0 - 192.168.1.63).
+        assertThat(authorization.addressAllowed(key, "192.168.1.10")).as("inside the /26").isTrue();
+        assertThat(authorization.addressAllowed(key, "192.168.1.63")).as("the last address of the /26").isTrue();
+        assertThat(authorization.addressAllowed(key, "192.168.1.64")).as("just past the /26").isFalse();
+        // /20 -> bits%8 == 4, the third byte compared under a 0xF0 mask (10.10.0.0 - 10.10.15.255).
+        assertThat(authorization.addressAllowed(key, "10.10.15.255")).as("the last address of the /20").isTrue();
+        assertThat(authorization.addressAllowed(key, "10.10.16.0")).as("just past the /20").isFalse();
+        // an IPv6 masked CIDR (/36 -> bits%8 == 4 in the fifth byte, 0xF0 mask): 2001:db8:a000::/36.
+        assertThat(authorization.addressAllowed(key, "2001:db8:af00::1")).as("inside the IPv6 /36").isTrue();
+        assertThat(authorization.addressAllowed(key, "2001:db8:b000::1")).as("just past the IPv6 /36").isFalse();
+        // an IPv4 address is never covered by an IPv6 range (their byte lengths differ).
+        assertThat(authorization.addressAllowed(key, "203.0.113.7")).as("outside every listed range").isFalse();
+    }
+
+    @Test
+    void record_used_returns_true_on_success_and_false_when_every_compare_and_set_conflicts() throws IOException {
+        String key = Authorization.mint("acme");
+        String hash = Authorization.hash(key);
+        authorization.provision("acme", hash, "k", null);
+
+        assertThat(authorization.recordUsed("acme", hash, Instant.parse("2026-06-30T08:00:00Z"), "10.0.0.1", 4))
+                .as("a settled increment returns true").isTrue();
+        assertThat(authorization.credential("acme", hash).orElseThrow().useCount()).isEqualTo(4);
+
+        // A metadata write that loses every compare-and-set: recordUsed spends all USE_COUNT_RETRIES attempts and
+        // forfeits, returning false and leaving no partial write, so the caller keeps the delta for the next flush.
+        ConflictingStore conflicting = new ConflictingStore(store, "auth/acme/" + hash + "/metadata");
+        Authorization contended = Authorization.enforcing(conflicting);
+        assertThat(contended.recordUsed("acme", hash, Instant.parse("2026-07-01T09:00:00Z"), "10.0.0.2", 9))
+                .as("a write that loses every attempt forfeits the increment").isFalse();
+        assertThat(conflicting.attempts).as("every retry was spent before forfeiting").isEqualTo(5);
+
+        Authorization.Credential after = Authorization.enforcing(store).credential("acme", hash).orElseThrow();
+        assertThat(after.useCount()).as("the forfeited delta left no partial write").isEqualTo(4);
+        assertThat(after.lastUsedAddress()).as("the earlier settled address stands").isEqualTo("10.0.0.1");
+    }
+
+    /** A store decorator whose compare-and-set write to the credential's metadata always reports a conflict (and never
+     *  writes), so every {@link Authorization#recordUsed} attempt loses - exercising the exhausted-retry forfeit. Every
+     *  other call, and every write to any other key, delegates unchanged. */
+    private static final class ConflictingStore implements ArtifactStore {
+
+        private final ArtifactStore delegate;
+        private final String contendedKey;
+        int attempts;
+
+        private ConflictingStore(ArtifactStore delegate, String contendedKey) {
+            this.delegate = delegate;
+            this.contendedKey = contendedKey;
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            if (key.equals(contendedKey)) {
+                attempts++;
+                return false;   // the compare-and-set never settles - the flush must retry, then forfeit
+            }
+            return delegate.writeVersioned(key, content, expected);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+    }
+
     /** A store decorator whose first compare-and-set write to the credential's metadata simulates another node
      *  committing a competing use increment and an operator's IP-allowlist first (so this flush's token is now stale)
      *  and then reports the conflict, exercising {@link Authorization#recordUsed}'s compare-and-set retry; every other

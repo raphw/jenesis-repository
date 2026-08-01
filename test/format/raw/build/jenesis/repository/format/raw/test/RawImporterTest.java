@@ -1,6 +1,7 @@
 package build.jenesis.repository.format.raw.test;
 
 import build.jenesis.repository.format.raw.RawImporter;
+import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.Publication;
@@ -49,5 +50,16 @@ class RawImporterTest {
 
         importer.importArtifact("/other/x", new ByteArrayInputStream(new byte[]{1, 2}), store);
         assertThat(publication.located("/raw/other/x")).as("a leading slash is normalised").isPresent();
+    }
+
+    @Test
+    void the_import_target_is_the_raw_serving_path_the_edge_gates_against() {
+        ArtifactDescriptor relative = importer.importTarget("dir/x").orElseThrow();
+        assertThat(relative.ecosystem()).as("a raw asset has no ecosystem layout").isEqualTo("raw");
+        assertThat(relative.path()).as("the verbatim /raw/ serving path is the screen identity").isEqualTo("/raw/dir/x");
+
+        ArtifactDescriptor rooted = importer.importTarget("/dir/x").orElseThrow();
+        assertThat(rooted.ecosystem()).isEqualTo("raw");
+        assertThat(rooted.path()).as("a leading slash is normalised to the same target").isEqualTo("/raw/dir/x");
     }
 }
