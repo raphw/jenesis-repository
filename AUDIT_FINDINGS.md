@@ -1,3 +1,17 @@
+# STATUS: CLEARED (free repo)
+
+All 44 confirmed findings from the module-by-module audit are resolved: the 3 production
+defects (posture wildcard fail-open, OCI manifest digest-verify, ui panel manifest) + the
+vacuous security test were fixed in Round A, and the 39 test-gaps were closed with focused,
+non-tautological tests (integrated commit b126283, build green).
+
+Residual (1, documented — needs a production change + a free-core re-pin, so deferred):
+- store/azure keyless-presign degrade catches IllegalStateException but azure-storage-blob
+  12.35.0 throws NullPointerException, so the catch is a no-op. Low blast radius (the provider
+  installs a shared-key presigner in production). See the follow-up note below.
+
+---
+
 # Module Audit — Confirmed Findings (free repo, Round A)
 
 Iterative module-by-module audit: test gaps / test quality / defects / security, each finding adversarially verified by an independent agent. Production defects + the vacuous security test are fixed this pass; the remaining minor test-gaps are a durable coverage backlog (test-only — no re-pin needed).
