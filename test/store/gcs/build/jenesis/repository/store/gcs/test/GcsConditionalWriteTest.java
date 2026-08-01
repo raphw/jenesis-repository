@@ -1,31 +1,38 @@
 package build.jenesis.repository.store.gcs.test;
 
 import module java.base;
-import module jdk.httpserver;
 import module org.junit.jupiter.api;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ArtifactStoreProvider;
 import build.jenesis.repository.store.gcs.GcsArtifactStoreProvider;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.extension.ResponseDefinitionTransformerV2;
+import com.github.tomakehurst.wiremock.http.RequestMethod;
+import com.github.tomakehurst.wiremock.http.ResponseDefinition;
+import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Proves the GCS-specific conditional-write protocol without a network: a generation-aware in-process
- * stub ({@code jdk.httpserver}) implements exactly the slice of the GCS XML API the backend's versioned
- * operations touch - it stores objects with a monotonically increasing generation, answers reads with
- * the {@code x-goog-generation} header, and enforces the {@code x-goog-if-generation-match} PUT
- * precondition ({@code 0} = only-if-absent) with a {@code 412} - while the real SDK client drives it
- * through {@link ArtifactStoreProvider#resolve}. That pins the wire contract the MinIO leg cannot
- * (MinIO ignores {@code x-goog} headers): the create-if-absent and update-if-unchanged writes send the
- * precondition, a rejection maps to a {@code false} return rather than an exception, and the version
- * token round-trips as the object generation, not the ETag. The missing-bucket configuration error is
+ * Proves the GCS-specific conditional-write protocol without a network: a generation-aware WireMock stub (a
+ * {@code ResponseDefinitionTransformerV2}) implements exactly the slice of the GCS XML API the backend's versioned
+ * operations touch - it stores objects with a monotonically increasing generation, answers reads with the
+ * {@code x-goog-generation} header, and enforces the {@code x-goog-if-generation-match} PUT precondition ({@code 0} =
+ * only-if-absent) with a {@code 412} - while the real SDK client drives it through {@link ArtifactStoreProvider#resolve}.
+ * That pins the wire contract the MinIO leg cannot (MinIO ignores {@code x-goog} headers): the create-if-absent and
+ * update-if-unchanged writes send the precondition, a rejection maps to a {@code false} return rather than an exception,
+ * and the version token round-trips as the object generation, not the ETag. The missing-bucket configuration error is
  * asserted here too, as this suite needs no Docker daemon and always runs.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class GcsConditionalWriteTest {
 
-    private HttpServer server;
+    private WireMockServer server;
     private ArtifactStore store;
     private final Map<String, Stored> objects = new ConcurrentHashMap<>();
     private final AtomicLong generations = new AtomicLong();
@@ -34,13 +41,14 @@ public class GcsConditionalWriteTest {
     }
 
     @BeforeAll
-    public void start() throws IOException {
-        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/", this::handle);
+    public void start() {
+        server = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort()
+                .extensions(new GcsProtocol(objects, generations)));
         server.start();
+        server.stubFor(any(anyUrl()).willReturn(aResponse()));
         Map<String, String> values = Map.of(
                 "JENESIS_GCS_BUCKET", "repo",
-                "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.getAddress().getPort(),
+                "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.port(),
                 // The in-process stub speaks plaintext http, so opt past the https-endpoint secure default.
                 "JENESIS_GCS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_GCS_ACCESS_KEY_ID", "hmac-access",
@@ -51,88 +59,8 @@ public class GcsConditionalWriteTest {
     @AfterAll
     public void stop() {
         if (server != null) {
-            server.stop(0);
+            server.stop();
         }
-    }
-
-    private synchronized void handle(HttpExchange exchange) throws IOException {
-        try (exchange) {
-            String path = exchange.getRequestURI().getPath();
-            byte[] body = exchange.getRequestBody().readAllBytes();
-            if (path.startsWith("/gone")) {
-                // A configured-but-absent bucket: every operation on it (including the provider's swallowed
-                // create-bucket attempt) answers 404 NoSuchBucket, the bucket-level 404 a versioned write must
-                // surface as a real error rather than mistake for a key-level CAS conflict.
-                respond(exchange, 404, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
-                        + "<Code>NoSuchBucket</Code><Message>the bucket does not exist</Message></Error>");
-                return;
-            }
-            if (!path.startsWith("/repo")) {
-                exchange.sendResponseHeaders(501, -1);
-                return;
-            }
-            String key = path.length() > "/repo/".length() ? path.substring("/repo/".length()) : "";
-            switch (exchange.getRequestMethod()) {
-                case "PUT" -> {
-                    if (key.isEmpty()) {
-                        exchange.sendResponseHeaders(200, -1); // The provider's create-bucket attempt.
-                        return;
-                    }
-                    Stored existing = objects.get(key);
-                    String precondition = exchange.getRequestHeaders().getFirst("x-goog-if-generation-match");
-                    if (precondition != null && (precondition.equals("0")
-                            ? existing != null
-                            : existing == null || !precondition.equals(Long.toString(existing.generation())))) {
-                        respond(exchange, 412, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
-                                + "<Code>PreconditionFailed</Code><Message>generation mismatch</Message></Error>");
-                        return;
-                    }
-                    Stored stored = new Stored(body, generations.incrementAndGet());
-                    objects.put(key, stored);
-                    exchange.getResponseHeaders().set("x-goog-generation", Long.toString(stored.generation()));
-                    exchange.getResponseHeaders().set("ETag", "\"stub-" + stored.generation() + "\"");
-                    exchange.sendResponseHeaders(200, -1);
-                }
-                case "GET" -> {
-                    if (key.endsWith("no-generation-header")) {
-                        // A generic S3-compatible endpoint (not GCS's XML API) answers a GET with a body but no
-                        // x-goog-generation header; readVersioned must fail fast rather than fabricate a token.
-                        byte[] headerless = "present-but-headerless".getBytes(StandardCharsets.UTF_8);
-                        exchange.sendResponseHeaders(200, headerless.length);
-                        exchange.getResponseBody().write(headerless);
-                        return;
-                    }
-                    Stored existing = objects.get(key);
-                    if (existing == null) {
-                        respond(exchange, 404, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
-                                + "<Code>NoSuchKey</Code><Message>absent</Message></Error>");
-                        return;
-                    }
-                    exchange.getResponseHeaders().set("x-goog-generation", Long.toString(existing.generation()));
-                    exchange.getResponseHeaders().set("ETag", "\"stub-" + existing.generation() + "\"");
-                    exchange.sendResponseHeaders(200, existing.content().length);
-                    exchange.getResponseBody().write(existing.content());
-                }
-                case "HEAD" -> {
-                    // exists()/size() issue a HEAD (headObject). Only a 404 means absent; a non-404 - here a 403 auth
-                    // failure, as a 503 throttle would be - must fail the request loudly (exists() throws, size()
-                    // throws IOException), never be reported as an absent object, or a published artifact silently
-                    // turns into a 404 miss for as long as the backend misbehaves.
-                    if (key.endsWith("faulted")) {
-                        exchange.sendResponseHeaders(403, -1);
-                    } else {
-                        exchange.sendResponseHeaders(404, -1);
-                    }
-                }
-                default -> exchange.sendResponseHeaders(501, -1);
-            }
-        }
-    }
-
-    private static void respond(HttpExchange exchange, int status, String xml) throws IOException {
-        byte[] bytes = xml.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
     }
 
     @Test
@@ -234,7 +162,7 @@ public class GcsConditionalWriteTest {
         // silent retry-exhaustion; a versioned write must surface it as a real IOException.
         Map<String, String> values = Map.of(
                 "JENESIS_GCS_BUCKET", "gone",
-                "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.getAddress().getPort(),
+                "JENESIS_GCS_ENDPOINT", "http://localhost:" + server.port(),
                 "JENESIS_GCS_ALLOW_INSECURE_ENDPOINT", "true",
                 "JENESIS_GCS_ACCESS_KEY_ID", "hmac-access",
                 "JENESIS_GCS_SECRET_ACCESS_KEY", "hmac-secret");
@@ -243,5 +171,95 @@ public class GcsConditionalWriteTest {
                 .as("a bucket-level 404 is a real transport/config failure, never a silent CAS conflict")
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("bucket");
+    }
+
+    /**
+     * The generation-aware GCS XML wire the backend's versioned operations touch, expressed as a WireMock response
+     * transformer over a shared {@code objects}/{@code generations} state the test also inspects. A 1:1 port of the
+     * former hand-rolled {@code jdk.httpserver} handler: bucket-level 404, path/method routing, the
+     * {@code x-goog-if-generation-match} precondition (0 = only-if-absent) enforced with a 412, and the
+     * {@code x-goog-generation} token on reads and writes.
+     */
+    private static final class GcsProtocol implements ResponseDefinitionTransformerV2 {
+
+        private static final String XML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
+
+        private final Map<String, Stored> objects;
+        private final AtomicLong generations;
+
+        private GcsProtocol(Map<String, Stored> objects, AtomicLong generations) {
+            this.objects = objects;
+            this.generations = generations;
+        }
+
+        @Override
+        public String getName() {
+            return "gcs";
+        }
+
+        @Override
+        public boolean applyGlobally() {
+            return true;
+        }
+
+        @Override
+        public synchronized ResponseDefinition transform(ServeEvent event) {
+            String url = event.getRequest().getUrl();
+            String path = url.indexOf('?') < 0 ? url : url.substring(0, url.indexOf('?'));
+            if (path.startsWith("/gone")) {
+                return xml(404, "<Error><Code>NoSuchBucket</Code><Message>the bucket does not exist</Message></Error>");
+            }
+            if (!path.startsWith("/repo")) {
+                return status(501);
+            }
+            String key = path.length() > "/repo/".length() ? path.substring("/repo/".length()) : "";
+            RequestMethod method = event.getRequest().getMethod();
+            if (RequestMethod.PUT.equals(method)) {
+                if (key.isEmpty()) {
+                    return status(200); // The provider's create-bucket attempt.
+                }
+                Stored existing = objects.get(key);
+                String precondition = event.getRequest().getHeader("x-goog-if-generation-match");
+                if (precondition != null && (precondition.equals("0")
+                        ? existing != null
+                        : existing == null || !precondition.equals(Long.toString(existing.generation())))) {
+                    return xml(412, "<Error><Code>PreconditionFailed</Code><Message>generation mismatch</Message></Error>");
+                }
+                Stored stored = new Stored(event.getRequest().getBody(), generations.incrementAndGet());
+                objects.put(key, stored);
+                return aResponse().withStatus(200)
+                        .withHeader("x-goog-generation", Long.toString(stored.generation()))
+                        .withHeader("ETag", "\"stub-" + stored.generation() + "\"").build();
+            }
+            if (RequestMethod.GET.equals(method)) {
+                if (key.endsWith("no-generation-header")) {
+                    // A generic S3-compatible endpoint answers a GET with a body but no x-goog-generation header;
+                    // readVersioned must fail fast rather than fabricate a token.
+                    return aResponse().withStatus(200).withBody("present-but-headerless").build();
+                }
+                Stored existing = objects.get(key);
+                if (existing == null) {
+                    return xml(404, "<Error><Code>NoSuchKey</Code><Message>absent</Message></Error>");
+                }
+                return aResponse().withStatus(200)
+                        .withHeader("x-goog-generation", Long.toString(existing.generation()))
+                        .withHeader("ETag", "\"stub-" + existing.generation() + "\"")
+                        .withBody(existing.content()).build();
+            }
+            if (RequestMethod.HEAD.equals(method)) {
+                // exists()/size() issue a HEAD; only a 404 means absent, a non-404 (here a 403) must fail loud.
+                return status(key.endsWith("faulted") ? 403 : 404);
+            }
+            return status(501);
+        }
+
+        private static ResponseDefinition status(int status) {
+            return aResponse().withStatus(status).build();
+        }
+
+        private static ResponseDefinition xml(int status, String errorBody) {
+            return aResponse().withStatus(status).withHeader("Content-Type", "application/xml")
+                    .withBody(XML + errorBody).build();
+        }
     }
 }
