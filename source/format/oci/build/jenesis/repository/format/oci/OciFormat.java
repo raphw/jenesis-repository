@@ -435,6 +435,13 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             exchange.respond(400);
             return;
         }
+        if (page <= 0) {
+            // n is a positive page size. A zero or negative n would take the truncation branch below and either empty
+            // the list then read getLast() off it (n=0 -> NoSuchElementException) or index subList with a negative
+            // fromIndex (n<0 -> IndexOutOfBoundsException), each an unhandled 500. Reject it exactly as a non-numeric n.
+            exchange.respond(400);
+            return;
+        }
         if (page < repositories.size()) {
             repositories.subList(page, repositories.size()).clear();
             exchange.setResponseHeader("Link", "</v2/_catalog?n=" + page + "&last="
