@@ -97,3 +97,9 @@ Total confirmed: 44 · fixed this pass: 4 · remaining backlog: 40
   - fix: Add tests over a stubbed OAuth2User/OidcUser asserting the id passed to Principals.authorities is 'github/<login>' and 'oidc/<sub>' respectively.
 - `ui` — `ConsistencyPanelTest.java:33` _(test-quality)_ — ConsistencyPanelTest asserts escaping only by substring-checking the identifier 'jconEsc', which cannot verify the escaping actually works.
   - fix: Cover the escaping behaviourally (e.g. a JS-engine or browser test that renders a malicious node id/reason and asserts it is neutralised), or downgrade the assertion's claim to match what it checks.
+
+---
+
+## Follow-up surfaced during backlog test-writing (Round A)
+
+- **[minor / production]** `store/azure` — `AzureArtifactStore.java:62-67` — the keyless-client presign degradation catches `IllegalStateException`, but under the pinned `azure-storage-blob 12.35.0` a no-shared-key `generateSas` throws `NullPointerException`, so the catch never fires and `presign()` propagates instead of returning `Optional.empty()`. Low blast radius (the provider installs a shared-key presigner in production), but the degrade is a no-op. Fix: widen the catch to the actual thrown type (or `RuntimeException`) — a production change, so deferred out of the test-only backlog pass (would need a re-pin).
