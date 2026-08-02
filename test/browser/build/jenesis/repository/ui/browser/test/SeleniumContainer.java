@@ -21,7 +21,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 final class SeleniumContainer implements AutoCloseable {
 
     /** Pinned to the Selenium client version in this module's pins, so server and client speak the same protocol. */
-    private static final String IMAGE = "selenium/standalone-chrome:4.35.0";
+    private static final String IMAGE = "selenium/standalone-chrome:4.35.0@sha256:be55620222a49b5ed58787573c6ae864ed86833668b5a54a792f5419befb1dfd";
     private static final int PORT = 4444;
     private static final long SHARED_MEMORY = 2L * 1024 * 1024 * 1024;
 

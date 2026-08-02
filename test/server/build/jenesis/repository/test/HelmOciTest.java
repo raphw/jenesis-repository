@@ -20,7 +20,7 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class HelmOciTest {
 
-    private static final String IMAGE = "alpine/helm:3.16.3";
+    private static final String IMAGE = "alpine/helm:3.16.3@sha256:ed9dfc49d43d034df3f9880eb777caf0183e5156508672478b80412c63f3db4f";
 
     @TempDir
     static Path root;

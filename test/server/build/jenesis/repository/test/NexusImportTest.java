@@ -36,8 +36,8 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class NexusImportTest {
 
-    private static final String IMAGE = "sonatype/nexus3:3.70.4";
-    private static final String MAVEN_IMAGE = "maven:3.9.9-eclipse-temurin-21";
+    private static final String IMAGE = "sonatype/nexus3:3.70.4@sha256:21e3ecb4f2287e2939be6b6bdbfb8676c764a17b15df44be1ceb31f18de63bb3";
+    private static final String MAVEN_IMAGE = "maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f53731bec53fb2e651aca79e4b10211e";
     private static final String GROUP = "org.example";
     private static final String ARTIFACT = "lib";
     private static final String VERSION = "1.0";

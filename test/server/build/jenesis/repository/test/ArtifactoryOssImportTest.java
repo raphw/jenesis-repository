@@ -39,7 +39,7 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class ArtifactoryOssImportTest {
 
-    private static final String IMAGE = "releases-docker.jfrog.io/jfrog/artifactory-oss:6.23.13";
+    private static final String IMAGE = "releases-docker.jfrog.io/jfrog/artifactory-oss:6.23.13@sha256:01604c310953da0feb1748ab0d83e90fa36516f3344187efa61f888f67b8ea98";
     private static final String AUTH = "Basic "
             + Base64.getEncoder().encodeToString("admin:password".getBytes(StandardCharsets.UTF_8));
     // Artifactory OSS gates the Repository Configuration API behind Pro too, so seed the default local repo that ships
@@ -55,7 +55,7 @@ public class ArtifactoryOssImportTest {
     @TempDir
     static Path work;
 
-    private static final String MAVEN_IMAGE = "maven:3.9.9-eclipse-temurin-21";
+    private static final String MAVEN_IMAGE = "maven:3.9.9-eclipse-temurin-21@sha256:3a4ab3276a087bf276f79cae96b1af04f53731bec53fb2e651aca79e4b10211e";
 
     private GenericContainer<?> container;
     private ToolContainer tool;
