@@ -28,7 +28,9 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
  * {@link RepositoryApplication} and the artifacts pulled back over HTTP (the jar byte for byte, its pom, and the
  * cross-published {@code /module/} view). The same seeded repository is then walked again with the vendor-neutral
  * {@link MavenSource} over the HTML directory index Artifactory serves - no vendor API at all - proving the generic
- * tree walk against the real thing. Tagged {@code artifactory}; self-skips when docker or mvn is absent.
+ * tree walk against the real thing. The {@code mvn} client runs from a pinned image ({@link ToolContainer}), so the
+ * test needs no host Maven. Tagged {@code artifactory}; self-skips when Docker is absent (or the host's nofile hard
+ * limit is too low for Artifactory 6.x to boot).
  *
  * <p>The image is pinned to an OSS release; the raised {@code nofile} ulimit is mandatory - Artifactory 6.x refuses to
  * boot on the default 1024.
@@ -53,7 +55,10 @@ public class ArtifactoryOssImportTest {
     @TempDir
     static Path work;
 
+    private static final String MAVEN_IMAGE = "maven:3.9.9-eclipse-temurin-21";
+
     private GenericContainer<?> container;
+    private ToolContainer tool;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -85,7 +90,6 @@ public class ArtifactoryOssImportTest {
     @BeforeAll
     public void start() throws Exception {
         requireOrSkip(DockerClientFactory.instance().isDockerAvailable(), "Docker is required for the Artifactory import test");
-        requireOrSkip(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Artifactory import test");
         requireOrSkip(openFilesHardLimitAtLeast(32768),
                 "Artifactory 6.x refuses to boot unless nofile is raised well above the default, and a container "
                         + "cannot exceed the host's open-files hard limit; this environment caps it below 32768, so "
@@ -110,11 +114,12 @@ public class ArtifactoryOssImportTest {
         Files.write(file, jar);
         Path settings = work.resolve("settings.xml");
         Files.writeString(settings, settings());
-        assertThat(exec(300, work, "mvn", "-B", "-s", settings.toString(),
-                "-Dmaven.repo.local=" + work.resolve("m2"), "deploy:deploy-file",
-                "-Dfile=" + file, "-DgroupId=" + GROUP, "-DartifactId=" + ARTIFACT, "-Dversion=" + VERSION,
-                "-Dpackaging=jar", "-DgeneratePom=true",
-                "-DrepositoryId=artifactory", "-Durl=" + upstream + "/" + REPO + "/").code())
+        tool = ToolContainer.start(MAVEN_IMAGE, work);
+        assertThat(tool.exec(Duration.ofSeconds(300), "mvn", "-B", "-s", inContainer(settings),
+                "-Dmaven.repo.local=" + inContainer(work.resolve("m2")), "deploy:deploy-file",
+                "-Dfile=" + inContainer(file), "-DgroupId=" + GROUP, "-DartifactId=" + ARTIFACT,
+                "-Dversion=" + VERSION, "-Dpackaging=jar", "-DgeneratePom=true",
+                "-DrepositoryId=artifactory", "-Durl=" + upstream + "/" + REPO + "/").exitCode())
                 .as("mvn deploy to Artifactory").isZero();
 
         // migrate the repo - the deep File List API is Pro-gated on OSS, so this exercises the Folder Info crawl - then
@@ -135,6 +140,9 @@ public class ArtifactoryOssImportTest {
 
     @AfterAll
     public void stop() throws Exception {
+        if (tool != null) {
+            tool.close();
+        }
         if (running != null) {
             running.close();
         }
@@ -258,6 +266,11 @@ public class ArtifactoryOssImportTest {
                 // The stream closes when the process exits; a read error here is not actionable.
             }
         });
+    }
+
+    /** The path a work-directory file has inside the client container, where {@code work} is bind-mounted at /work. */
+    private static String inContainer(Path path) {
+        return "/work/" + work.relativize(path).toString().replace(File.separatorChar, '/');
     }
 
     private static byte[] automaticModuleJar(String moduleName) throws IOException {
