@@ -144,6 +144,9 @@ open module build.jenesis.repository.test {
     requires wiremock.standalone;
     requires org.testcontainers;
     requires org.mockito;
+    // ImporterContractTest discovers every RepositoryImporter the way the server does - ServiceLoader over the
+    // RepositoryFormat providers, filtered to the import capability - so it declares the same service dependency.
+    uses build.jenesis.repository.format.RepositoryFormat;
     // WSPI.2 (b): the two publication hooks are one discovered seam - a PublishInterceptor IS a PublicationObserver,
     // so the screen fixtures register through the single PublicationObserver clause and Publication splits them into
     // the verdict chain by instanceof.
