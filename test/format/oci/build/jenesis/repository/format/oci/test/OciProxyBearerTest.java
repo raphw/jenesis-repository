@@ -159,4 +159,84 @@ class OciProxyBearerTest {
                 .containsExactly("Bearer TKN-blob");
         assertThat(store.exists("blobs/" + hex)).as("the fetched layer is cached content-addressed").isTrue();
     }
+
+    @Test
+    void a_proxy_manifest_pull_for_a_traversal_laced_image_name_is_refused_and_never_fetched() throws IOException {
+        // The in-format image-name guard the direct manifest/tags/upload legs carry also protects the proxy leg: a
+        // `..`-laced name (a/../evil) must not aim an oci/<name>/... key at a neighbouring key space nor drive an
+        // upstream fetch. It is refused before the fetcher is ever called - defense in depth behind the servlet firewall.
+        List<URI> fetched = new ArrayList<>();
+        ProxyFormat.Fetcher fetcher = (url, headers) -> {
+            fetched.add(url);
+            return Optional.of(new ProxyFormat.Fetched(200, "{}".getBytes(StandardCharsets.UTF_8), Map.of()));
+        };
+        FakeExchange get = new FakeExchange("GET", "/v2/a/../evil/manifests/1.0", new byte[0],
+                Map.of(), Map.of("Accept", "application/vnd.oci.image.manifest.v1+json"));
+
+        boolean served = format.proxy(get, store, UPSTREAM, fetcher);
+
+        assertThat(served).as("a traversal-laced proxy image name is refused, not served").isFalse();
+        assertThat(fetched).as("nothing was fetched upstream for the rejected name").isEmpty();
+    }
+
+    @Test
+    void a_deeply_nested_image_index_is_enumerated_iteratively_without_overflowing_the_stack() throws IOException {
+        // A hostile/compromised upstream serves a long chain of nested image indices (index -> index -> ... -> leaf).
+        // The import walk expands them with an explicit work-list, never recursion, so a client-controlled depth that
+        // would overflow a recursive walk's call stack is handled - and the post-order the recursion guaranteed is
+        // preserved: every referent (a blob, a nested manifest) is emitted before the manifest that references it, so an
+        // import still stores a referent before its referrer.
+        String index = "application/vnd.oci.image.index.v1+json";
+        String cfgHex = sha256("config-bytes".getBytes(StandardCharsets.UTF_8));
+        String layerHex = sha256("layer-bytes".getBytes(StandardCharsets.UTF_8));
+        byte[] leaf = ("{\"config\":{\"digest\":\"sha256:" + cfgHex + "\"},\"layers\":[{\"digest\":\"sha256:"
+                + layerHex + "\"}]}").getBytes(StandardCharsets.UTF_8);
+        String leafHex = sha256(leaf);
+        Map<String, byte[]> byDigest = new HashMap<>();
+        byDigest.put(leafHex, leaf);
+        int depth = 8000;                                       // deeper than any normal JVM call stack survives
+        byte[] current = leaf;
+        String currentHex = leafHex;
+        for (int level = 0; level < depth; level++) {
+            current = ("{\"manifests\":[{\"digest\":\"sha256:" + currentHex + "\"}]}").getBytes(StandardCharsets.UTF_8);
+            currentHex = sha256(current);
+            byDigest.put(currentHex, current);
+        }
+        byte[] top = current;
+        ProxyFormat.Fetcher fetcher = (url, headers) -> {
+            String u = url.toString();
+            if (u.endsWith("/v2/_catalog")) {
+                return Optional.of(new ProxyFormat.Fetched(200,
+                        "{\"repositories\":[\"app\"]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+            }
+            if (u.endsWith("/v2/app/tags/list")) {
+                return Optional.of(new ProxyFormat.Fetched(200,
+                        "{\"tags\":[\"top\"]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+            }
+            if (u.endsWith("/v2/app/manifests/top")) {
+                return Optional.of(new ProxyFormat.Fetched(200, top, Map.of("Content-Type", index)));
+            }
+            int at = u.indexOf("/v2/app/manifests/sha256:");
+            if (at >= 0) {
+                byte[] body = byDigest.get(u.substring(at + "/v2/app/manifests/sha256:".length()));
+                if (body != null) {
+                    return Optional.of(new ProxyFormat.Fetched(200, body, Map.of("Content-Type", index)));
+                }
+            }
+            return Optional.of(new ProxyFormat.Fetched(404, new byte[0], Map.of()));
+        };
+
+        List<String> paths = format.enumerate(fetcher, UPSTREAM)
+                .map(ProxyFormat.Coordinate::path).toList();
+
+        // depth manifest-by-digest coordinates (every nested manifest, leaf included) + the tag's own coordinate + the
+        // two leaf blobs - so the whole chain enumerated, nothing dropped by the work-list rewrite.
+        assertThat(paths).hasSize(depth + 3);
+        assertThat(paths).contains("v2/app/blobs/sha256:" + cfgHex, "v2/app/blobs/sha256:" + layerHex);
+        // Post-order: the leaf's blobs precede the leaf's own manifest coordinate, and the outermost (tag) coordinate is
+        // added last - the referent-before-referrer order an import relies on.
+        assertThat(paths.indexOf("v2/app/blobs/sha256:" + cfgHex))
+                .isLessThan(paths.indexOf("v2/app/manifests/sha256:" + leafHex));
+        assertThat(paths.getLast()).isEqualTo("v2/app/manifests/top");
+    }
 }

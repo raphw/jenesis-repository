@@ -182,6 +182,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             return;
         }
         String id = session.startsWith("/") ? session.substring(1) : session;
+        if (!isImageName(id)) {
+            exchange.respond(404);                              // a client-supplied, traversal-laced session id names
+            return;                                             // no upload; the id must not aim an oci/uploads/<id> key
+        }
         if (method.equals("PATCH")) {
             long uploaded = append(store, id, exchange.requestStream());
             exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/uploads/" + id);
@@ -578,6 +582,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     private boolean proxyDigest(String name, String reference, boolean manifest, String accept,
                                 FormatExchange exchange, ArtifactStore store, URI upstream, ProxyFormat.Fetcher fetcher)
             throws IOException {
+        if (!isImageName(name)) {
+            return false;                                       // a traversal-laced image name is no proxy target: the
+                                                                // same in-format guard the direct manifest/tags/upload
+        }                                                       // legs carry, so the proxy leg never leans on the firewall alone
         String root = upstream.toString();
         URI url = URI.create((root.endsWith("/") ? root : root + "/") + "v2/" + name
                 + (manifest ? "/manifests/" : "/blobs/") + reference);
@@ -739,40 +747,69 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
                 });
     }
 
-    /** Add the coordinates one manifest transitively references, depth-first: an index's per-platform manifests
-     *  (each expanded then added by digest), a manifest's config and layers as blobs - each digest once per walk. */
+    /**
+     * Add the coordinates one manifest transitively references, depth-first: an index's per-platform manifests (each
+     * expanded then added by digest), a manifest's config and layers as blobs - each digest once per walk.
+     *
+     * <p>Walked with an explicit work-list, never recursion. A hostile or compromised upstream can serve a long chain
+     * of nested image indices (index -&gt; index -&gt; ...); a recursive walk would drive one stack frame per level and
+     * overflow the import worker's stack on that client-controlled depth - the same StackOverflow hazard the
+     * {@code /v2/_catalog} walk was rewritten to avoid. The stack holds {@link Step}s that reproduce the recursion's
+     * post-order exactly: every blob and every nested manifest is emitted before the manifest that references it, so an
+     * import still stores a referent before its referrer.
+     */
     private void expand(URI base, String name, byte[] manifest, List<Coordinate> coordinates, Set<String> emitted,
                         ProxyFormat.Fetcher fetcher) throws IOException {
-        JsonNode node = JSON.readTree(new String(manifest, StandardCharsets.UTF_8));
-        if (node.has("manifests")) {
-            for (JsonNode child : node.path("manifests")) {
-                String digest = child.path("digest").asString(null);
-                if (digest == null || !emitted.add(digest)) {
-                    continue;
+        Deque<Step> pending = new ArrayDeque<>();
+        pending.push(new Step(manifest, null, null));
+        while (!pending.isEmpty()) {
+            Step step = pending.pop();
+            if (step.emit() != null) {
+                coordinates.add(step.emit());               // the trailing manifest coordinate, after its subtree
+                continue;
+            }
+            byte[] body = step.manifest() != null ? step.manifest() : manifest(base, name, step.digest(), fetcher);
+            JsonNode node = JSON.readTree(new String(body, StandardCharsets.UTF_8));
+            if (node.has("manifests")) {
+                List<JsonNode> children = new ArrayList<>();
+                node.path("manifests").forEach(children::add);
+                // Push children in reverse so the first is walked first; per child its emit sits under its expand, so
+                // the nested manifest's coordinate is added after everything that manifest references.
+                for (int index = children.size() - 1; index >= 0; index--) {
+                    String digest = children.get(index).path("digest").asString(null);
+                    if (digest == null || !emitted.add(digest)) {
+                        continue;
+                    }
+                    pending.push(new Step(null, null, new Coordinate("v2/" + name + "/manifests/" + digest,
+                            URI.create(base + "v2/" + name + "/manifests/" + digest),
+                            Map.of("Accept", MANIFEST_ACCEPT))));
+                    pending.push(new Step(null, digest, null));
                 }
-                expand(base, name, manifest(base, name, digest, fetcher), coordinates, emitted, fetcher);
-                coordinates.add(new Coordinate("v2/" + name + "/manifests/" + digest,
-                        URI.create(base + "v2/" + name + "/manifests/" + digest),
-                        Map.of("Accept", MANIFEST_ACCEPT)));
+                continue;
             }
-            return;
-        }
-        String config = node.path("config").path("digest").asString(null);
-        if (config != null && emitted.add(config)) {
-            coordinates.add(blob(base, name, config));
-        }
-        for (JsonNode layer : node.path("layers")) {
-            String digest = layer.path("digest").asString(null);
-            if (digest != null && emitted.add(digest)) {
-                coordinates.add(blob(base, name, digest));
+            String config = node.path("config").path("digest").asString(null);
+            if (config != null && emitted.add(config)) {
+                coordinates.add(blob(base, name, config));
             }
-        }
-        for (JsonNode layer : node.path("fsLayers")) {
-            String digest = layer.path("blobSum").asString(null);
-            if (digest != null && emitted.add(digest)) {
-                coordinates.add(blob(base, name, digest));
+            for (JsonNode layer : node.path("layers")) {
+                String digest = layer.path("digest").asString(null);
+                if (digest != null && emitted.add(digest)) {
+                    coordinates.add(blob(base, name, digest));
+                }
+            }
+            for (JsonNode layer : node.path("fsLayers")) {
+                String digest = layer.path("blobSum").asString(null);
+                if (digest != null && emitted.add(digest)) {
+                    coordinates.add(blob(base, name, digest));
+                }
             }
         }
+    }
+
+    /** One step of the iterative {@link #expand} walk: exactly one field is set - {@code manifest} for the already-
+     *  fetched root body, {@code digest} for a nested manifest to fetch and expand when it is popped, or {@code emit}
+     *  for a manifest coordinate to add once its subtree has been emitted. */
+    private record Step(byte[] manifest, String digest, Coordinate emit) {
     }
 
     private static Coordinate blob(URI base, String name, String digest) {

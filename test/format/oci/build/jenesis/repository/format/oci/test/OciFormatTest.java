@@ -368,6 +368,19 @@ class OciFormatTest {
         assertThat(upload.status()).as("a traversal-laced name opens no upload session").isEqualTo(404);
     }
 
+    @Test
+    void a_chunk_upload_to_a_traversal_laced_session_id_is_refused_before_any_store_write() throws IOException {
+        // The upload session id is echoed back by the client on PATCH/PUT and flows into oci/uploads/<id> chunk keys; a
+        // '..'-laced id must not aim those staged-chunk writes and deletes at a neighbouring key space. Guarded like the
+        // image name, it 404s before any store write - the id-side counterpart of the name guard, so the one client-
+        // echoed segment does not lean on the servlet firewall alone.
+        FakeExchange patch = new FakeExchange("PATCH", "/v2/app/blobs/uploads/../../evil",
+                "chunk".getBytes(StandardCharsets.UTF_8));
+        format.handle(patch, store);
+        assertThat(patch.status()).as("a traversal-laced session id stages no chunk").isEqualTo(404);
+        assertThat(store.list("oci/uploads")).as("no staged chunk was written under a traversal id").isEmpty();
+    }
+
     private void push(String name, String reference, byte[] manifest) throws IOException {
         FakeExchange put = new FakeExchange("PUT", "/v2/" + name + "/manifests/" + reference, manifest,
                 Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
