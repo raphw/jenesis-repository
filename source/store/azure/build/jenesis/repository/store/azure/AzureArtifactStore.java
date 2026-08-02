@@ -142,7 +142,7 @@ public final class AzureArtifactStore implements ArtifactStore {
         // A content-addressed key is the hash of the bytes being written, so the key is unknown until the stream is
         // read; buffer the (possibly large) body to a temp file while digesting it, then upload from the file under
         // blobs/<hash> - never holding the whole artifact in memory.
-        Path temporary = Files.createTempFile("azure-artifact-", null);
+        Path temporary = spool();
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (OutputStream out = Files.newOutputStream(temporary)) {
@@ -168,6 +168,26 @@ public final class AzureArtifactStore implements ArtifactStore {
         } finally {
             Files.deleteIfExists(temporary);
         }
+    }
+
+    /** An owner-only ({@code rw-------}) blob-digest spool, matching the s3/gcs artifact stores: a content-addressed
+     *  write buffers the (possibly large) plaintext artifact here while hashing, so a shared {@code /tmp} spool would
+     *  leave those bytes world-readable for the upload's life. On a POSIX filesystem the file is created {@code 0600}
+     *  at open time; a non-POSIX filesystem tightens best-effort through the {@link File} API. The {@code newOutputStream}
+     *  write opens this file in place (truncate), preserving the permission - it must NOT become a
+     *  {@code Files.copy(REPLACE_EXISTING)}, which would delete and recreate it under the umask. */
+    private static Path spool() throws IOException {
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            return Files.createTempFile("azure-artifact-", null,
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        }
+        Path temporary = Files.createTempFile("azure-artifact-", null);
+        File file = temporary.toFile();
+        file.setReadable(false, false);
+        file.setWritable(false, false);
+        file.setReadable(true, true);
+        file.setWritable(true, true);
+        return temporary;
     }
 
     @Override
