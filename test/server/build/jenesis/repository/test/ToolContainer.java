@@ -94,6 +94,18 @@ final class ToolContainer implements AutoCloseable {
 
     @Override
     public void close() {
+        // A tool in the container runs as its (usually root) user, so files it writes into the bind-mounted work dir
+        // are owned by that uid on the host. A non-root host (CI) then cannot delete them when JUnit tears the
+        // backing @TempDir down, failing the suite at cleanup with AccessDeniedException. Relax the tree to
+        // world-deletable from inside the container - where we are that owner - before the mount goes away.
+        try {
+            container.execInContainer("chmod", "-R", "a+rwX", "/work");
+        } catch (IOException | InterruptedException relaxFailed) {
+            if (relaxFailed instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            // Best-effort: if the daemon is already gone the @TempDir delete surfaces any real problem itself.
+        }
         container.stop();
     }
 
