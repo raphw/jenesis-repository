@@ -100,6 +100,24 @@ public class RangeRequestTest {
     }
 
     @Test
+    public void a_multi_range_request_is_ignored_and_the_full_body_served() throws Exception {
+        // Multipart ranges are unsupported (a multipart/byteranges response is not emitted): a comma-separated range
+        // set is ignored, not partially honoured, so the client gets the whole artifact rather than a wrong slice.
+        HttpResponse<byte[]> get = get("bytes=0-1,3-4");
+        assertThat(get.statusCode()).as("a multi-range request falls back to the full body").isEqualTo(200);
+        assertThat(get.body()).isEqualTo(BODY);
+    }
+
+    @Test
+    public void a_zero_length_suffix_range_is_unsatisfiable_416() throws Exception {
+        // A suffix range asking for the last zero bytes cannot be satisfied (RFC 9110: a suffix-length of 0 selects no
+        // bytes), so it is a 416 with the full length, never a 206 for an empty slice or a fallback to the whole body.
+        HttpResponse<byte[]> get = get("bytes=-0");
+        assertThat(get.statusCode()).as("a bytes=-0 suffix range is unsatisfiable").isEqualTo(416);
+        assertThat(get.headers().firstValue("Content-Range")).hasValue("bytes */26");
+    }
+
+    @Test
     public void a_buffered_index_carries_an_etag_and_304s_when_unchanged() throws Exception {
         HttpResponse<byte[]> first = client.send(HttpRequest.newBuilder(URI.create(base + "/raw/dir/"))
                 .GET().build(), BodyHandlers.ofByteArray());

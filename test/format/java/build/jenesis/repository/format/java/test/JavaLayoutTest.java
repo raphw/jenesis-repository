@@ -72,4 +72,31 @@ class JavaLayoutTest {
         assertThat(JavaLayout.mavenCoordinate("/maven/org/example/lib")).isNull();
         assertThat(JavaLayout.mavenCoordinate("/maven/org/example")).isNull();
     }
+
+    @Test
+    void maven_coordinate_joins_a_deeply_nested_group_from_every_leading_segment() {
+        // The group is every segment before the artifact/version/file tail, however deep the nesting - a real-world
+        // five-segment group must all fold into the dotted groupId, so the derived coordinate (which the cross-publish
+        // and the neutral descriptor's screen identity key on) is exact rather than truncated.
+        assertThat(JavaLayout.mavenCoordinate(
+                "/maven/com/fasterxml/jackson/core/jackson-databind/2.15.2/jackson-databind-2.15.2.jar"))
+                .containsExactly("com.fasterxml.jackson.core", "jackson-databind", "2.15.2");
+    }
+
+    @Test
+    void maven_coordinate_takes_artifact_and_version_from_the_two_dirs_above_the_file_ignoring_the_filename() {
+        // Artifact and version are the two directory segments above the file; the filename - classifier and extension
+        // and all - never contributes to the coordinate, so a classified sibling derives the same identity as its jar.
+        assertThat(JavaLayout.mavenCoordinate(
+                "/maven/org/example/deep/nested/group/lib/1.0.0/lib-1.0.0-sources.jar"))
+                .containsExactly("org.example.deep.nested.group", "lib", "1.0.0");
+    }
+
+    @Test
+    void maven_coordinate_of_a_minimal_four_segment_path_has_a_single_segment_group() {
+        // The four-segment floor: exactly group / artifact / version / file, so the group is the lone leading segment -
+        // the boundary the split-and-join derivation must get right (an off-by-one would swallow the artifact into it).
+        assertThat(JavaLayout.mavenCoordinate("/maven/g/a/1/a-1.jar"))
+                .containsExactly("g", "a", "1");
+    }
 }

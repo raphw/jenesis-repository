@@ -186,7 +186,14 @@ public final class S3ArtifactStore implements ArtifactStore {
         // temp file rather than into memory, then upload from the file.
         Path temporary = spool();
         try {
-            Files.copy(in, temporary, StandardCopyOption.REPLACE_EXISTING);
+            // Write through the already-0600 spool with a TRUNCATE_EXISTING open, NOT Files.copy(REPLACE_EXISTING):
+            // the latter deletes the target and recreates it CREATE_NEW under the process umask (typically world-
+            // readable 0644), silently undoing spool()'s owner-only attribute for the life of the upload. Opening the
+            // existing file WRITE+TRUNCATE_EXISTING preserves its 0600 permissions (writeBlob already does this).
+            try (OutputStream out = Files.newOutputStream(temporary,
+                    StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                in.transferTo(out);
+            }
             s3.putObject(b -> encrypt(b.bucket(bucket).key(keyPrefix + key), kmsKeyId), RequestBody.fromFile(temporary));
         } catch (S3Exception e) {
             throw new IOException("Could not write " + key, e);

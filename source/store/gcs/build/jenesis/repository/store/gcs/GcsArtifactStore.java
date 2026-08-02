@@ -35,6 +35,8 @@ public final class GcsArtifactStore implements ArtifactStore {
     private static final String GENERATION = "x-goog-generation";
     /** The GCS write precondition: proceed only if the stored generation matches ({@code 0} = absent). */
     private static final String IF_GENERATION_MATCH = "x-goog-if-generation-match";
+    /** Upload-spool permissions: readable and writable only by the owner, matching the {@code s3} backend. */
+    private static final Set<PosixFilePermission> OWNER_ONLY = PosixFilePermissions.fromString("rw-------");
 
     private final S3Client s3;
     private final S3Presigner presigner;
@@ -138,11 +140,18 @@ public final class GcsArtifactStore implements ArtifactStore {
 
     @Override
     public void write(String key, InputStream in) throws IOException {
-        // The XML API needs the content length up front, so buffer the (possibly large) body to a
+        // The XML API needs the content length up front, so buffer the (possibly large) body to an owner-only
         // temp file rather than into memory, then upload from the file.
-        Path temporary = Files.createTempFile("gcs-artifact-", null);
+        Path temporary = spool();
         try {
-            Files.copy(in, temporary, StandardCopyOption.REPLACE_EXISTING);
+            // Write through the already-0600 spool with a TRUNCATE_EXISTING open, NOT Files.copy(REPLACE_EXISTING):
+            // the latter deletes the target and recreates it CREATE_NEW under the process umask (typically world-
+            // readable 0644), silently undoing the owner-only attribute for the life of the upload. Opening the
+            // existing file WRITE+TRUNCATE_EXISTING preserves its 0600 permissions.
+            try (OutputStream out = Files.newOutputStream(temporary,
+                    StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                in.transferTo(out);
+            }
             s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key), RequestBody.fromFile(temporary));
         } catch (S3Exception e) {
             throw new IOException("Could not write " + key, e);
@@ -154,9 +163,10 @@ public final class GcsArtifactStore implements ArtifactStore {
     @Override
     public String writeBlob(InputStream in) throws IOException {
         // The upload needs the content length and the key up front, but a content-addressed key is the hash of
-        // the very bytes being written; buffer the (possibly large) body to a temp file while digesting it, then
-        // upload from the file under blobs/<hash> - never holding the whole artifact in memory.
-        Path temporary = Files.createTempFile("gcs-artifact-", null);
+        // the very bytes being written; buffer the (possibly large) body to an owner-only temp file while digesting
+        // it, then upload from the file under blobs/<hash> - never holding the whole artifact in memory. The
+        // newOutputStream below opens the existing 0600 spool (truncate-in-place), so it keeps the owner-only perms.
+        Path temporary = spool();
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (OutputStream out = Files.newOutputStream(temporary)) {
@@ -174,6 +184,26 @@ public final class GcsArtifactStore implements ArtifactStore {
         } finally {
             Files.deleteIfExists(temporary);
         }
+    }
+
+    /**
+     * An upload-spool temp file readable and writable only by its owner, matching the {@code s3} backend. The XML API
+     * needs a content length up front, so a PUT body is buffered here before upload; a shared {@code /tmp} spool would
+     * leave the plaintext artifact bytes world-readable for the life of the upload, so on a POSIX filesystem the file
+     * is created {@code 0600} at open time. A non-POSIX filesystem that cannot express owner-only permissions at create
+     * time falls back to a default temp file, then tightens it best-effort through the {@link File} API.
+     */
+    private static Path spool() throws IOException {
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            return Files.createTempFile("gcs-artifact-", null, PosixFilePermissions.asFileAttribute(OWNER_ONLY));
+        }
+        Path temporary = Files.createTempFile("gcs-artifact-", null);
+        File file = temporary.toFile();
+        file.setReadable(false, false);
+        file.setWritable(false, false);
+        file.setReadable(true, true);
+        file.setWritable(true, true);
+        return temporary;
     }
 
     @Override
