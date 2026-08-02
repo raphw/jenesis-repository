@@ -108,6 +108,25 @@ class RawFormatTest {
     }
 
     @Test
+    void a_listing_pages_its_children_and_probes_folders_without_a_full_directory_listing() throws IOException {
+        // The listing pages its immediate children and classifies folder-vs-leaf with a bounded one-element page, so a
+        // raw directory with an enormous fan-out never materialises the whole child set as one list() (nor fires a full
+        // subtree list() per child to test folder-ness). A counting store proves the whole listing does zero list().
+        format.handle(new FakeExchange("PUT", "/raw/big/a.bin", "a".getBytes(StandardCharsets.UTF_8)), store);
+        format.handle(new FakeExchange("PUT", "/raw/big/nested/b.bin", "b".getBytes(StandardCharsets.UTF_8)), store);
+
+        CountingList counting = new CountingList(store);
+        FakeExchange listing = new FakeExchange("GET", "/raw/big/");
+        format.handle(listing, counting);
+
+        assertThat(listing.status()).isEqualTo(200);
+        assertThat(listing.responseText())
+                .as("the leaf and the sub-directory are both listed").contains("a.bin").contains("nested");
+        assertThat(counting.lists())
+                .as("children are paged and folders probed by a bounded page - never a full list()").isZero();
+    }
+
+    @Test
     void a_missing_file_and_an_empty_directory_report_absence() throws IOException {
         FakeExchange head = new FakeExchange("HEAD", "/raw/missing");
         format.handle(head, store);
@@ -116,5 +135,83 @@ class RawFormatTest {
         FakeExchange listing = new FakeExchange("GET", "/raw/empty/");
         format.handle(listing, store);
         assertThat(listing.status()).isEqualTo(404);
+    }
+
+    /** A store decorator that counts {@code list(prefix)} calls and delegates {@code page(...)} to the real backend's
+     *  efficient seek (never the default {@code page} that re-lists), so a test can prove the raw listing never
+     *  full-lists a directory - neither the child enumeration nor the folder probe. */
+    private static final class CountingList implements ArtifactStore {
+
+        private final ArtifactStore delegate;
+        private int lists;
+
+        private CountingList(ArtifactStore delegate) {
+            this.delegate = delegate;
+        }
+
+        private int lists() {
+            return lists;
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            lists++;
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
     }
 }
