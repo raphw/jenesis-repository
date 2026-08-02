@@ -651,12 +651,12 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     public Stream<Coordinate> enumerate(ProxyFormat.Fetcher fetcher, URI upstream) throws IOException {
         String root = upstream.toString();
         URI base = URI.create(root.endsWith("/") ? root : root + "/");
-        Iterator<String> repositories = paged(URI.create(base + "v2/_catalog"), "repositories", fetcher);
+        Iterator<String> repositories = paged(base, URI.create(base + "v2/_catalog"), "repositories", fetcher);
         Set<String> emitted = new HashSet<>();
         return StreamSupport.stream(Spliterators.spliteratorUnknownSize(repositories, Spliterator.ORDERED), false)
                 .flatMap(name -> {
                     try {
-                        Iterator<String> tags = paged(URI.create(base + "v2/" + name + "/tags/list"), "tags", fetcher);
+                        Iterator<String> tags = paged(base, URI.create(base + "v2/" + name + "/tags/list"), "tags", fetcher);
                         return StreamSupport.stream(Spliterators.spliteratorUnknownSize(tags, Spliterator.ORDERED), false)
                                 .map(tag -> Map.entry(name, tag));
                     } catch (IOException e) {
@@ -735,8 +735,8 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     /** Iterate one string-array field across the Distribution API's pages, following each page's
      *  {@code Link; rel="next"}. The first page is read eagerly (so an unreachable or catalog-less source fails
      *  the walk up front); later pages are read as the iteration reaches them. */
-    private Iterator<String> paged(URI first, String field, ProxyFormat.Fetcher fetcher) throws IOException {
-        Page initial = page(first, field, fetcher);
+    private Iterator<String> paged(URI origin, URI first, String field, ProxyFormat.Fetcher fetcher) throws IOException {
+        Page initial = page(origin, first, field, fetcher);
         return new Iterator<>() {
             private Page current = initial;
             private int index;
@@ -745,7 +745,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             public boolean hasNext() {
                 while (index == current.values().size() && current.next() != null) {
                     try {
-                        current = page(current.next(), field, fetcher);
+                        current = page(origin, current.next(), field, fetcher);
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }
@@ -767,7 +767,22 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     private record Page(List<String> values, URI next) {
     }
 
-    private Page page(URI url, String field, ProxyFormat.Fetcher fetcher) throws IOException {
+    /** Same scheme and authority (host:port) as the operator-configured enumeration root - the cross-origin test the
+     *  PrivateHosts page guard uses, identical to {@code IndexSource.sameOrigin}. */
+    private static boolean sameOrigin(URI origin, URI url) {
+        return Objects.equals(origin.getScheme(), url.getScheme())
+                && Objects.equals(origin.getRawAuthority(), url.getRawAuthority());
+    }
+
+    private Page page(URI origin, URI url, String field, ProxyFormat.Fetcher fetcher) throws IOException {
+        // The next-page URL is resolved from the upstream's own Link header (below), so its host is upstream-controlled
+        // and reaches fetch() as an INITIAL request - HttpFetcher's redirect-only SSRF screen never inspects it. Refuse
+        // a CROSS-ORIGIN page aimed at a private/loopback/metadata host through the same PrivateHosts guard the redirect
+        // chain and IndexSource.open use, so a malicious registry cannot steer catalog/tags pagination at 169.254.169.254
+        // or an internal control plane. The first page is same-origin with the operator-configured root, so it passes.
+        if (!sameOrigin(origin, url) && PrivateHosts.resolvesToPrivate(url.getHost())) {
+            throw new IOException("Refusing a cross-origin catalog/tags page to a private/loopback host: " + url);
+        }
         Optional<ProxyFormat.Fetched> fetched = fetch(url, "application/json", fetcher);
         if (fetched.isEmpty()) {
             throw new IOException("No response from " + url);

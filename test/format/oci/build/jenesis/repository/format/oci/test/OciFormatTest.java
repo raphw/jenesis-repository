@@ -505,6 +505,26 @@ class OciFormatTest {
     }
 
     @Test
+    void enumeration_refuses_a_cross_origin_page_link_to_a_private_host() {
+        // The upstream catalog page names its own next page at a loopback/metadata host - an SSRF steer. The first page
+        // is same-origin with the operator-configured root and is read, but the cross-origin private next-link must be
+        // refused before it is fetched, exactly as the redirect chain and the index importer screen an
+        // upstream-controlled URL. Without the guard the walk would GET http://127.0.0.1/... on the operator's behalf.
+        Map<String, ProxyFormat.Fetched> canned = new HashMap<>();
+        canned.put("http://mirror.local/v2/_catalog", new ProxyFormat.Fetched(200,
+                "{\"repositories\":[\"app\"]}".getBytes(StandardCharsets.UTF_8),
+                Map.of("Link", "<http://127.0.0.1/v2/_catalog?last=app>; rel=\"next\"")));
+        canned.put("http://mirror.local/v2/app/tags/list", new ProxyFormat.Fetched(200,
+                "{\"name\":\"app\",\"tags\":[]}".getBytes(StandardCharsets.UTF_8), Map.of()));
+        ProxyFormat.Fetcher fetcher = (url, headers) -> Optional.ofNullable(canned.get(url.toString()));
+
+        assertThatThrownBy(() -> format.enumerate(fetcher, URI.create("http://mirror.local"))
+                .map(ProxyFormat.Coordinate::path).toList())
+                .hasMessageContaining("private/loopback")
+                .hasRootCauseInstanceOf(IOException.class);
+    }
+
+    @Test
     void a_catalog_less_registry_fails_enumeration_up_front() {
         ProxyFormat.Fetcher fetcher = (url, headers) ->
                 Optional.of(new ProxyFormat.Fetched(404, new byte[0], Map.of()));
