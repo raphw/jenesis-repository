@@ -10,17 +10,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static build.jenesis.repository.test.Requirement.requireOrSkip;
 
 /**
- * Proves the {@link build.jenesis.repository.format.maven.MavenFormat} plugin against the real Apache Maven client: it
- * boots a {@link RepositoryApplication} (a plain HTTP repository on an ephemeral port, which {@code mvn} accepts
- * because it is on {@code localhost}), deploys a modular jar with {@code mvn deploy:deploy-file}, then resolves it back
- * with {@code mvn dependency:get} into a clean local repository - so a genuine Maven deploy/resolve round-trip
- * exercises the layout end to end. The cross-published module view (the Jenesis-specific {@code /module/} layout, which
- * no Maven client knows) is checked over HTTP. Tagged {@code maven}; self-skips when no {@code mvn} is on the PATH.
+ * Proves the {@link build.jenesis.repository.format.maven.MavenFormat} plugin against the real Apache Maven client,
+ * which now runs from a pinned {@code maven} Docker image ({@link ToolContainer}) rather than an {@code mvn} the
+ * developer had to install on the {@code PATH}. It boots a {@link RepositoryApplication} (a plain HTTP repository on an
+ * ephemeral port, which {@code mvn} accepts because it is on {@code localhost}), deploys a modular jar with
+ * {@code mvn deploy:deploy-file}, then resolves it back with {@code mvn dependency:get} into a clean local repository -
+ * so a genuine Maven deploy/resolve round-trip exercises the layout end to end. The container joins host networking so
+ * {@code mvn} reaches the host's ephemeral loopback port; the work directory is bind-mounted so the deployed jar and
+ * the resolved local repository are shared with the test. The cross-published module view (the Jenesis-specific
+ * {@code /module/} layout, which no Maven client knows) is checked over HTTP. Self-skips when no Docker is available.
  */
 @Tag("maven")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class MavenClientTest {
 
+    private static final String IMAGE = "maven:3.9.9-eclipse-temurin-21";
     private static final String GROUP = "build.jenesis.repository.mavenclient";
     private static final String ARTIFACT = "widget";
     private static final String VERSION = "1.0";
@@ -32,6 +36,7 @@ public class MavenClientTest {
     static Path work;
 
     private RepositoryApplication.Running running;
+    private ToolContainer tool;
     private HttpClient client;
     private String base;
     private Path settings;
@@ -39,7 +44,7 @@ public class MavenClientTest {
 
     @BeforeAll
     public void start() throws Exception {
-        requireOrSkip(mvn(30, "-v") == 0, "Apache Maven (mvn) is required for the Maven client integration test");
+        requireOrSkip(ToolContainer.dockerAvailable(), "Docker is required for the Maven client integration test");
         // Route plugin resolution through the same Central mirror the rest of the build uses (set on CI to dodge
         // Central rate limits); unset locally, so mvn falls back to Central directly.
         String mirror = System.getenv("MAVEN_REPOSITORY_URI");
@@ -57,10 +62,14 @@ public class MavenClientTest {
         running = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
         base = "http://localhost:" + running.port() + "/repository/";
+        tool = ToolContainer.start(IMAGE, work);
     }
 
     @AfterAll
     public void stop() {
+        if (tool != null) {
+            tool.close();
+        }
         if (running != null) {
             running.close();
         }
@@ -77,11 +86,11 @@ public class MavenClientTest {
 
         // deploy the jar (and a generated pom) to the repository with the real Maven client.
         assertThat(mvn(300, "-B", "deploy:deploy-file",
-                "-Dfile=" + jar,
+                "-Dfile=" + inContainer(jar),
                 "-DgroupId=" + GROUP, "-DartifactId=" + ARTIFACT, "-Dversion=" + VERSION, "-Dpackaging=jar",
                 "-DgeneratePom=true",
                 "-DrepositoryId=jenesis", "-Durl=" + base + "maven/",
-                "-Dmaven.repo.local=" + local))
+                "-Dmaven.repo.local=" + inContainer(local)))
                 .as("mvn deploy: " + lastOutput).isZero();
 
         // resolve it back with the real Maven client; the jar was deployed to the server, not installed locally, so a
@@ -90,7 +99,7 @@ public class MavenClientTest {
                 "-Dartifact=" + GROUP + ":" + ARTIFACT + ":" + VERSION + ":jar",
                 "-DremoteRepositories=jenesis::::" + base + "maven/",
                 "-Dtransitive=false",
-                "-Dmaven.repo.local=" + local))
+                "-Dmaven.repo.local=" + inContainer(local)))
                 .as("mvn dependency:get: " + lastOutput).isZero();
 
         Path resolved = local.resolve(GROUP.replace('.', '/')).resolve(ARTIFACT).resolve(VERSION)
@@ -112,28 +121,17 @@ public class MavenClientTest {
         command.add("mvn");
         if (settings != null) {
             command.add("-s");
-            command.add(settings.toString());
+            command.add(inContainer(settings));
         }
         Collections.addAll(command, arguments);
-        Process process = new ProcessBuilder(command).directory(work.toFile()).redirectErrorStream(true).start();
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
-        Thread drain = Thread.ofVirtual().start(() -> {
-            try (InputStream in = process.getInputStream()) {
-                in.transferTo(captured);
-            } catch (IOException ignored) {
-                // The stream closes when the process exits; a read error here is not actionable.
-            }
-        });
-        boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
-        if (!exited) {
-            process.destroyForcibly();
-        }
-        drain.join(Duration.ofSeconds(5));
-        lastOutput = captured.toString(StandardCharsets.UTF_8);
-        if (!exited) {
-            throw new IOException("mvn " + String.join(" ", arguments) + " timed out");
-        }
-        return process.exitValue();
+        ToolContainer.Result result = tool.exec(Duration.ofSeconds(timeoutSeconds), command.toArray(new String[0]));
+        lastOutput = result.output();
+        return result.exitCode();
+    }
+
+    /** The path a work-directory file has inside the client container, where {@code work} is bind-mounted at /work. */
+    private static String inContainer(Path path) {
+        return "/work/" + work.relativize(path).toString().replace(File.separatorChar, '/');
     }
 
     private static byte[] automaticModuleJar(String moduleName) throws IOException {
