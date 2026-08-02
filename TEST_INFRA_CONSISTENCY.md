@@ -158,46 +158,52 @@ modules, enterprise 38 — is already on WireMock; these are the residual tail.
   unchanged; readiness is a `/status` poll. Validated: free `ConsoleBrowserTest` (15.5s)
   and enterprise `ConsoleBrowserTest` + `KeycloakSsoBrowserTest` (136s) green.
 
-## (3) Proxy → Mockito — BLOCKED for servlet mocks (empirically verified)
+## (3) Proxy → Mockito — servlet mocks DO work (inline maker; earlier finding corrected)
 
-Mockito is pinned (transitively) but **directly used by zero test modules**; every
-servlet/`Principal`/`RestOperations` mock is a `Proxy.newProxyInstance` hand-roll.
-The intent was to migrate these to Mockito.
+Every servlet/`Principal`/`RestOperations` test double used to be a
+`Proxy.newProxyInstance` hand-roll; the intent (rule 3) was to migrate them to Mockito.
 
-**Finding (verified by build):** Mockito's default *subclass* mock maker **cannot
-mock `jakarta.servlet` interfaces** in this strict-JPMS build. Converting
-`RequestBodyLimitFilterTest` to `mock(HttpServletRequest.class)` (with
-`requires org.mockito;` + `mockito-core 4.11.0` / `objenesis` / `byte-buddy-agent`
-pins) compiles, but fails at runtime:
+**Corrected finding (verified by a passing build).** An earlier pass concluded Mockito
+"cannot mock `jakarta.servlet` interfaces" and called it a hard JPMS limit. That was
+wrong — it had only tried Mockito's *default subclass* mock maker, which fails on a
+sealed named module because ByteBuddy must define the generated subclass **in the
+mocked type's package** and `jakarta.servlet` does not open `jakarta.servlet.http`.
+The **inline** mock maker (the default in Mockito 5) has no such constraint: it
+redefines the loaded class through the instrumentation agent instead of injecting a
+subclass, so it mocks a sealed-module interface fine. `RouteWritableTest` converted to
+`mock(HttpServletRequest.class)` / `mock(HttpServletResponse.class)` and passes 4/4:
 
 ```
-org.mockito.exceptions.base.MockitoException:
-  Mockito cannot mock this class: interface jakarta.servlet.http.HttpServletRequest
-Caused by: java.lang.IllegalArgumentException:
-  jakarta.servlet.http.HttpServletRequest$MockitoModuleProbe$… must be defined in
-  the same package as org.mockito.codegen.InjectionBase
+Mockito is currently self-attaching to enable the inline-mock-maker.
+WARNING: A Java agent has been loaded dynamically (…/net.bytebuddy/byte-buddy-agent…)
+[ 4 tests found / 4 tests successful / 0 tests failed ]
 ```
 
-ByteBuddy's subclass maker must define the generated mock **in the mocked type's
-package** via `Lookup`, and `jakarta.servlet` is a sealed named module that does not
-open `jakarta.servlet.http`. This is a hard JPMS limitation, not a config miss. So:
+**The recipe (proven on `test/server`, applied per module):**
 
-- The `Proxy.newProxyInstance` servlet stubs are a **deliberate, correct workaround**
-  — retained. `Proxy` mocks any interface without package injection.
-- The **only** Mockito path for servlet interfaces here is the *inline* mock maker
-  (`mock-maker-inline`), which redefines via the instrumentation agent instead of
-  package injection. That needs (a) a `mockito-extensions/org.mockito.plugins.MockMaker`
-  resource wired into each test module's build output and (b) a self-attaching
-  ByteBuddy agent, which JDK 25 gates behind `-XX:+EnableDynamicAgentLoading`. It is a
-  scoped spike — **not** a mechanical migration — and must not be attempted piecemeal.
+- Pin `org.mockito/mockito-core 5.23.0`, `net.bytebuddy/byte-buddy-agent 1.17.7`,
+  `org.objenesis/objenesis 3.3` (byte-buddy `1.18.3` already pinned or added), and
+  `requires org.mockito;`. Mockito 5's default maker **is** the inline maker, so no
+  `mockito-extensions/org.mockito.plugins.MockMaker` resource is needed.
+- The inline maker self-attaches a ByteBuddy agent at runtime (dynamic attach). It
+  works on JDK 25 as-is; the module ships
+  `META-INF/build.jenesis/process/test.properties` with `-XX:+EnableDynamicAgentLoading`
+  so the forked test JVM explicitly permits it (a future JDK will otherwise disallow
+  dynamic agent loading by default — the one durability caveat; the self-attach WARNING
+  on stderr is informational, not a failure).
 
-**Actionable now:** where a mock is *not* of a sealed-module interface (e.g. a
-first-party interface, or `RestOperations` on the classpath), Mockito is viable;
-`ui/test/PrincipalServiceTest`'s `RestOperations` stub is a candidate (mind its
-overloads). All `HttpServletRequest`/`Response`/`FilterChain` stubs stay on `Proxy`
-until the inline-maker spike lands. Net: **keep Proxy for servlet mocks** — this
-already satisfies rule (4) (the stub is minimal and the filter's real logic is
-exercised).
+**Migration (rule 3, "Full migration" — owner-approved).** All servlet-interface
+`Proxy` stubs move to Mockito:
+
+- **free**: `server/test/RouteWritableTest` — **done** (the exemplar above).
+- **enterprise**: the 14 servlet-`Proxy` test files across `server`, `redirect-serve`,
+  `redirect-dns`, `webhook-web`, `redirect-directory` — converted with the same recipe,
+  each module validated green.
+
+**Remaining rule-3 item (not a servlet mock):** `free ui/test/PrincipalServiceTest`
+still stubs `RestOperations` (a classpath Spring interface — the subclass maker would
+already handle it) via `Proxy`; converting it is a separate small follow-up (mind its
+overloaded `exchange`/`getForObject` signatures when stubbing).
 
 ## (4) Over-/under-mock scan
 
