@@ -157,6 +157,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     }
 
     private void upload(String name, String session, ArtifactStore store, FormatExchange exchange) throws IOException {
+        if (!isImageName(name)) {
+            exchange.respond(404);                              // a traversal-laced image name opens no upload session
+            return;
+        }
         String method = exchange.method();
         if (method.equals("POST")) {
             // Fresh-upload sweep (the negative cache's "a fresh miss first sweeps expired entries" idiom): drop every
@@ -325,6 +329,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
 
     private void manifest(String name, String reference, ArtifactStore store, FormatExchange exchange)
             throws IOException {
+        if (!isImageName(name)) {
+            exchange.respond(404);                              // a traversal-laced image name names no manifest
+            return;
+        }
         if (exchange.method().equals("PUT")) {
             if (!reference.startsWith("sha256:") && !isTag(reference)) {
                 // A manifest is pushed either by digest (sha256:...) or by tag; a reference that is neither a digest
@@ -384,6 +392,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         if (reference.startsWith("sha256:")) {
             hex = reference.substring("sha256:".length());
         } else {
+            if (!isTag(reference)) {
+                exchange.respond(404);                          // a '/'- or '..'-laced tag names no pointer (symmetric
+                return;                                         // with the PUT path's guard - never a raw store key)
+            }
             Optional<ArtifactStore.Versioned> pointer = store.readVersioned("oci/" + name + "/tags/" + reference);
             if (pointer.isEmpty()) {
                 exchange.respond(404);
@@ -419,6 +431,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     }
 
     private void tags(String name, ArtifactStore store, FormatExchange exchange) throws IOException {
+        if (!isImageName(name)) {
+            exchange.respond(404);                              // a traversal-laced image name lists no tags
+            return;
+        }
         // A withheld tag is screened out of the listing exactly as its manifest 404s on a pull: the tags/list must not
         // disclose a tag whose manifest is held (AUDIT §5/§8 - never disclose a withheld artifact, its existence
         // included). Bounded: one pointer resolve + one marker probe per tag already listed, no re-list.
@@ -455,7 +471,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
      *  migration off this repository works over the format's own protocol. */
     private void catalog(ArtifactStore store, FormatExchange exchange) throws IOException {
         List<String> repositories = new ArrayList<>();
-        images(store, "", repositories);
+        images(store, repositories);
         Collections.sort(repositories);
         String last = exchange.queryParameter("last");
         if (last != null) {
@@ -488,21 +504,33 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
 
     /** Collect every image name under the {@code oci/} prefix - a directory with a non-empty {@code tags} child.
      *  The format's own sidecar prefixes ({@code types}, {@code uploads}, {@code upload-sessions}) and the
-     *  {@code tags} leaf itself are reserved by this layout and never image-name segments. */
-    private void images(ArtifactStore store, String prefix, List<String> names) throws IOException {
-        for (String child : store.list(prefix.isEmpty() ? "oci" : "oci/" + prefix)) {
-            if (child.equals("tags") || prefix.isEmpty()
-                    && (child.equals("types") || child.equals("uploads") || child.equals("upload-sessions"))) {
-                continue;
+     *  {@code tags} leaf itself are reserved by this layout and never image-name segments.
+     *
+     *  <p>Walked with an explicit work-list, never recursion: an image name is client-controlled and multi-segment, so
+     *  a deeply nested push ({@code PUT /v2/a/a/.../a/manifests/...}) makes the {@code oci/} pointer tree arbitrarily
+     *  deep, and a recursive walk of it would overflow the call stack on a plain {@code GET /v2/_catalog} - a
+     *  {@code StackOverflowError} that slips past the {@code IOException}/{@code RuntimeException} handlers and denies
+     *  the catalog to every reader (the same reason {@code PublishedAssets.collect} is iterative). The deque holds only
+     *  the frontier of prefixes (O(depth) heap), and {@code catalog} sorts the result, so the visit order is immaterial. */
+    private void images(ArtifactStore store, List<String> names) throws IOException {
+        Deque<String> pending = new ArrayDeque<>();
+        pending.push("");                                       // the oci/ root
+        while (!pending.isEmpty()) {
+            String prefix = pending.pop();
+            for (String child : store.list(prefix.isEmpty() ? "oci" : "oci/" + prefix)) {
+                if (child.equals("tags") || prefix.isEmpty()
+                        && (child.equals("types") || child.equals("uploads") || child.equals("upload-sessions"))) {
+                    continue;
+                }
+                String name = prefix.isEmpty() ? child : prefix + "/" + child;
+                // An image is catalogued only if it has a surviving (non-withheld) tag: a fully-held image - every tag's
+                // manifest withheld - must not be disclosed in the catalog while its bytes 404 (AUDIT §5/§8), so its
+                // name is omitted just as a held tag is dropped from tags/list.
+                if (hasSurvivingTag(store, name)) {
+                    names.add(name);
+                }
+                pending.push(name);                             // descend without recursing - depth is client-controlled
             }
-            String name = prefix.isEmpty() ? child : prefix + "/" + child;
-            // An image is catalogued only if it has a surviving (non-withheld) tag: a fully-held image - every tag's
-            // manifest withheld - must not be disclosed in the catalog while its bytes 404 (AUDIT §5/§8), so its name
-            // is omitted just as a held tag is dropped from tags/list.
-            if (hasSurvivingTag(store, name)) {
-                names.add(name);
-            }
-            images(store, name, names);
         }
     }
 
@@ -929,6 +957,24 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
                     || (character >= '0' && character <= '9');
             if (index == 0 ? !alphanumeric && character != '_'
                     : !alphanumeric && character != '_' && character != '.' && character != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether an image name is a traversal-free path of Distribution name segments - each non-empty and not {@code .}
+     *  or {@code ..}, with no backslash - so a {@code ..}- or empty-segment-laced name can never aim an
+     *  {@code oci/<name>/...} key at a neighbouring key space. The in-format counterpart of {@link #isDigestHex} and
+     *  {@link #isTag} on the blob and tag paths: a multi-segment image name is the one request element that otherwise
+     *  leans on the servlet firewall alone, so it is validated here before it becomes a store key (kept minimal - only
+     *  the traversal-relevant segments - so every already-valid name still resolves). */
+    private static boolean isImageName(String name) {
+        if (name.isEmpty()) {
+            return false;
+        }
+        for (String segment : name.split("/", -1)) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..") || segment.indexOf('\\') >= 0) {
                 return false;
             }
         }

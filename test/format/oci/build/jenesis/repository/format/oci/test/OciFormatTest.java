@@ -332,6 +332,42 @@ class OciFormatTest {
         assertThat(unknown.status()).isEqualTo(404);
     }
 
+    @Test
+    void the_catalog_walk_descends_nested_image_names_iteratively() throws IOException {
+        // The _catalog walk descends the oci/ pointer tree, whose depth is a client-controlled multi-segment image
+        // name; it is walked with an explicit work-list, never recursion, so a deeply nested push cannot overflow the
+        // call stack on a plain GET /v2/_catalog (a StackOverflowError that would slip past the IOException/
+        // RuntimeException handlers and deny the catalog to every reader). Images at several nesting depths must all
+        // appear - proof the work-list visits every level and drops none.
+        push("top", "1.0", "{}".getBytes(StandardCharsets.UTF_8));
+        push("group/mid", "1.0", "{}".getBytes(StandardCharsets.UTF_8));
+        String deep = String.join("/", Collections.nCopies(40, "a"));
+        push(deep, "1.0", "{}".getBytes(StandardCharsets.UTF_8));
+
+        FakeExchange catalog = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(catalog, store);
+        assertThat(catalog.status()).isEqualTo(200);
+        assertThat(catalog.responseText()).contains("\"top\"").contains("group/mid").contains(deep);
+    }
+
+    @Test
+    void a_traversal_laced_image_name_names_no_manifest_tag_list_or_upload() throws IOException {
+        // A '..'- or empty-segment-laced image name is refused in-format before it becomes an oci/<name>/... store key
+        // - the name-side counterpart of the digest and tag guards, so the one multi-segment request element does not
+        // lean on the servlet firewall alone.
+        FakeExchange manifest = new FakeExchange("GET", "/v2/a/../evil/manifests/1.0");
+        format.handle(manifest, store);
+        assertThat(manifest.status()).as("a traversal-laced name names no manifest").isEqualTo(404);
+
+        FakeExchange tags = new FakeExchange("GET", "/v2/a/../evil/tags/list");
+        format.handle(tags, store);
+        assertThat(tags.status()).as("a traversal-laced name lists no tags").isEqualTo(404);
+
+        FakeExchange upload = new FakeExchange("POST", "/v2/a/../evil/blobs/uploads/");
+        format.handle(upload, store);
+        assertThat(upload.status()).as("a traversal-laced name opens no upload session").isEqualTo(404);
+    }
+
     private void push(String name, String reference, byte[] manifest) throws IOException {
         FakeExchange put = new FakeExchange("PUT", "/v2/" + name + "/manifests/" + reference, manifest,
                 Map.of(), Map.of("Content-Type", "application/vnd.oci.image.manifest.v1+json"));
