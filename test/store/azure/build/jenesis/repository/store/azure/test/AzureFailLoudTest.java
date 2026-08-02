@@ -1,14 +1,18 @@
 package build.jenesis.repository.store.azure.test;
 
 import module java.base;
-import module jdk.httpserver;
 import module org.junit.jupiter.api;
 import build.jenesis.repository.store.azure.AzureArtifactStore;
 import build.jenesis.repository.store.ArtifactStore;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 import com.azure.storage.blob.models.BlobStorageException;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -17,8 +21,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * {@code 403} auth failure, a {@code 503} throttle, a {@code 500}) must surface, or a published artifact silently
  * turns into a {@code 404} miss for as long as the backend misbehaves - and the dedup {@code exists()} probe on the
  * write path could then skip re-uploading it. The Azurite integration leg only reaches the {@code true}/{@code 404}
- * outcomes; this proves the non-404 branch with an in-process {@code jdk.httpserver} stub that answers every request
- * with a {@code 403}, driven through the real {@code azure-storage-blob} client. Needs no Docker, so it always runs.
+ * outcomes; this proves the non-404 branch with a WireMock stub that answers every request with a {@code 403}, driven
+ * through the real {@code azure-storage-blob} client. Needs no Docker, so it always runs.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class AzureFailLoudTest {
@@ -29,23 +33,18 @@ public class AzureFailLoudTest {
     private static final String KEY =
             "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 
-    private HttpServer server;
+    private WireMockServer server;
     private ArtifactStore store;
 
     @BeforeAll
-    public void start() throws IOException {
-        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/", exchange -> {
-            try (exchange) {
-                exchange.getRequestBody().readAllBytes();
-                // A non-404 backend fault (here a 403 AuthenticationFailed) that exists()/size() must not mistake for
-                // an absent blob. A 403 is not retried by the SDK's default policy, so the assertion is prompt.
-                exchange.getResponseHeaders().set("x-ms-error-code", "AuthenticationFailed");
-                exchange.sendResponseHeaders(403, -1);
-            }
-        });
+    public void start() {
+        server = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort());
         server.start();
-        String endpoint = "http://localhost:" + server.getAddress().getPort() + "/" + ACCOUNT;
+        // A non-404 backend fault (here a 403 AuthenticationFailed) that exists()/size() must not mistake for an absent
+        // blob. A 403 is not retried by the SDK's default policy, so the assertion is prompt.
+        server.stubFor(any(anyUrl()).willReturn(aResponse().withStatus(403)
+                .withHeader("x-ms-error-code", "AuthenticationFailed")));
+        String endpoint = "http://localhost:" + server.port() + "/" + ACCOUNT;
         String connectionString = "DefaultEndpointsProtocol=http;AccountName=" + ACCOUNT
                 + ";AccountKey=" + KEY + ";BlobEndpoint=" + endpoint + ";";
         BlobContainerClient container = new BlobServiceClientBuilder()
@@ -56,7 +55,7 @@ public class AzureFailLoudTest {
     @AfterAll
     public void stop() {
         if (server != null) {
-            server.stop(0);
+            server.stop();
         }
     }
 

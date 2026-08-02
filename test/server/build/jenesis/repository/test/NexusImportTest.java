@@ -26,7 +26,8 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
  * served by a real {@link RepositoryApplication} and the artifacts are pulled back over HTTP - the jar (byte for byte),
  * its pom, and the cross-published {@code /module/} view. The same seeded repository is then walked again with the
  * vendor-neutral {@link MavenSource} over the HTML directory index Nexus serves - no vendor API - proving the generic
- * tree walk against the real thing. Tagged {@code nexus}; self-skips when docker or mvn is absent.
+ * tree walk against the real thing. The {@code mvn} client runs from a pinned image ({@link ToolContainer}), so the
+ * test needs no host Maven. Tagged {@code nexus}; self-skips when Docker is absent.
  *
  * <p>The image is pinned to a pre-Community-Edition OSS release (3.70.x): from 3.79 the default {@code sonatype/nexus3}
  * is the Community Edition, which gates writes behind an onboarding/activation step and so cannot be seeded headlessly.
@@ -36,6 +37,7 @@ import static build.jenesis.repository.test.Requirement.requireOrSkip;
 public class NexusImportTest {
 
     private static final String IMAGE = "sonatype/nexus3:3.70.4";
+    private static final String MAVEN_IMAGE = "maven:3.9.9-eclipse-temurin-21";
     private static final String GROUP = "org.example";
     private static final String ARTIFACT = "lib";
     private static final String VERSION = "1.0";
@@ -47,6 +49,7 @@ public class NexusImportTest {
     static Path work;
 
     private GenericContainer<?> container;
+    private ToolContainer tool;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -58,7 +61,6 @@ public class NexusImportTest {
     @BeforeAll
     public void start() throws Exception {
         requireOrSkip(DockerClientFactory.instance().isDockerAvailable(), "Docker is required for the Nexus import test");
-        requireOrSkip(exec(30, null, "mvn", "-v").code() == 0, "Apache Maven (mvn) is required for the Nexus import test");
         client = HttpClient.newHttpClient();
 
         // boot a real Nexus (OSS edition) and wait for it to come up.
@@ -70,17 +72,19 @@ public class NexusImportTest {
         nexus = "http://" + container.getHost() + ":" + container.getMappedPort(8081);
         password = container.execInContainer("cat", "/nexus-data/admin.password").getStdout().strip();
 
-        // seed it with the real Maven client: deploy a modular jar into the default maven-releases repo.
+        // seed it with the real Maven client, run from a pinned image over host networking so it reaches Nexus'
+        // mapped port: deploy a modular jar into the default maven-releases repo.
         jar = automaticModuleJar(MODULE);
         Path file = work.resolve(ARTIFACT + "-" + VERSION + ".jar");
         Files.write(file, jar);
         Path settings = work.resolve("settings.xml");
         Files.writeString(settings, settings(password));
-        assertThat(exec(300, work, "mvn", "-B", "-s", settings.toString(),
-                "-Dmaven.repo.local=" + work.resolve("m2"), "deploy:deploy-file",
-                "-Dfile=" + file, "-DgroupId=" + GROUP, "-DartifactId=" + ARTIFACT, "-Dversion=" + VERSION,
-                "-Dpackaging=jar", "-DgeneratePom=true",
-                "-DrepositoryId=nexus", "-Durl=" + nexus + "/repository/maven-releases/").code())
+        tool = ToolContainer.start(MAVEN_IMAGE, work);
+        assertThat(tool.exec(Duration.ofSeconds(300), "mvn", "-B", "-s", inContainer(settings),
+                "-Dmaven.repo.local=" + inContainer(work.resolve("m2")), "deploy:deploy-file",
+                "-Dfile=" + inContainer(file), "-DgroupId=" + GROUP, "-DartifactId=" + ARTIFACT,
+                "-Dversion=" + VERSION, "-Dpackaging=jar", "-DgeneratePom=true",
+                "-DrepositoryId=nexus", "-Durl=" + nexus + "/repository/maven-releases/").exitCode())
                 .as("mvn deploy to Nexus").isZero();
 
         // migrate maven-releases from the live Components API into a filesystem store, then serve that store.
@@ -100,6 +104,9 @@ public class NexusImportTest {
 
     @AfterAll
     public void stop() throws Exception {
+        if (tool != null) {
+            tool.close();
+        }
         if (running != null) {
             running.close();
         }
@@ -166,46 +173,9 @@ public class NexusImportTest {
         return response.body();
     }
 
-    // Standard out and error are captured separately: an image pull's progress - and a platform-mismatch
-    // warning on a runner whose architecture differs from the amd64-only image - go to stderr, and merging
-    // them into stdout would corrupt the container id and port mapping read back from these commands.
-    private record Exec(int code, String stdout, String stderr) {
-        String diagnostic() {
-            return stderr.isBlank() ? stdout : stderr;
-        }
-    }
-
-    private Exec exec(int timeoutSeconds, Path cwd, String... command) throws IOException, InterruptedException {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        if (cwd != null) {
-            builder.directory(cwd.toFile());
-        }
-        Process process = builder.start();
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
-        Thread drainOut = drain(process.getInputStream(), out);
-        Thread drainErr = drain(process.getErrorStream(), err);
-        boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
-        if (!exited) {
-            process.destroyForcibly();
-        }
-        drainOut.join(Duration.ofSeconds(5));
-        drainErr.join(Duration.ofSeconds(5));
-        if (!exited) {
-            throw new IOException(command[0] + " timed out");
-        }
-        return new Exec(process.exitValue(),
-                out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
-    }
-
-    private static Thread drain(InputStream stream, ByteArrayOutputStream sink) {
-        return Thread.ofVirtual().start(() -> {
-            try (stream) {
-                stream.transferTo(sink);
-            } catch (IOException ignored) {
-                // The stream closes when the process exits; a read error here is not actionable.
-            }
-        });
+    /** The path a work-directory file has inside the client container, where {@code work} is bind-mounted at /work. */
+    private static String inContainer(Path path) {
+        return "/work/" + work.relativize(path).toString().replace(File.separatorChar, '/');
     }
 
     private static byte[] automaticModuleJar(String moduleName) throws IOException {

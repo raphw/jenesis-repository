@@ -11,18 +11,26 @@ import jakarta.servlet.http.HttpServletResponse;
 import module org.junit.jupiter.api;
 
 import module java.base;
-import java.lang.reflect.Proxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * The write branch of {@link RepositoryController#handle} answers {@code 405} on a write (PUT/POST/PATCH/DELETE) to a
  * route that is not a valid write target ({@link RepositoryRouting.Route#writable()}==false), and lets a write to a
  * writable route proceed - the seam a multi-tenant routing plugs a read-only repository into without a fork. The
- * controller is driven directly with a routing double that resolves a writable-or-not route and lightweight
- * servlet-request/response proxies, so the branch is asserted without booting the whole server. A writable route is
+ * controller is driven directly with a routing double that resolves a writable-or-not route and Mockito
+ * servlet-request/response mocks, so the branch is asserted without booting the whole server. A writable route is
  * proven to proceed past the gate by dispatching over an empty format set, which leaves the unclaimed write a
  * {@code 404} (not the {@code 405} a non-writable route short-circuits to).
+ *
+ * <p>The {@code jakarta.servlet} interfaces are mocked with Mockito's inline mock maker (the Mockito 5 default),
+ * which redefines through the instrumentation agent rather than defining a subclass in the mocked type's package -
+ * so a sealed named module like {@code jakarta.servlet} is mocked without opening it, where the older subclass maker
+ * could not.
  */
 public class RouteWritableTest {
 
@@ -51,41 +59,21 @@ public class RouteWritableTest {
         return new RepositoryController(new FixedRoute(route), empty, List.of(), ProxyFormat.Fetcher.NONE);
     }
 
-    /** The captured status the controller set on the response proxy. */
+    /** The captured status the controller set on the response mock. */
     private static final class Status {
         int value = -1;
     }
 
     private static HttpServletRequest request(String method) {
-        return (HttpServletRequest) Proxy.newProxyInstance(
-                RouteWritableTest.class.getClassLoader(), new Class<?>[]{HttpServletRequest.class},
-                (proxy, invoked, args) -> "getMethod".equals(invoked.getName())
-                        ? method : defaultValue(invoked.getReturnType()));
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getMethod()).thenReturn(method);
+        return request;
     }
 
     private static HttpServletResponse response(Status status) {
-        return (HttpServletResponse) Proxy.newProxyInstance(
-                RouteWritableTest.class.getClassLoader(), new Class<?>[]{HttpServletResponse.class},
-                (proxy, invoked, args) -> {
-                    if ("setStatus".equals(invoked.getName())) {
-                        status.value = (int) args[0];
-                        return null;
-                    }
-                    return defaultValue(invoked.getReturnType());
-                });
-    }
-
-    private static Object defaultValue(Class<?> type) {
-        if (!type.isPrimitive()) {
-            return null;
-        }
-        if (type == boolean.class) {
-            return false;
-        }
-        if (type == void.class) {
-            return null;
-        }
-        return 0;
+        HttpServletResponse response = mock(HttpServletResponse.class);
+        doAnswer(invocation -> status.value = invocation.getArgument(0)).when(response).setStatus(anyInt());
+        return response;
     }
 
     @Test

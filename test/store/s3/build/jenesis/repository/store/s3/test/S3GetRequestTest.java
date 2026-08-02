@@ -1,46 +1,58 @@
 package build.jenesis.repository.store.s3.test;
 
 import module java.base;
-import module jdk.httpserver;
 import module org.junit.jupiter.api;
 import build.jenesis.repository.store.s3.S3ArtifactStore;
 import build.jenesis.repository.store.ArtifactStore;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.head;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Proves the {@code s3} backend's GET-side wire contract without a network: an in-process {@code jdk.httpserver} stub
- * serves the sliver of the S3 XML API the store's reads touch - it holds a seeded object, records the {@code Range}
- * request header, serves the requested window on a ranged GET and a {@code NoSuchKey} 404 for an absent key - while the
- * real SDK client drives it. That pins two things the window-only assertion in {@code S3ArtifactStoreTest} cannot: that
- * a ranged read really issues a {@code Range: bytes=off-end} GET (so only the window crosses the wire, not the whole
- * blob), and that {@link ArtifactStore#open} streams a stored blob back and surfaces a missing key as an
- * {@link IOException}. The objects are seeded straight into the stub (rather than through {@code write}, whose SDK PUT
- * body is aws-chunked / checksum-trailer framed) so the GET path is exercised over exact bytes. Needs no Docker, so it
- * always runs.
+ * Proves the {@code s3} backend's GET-side wire contract without a network: a WireMock stub serves the sliver of the S3
+ * XML API the store's reads touch - a seeded object served whole or over a requested {@code Range} window, a
+ * {@code NoSuchKey} 404 for an absent key, and a non-404 HEAD fault - while the real SDK client drives it. That pins
+ * two things the window-only assertion in {@code S3ArtifactStoreTest} cannot: that a ranged read really issues a
+ * {@code Range: bytes=off-end} GET (so only the window crosses the wire, not the whole blob - asserted from the request
+ * journal), and that {@link ArtifactStore#open} streams a stored blob back and surfaces a missing key as an
+ * {@link IOException}. The objects are stubbed straight in (rather than through {@code write}, whose SDK PUT body is
+ * aws-chunked / checksum-trailer framed) so the GET path is exercised over exact bytes. Needs no Docker, so it always
+ * runs.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class S3GetRequestTest {
 
-    private HttpServer server;
+    private static final String NO_SUCH_KEY = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
+            + "<Code>NoSuchKey</Code><Message>absent</Message></Error>";
+
+    private WireMockServer server;
     private S3Client s3;
     private ArtifactStore store;
-    private final Map<String, byte[]> objects = new ConcurrentHashMap<>();
-    private final AtomicReference<String> lastRange = new AtomicReference<>();
 
     @BeforeAll
-    public void start() throws IOException {
-        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/", this::handle);
+    public void start() {
+        server = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort());
         server.start();
+        // Defaults: an absent object is a NoSuchKey 404 on GET and a bodyless 404 on HEAD. Registered stubs (higher
+        // precedence via the lower priority number) override for the seeded keys.
+        server.stubFor(get(anyUrl()).atPriority(10)
+                .willReturn(aResponse().withStatus(404).withHeader("Content-Type", "application/xml").withBody(NO_SUCH_KEY)));
+        server.stubFor(head(anyUrl()).atPriority(10).willReturn(aResponse().withStatus(404)));
         s3 = S3Client.builder()
-                .endpointOverride(URI.create("http://localhost:" + server.getAddress().getPort()))
+                .endpointOverride(URI.create("http://localhost:" + server.port()))
                 .region(Region.US_EAST_1)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("ak", "sk")))
                 .httpClient(UrlConnectionHttpClient.create())
@@ -55,46 +67,7 @@ public class S3GetRequestTest {
             s3.close();
         }
         if (server != null) {
-            server.stop(0);
-        }
-    }
-
-    private void handle(HttpExchange exchange) throws IOException {
-        try (exchange) {
-            String path = exchange.getRequestURI().getPath();
-            String key = path.startsWith("/repo/") ? path.substring("/repo/".length()) : "";
-            exchange.getRequestBody().readAllBytes();
-            if ("HEAD".equals(exchange.getRequestMethod())) {
-                // exists()/size() issue a HEAD (headObject). Only a 404 means absent; a non-404 - here a 403 auth
-                // failure, as a 503 throttle would be - must fail the request loudly, never be reported as absent.
-                exchange.sendResponseHeaders(key.endsWith("faulted") ? 403 : 404, -1);
-                return;
-            }
-            if (!"GET".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(501, -1);
-                return;
-            }
-            byte[] data = objects.get(key);
-            if (data == null) {
-                byte[] error = ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>"
-                        + "<Code>NoSuchKey</Code><Message>absent</Message></Error>")
-                        .getBytes(StandardCharsets.UTF_8);
-                exchange.sendResponseHeaders(404, error.length);
-                exchange.getResponseBody().write(error);
-                return;
-            }
-            byte[] out = data;
-            String range = exchange.getRequestHeaders().getFirst("Range");
-            if (range != null) {
-                lastRange.set(range);
-                String[] bounds = range.substring("bytes=".length()).split("-");
-                int from = Integer.parseInt(bounds[0]);
-                int to = Integer.parseInt(bounds[1]);
-                out = Arrays.copyOfRange(data, from, Math.min(to + 1, data.length));
-            }
-            exchange.getResponseHeaders().set("ETag", "\"stub\"");
-            exchange.sendResponseHeaders(200, out.length);
-            exchange.getResponseBody().write(out);
+            server.stop();
         }
     }
 
@@ -104,24 +77,34 @@ public class S3GetRequestTest {
         for (int i = 0; i < body.length; i++) {
             body[i] = (byte) i;
         }
-        objects.put("acme/blobs/ranged", body);
+        // Serve exactly the requested window for each Range the store is expected to push (a 200 with the sliced bytes,
+        // mirroring the hand-rolled stub the SDK read happily).
+        server.stubFor(get(urlPathEqualTo("/repo/acme/blobs/ranged")).atPriority(1)
+                .withHeader("Range", equalTo("bytes=10-17"))
+                .willReturn(aResponse().withStatus(200).withHeader("ETag", "\"stub\"")
+                        .withBody(Arrays.copyOfRange(body, 10, 18))));
+        server.stubFor(get(urlPathEqualTo("/repo/acme/blobs/ranged")).atPriority(1)
+                .withHeader("Range", equalTo("bytes=60-63"))
+                .willReturn(aResponse().withStatus(200).withHeader("ETag", "\"stub\"")
+                        .withBody(Arrays.copyOfRange(body, 60, 64))));
 
         ByteArrayOutputStream window = new ByteArrayOutputStream();
         store.read("blobs/ranged", new RangeOutputStream(window, 10, 8));
-        assertThat(lastRange.get())
-                .as("the store pushed a bytes=off-end Range to the wire, not a whole-object GET").isEqualTo("bytes=10-17");
+        assertThat(lastRange()).as("the store pushed a bytes=off-end Range to the wire, not a whole-object GET")
+                .isEqualTo("bytes=10-17");
         assertThat(window.toByteArray()).isEqualTo(Arrays.copyOfRange(body, 10, 18));
 
         ByteArrayOutputStream tail = new ByteArrayOutputStream();
         store.read("blobs/ranged", new RangeOutputStream(tail, 60, 4));
-        assertThat(lastRange.get()).as("the tail window is a real range to the last byte").isEqualTo("bytes=60-63");
+        assertThat(lastRange()).as("the tail window is a real range to the last byte").isEqualTo("bytes=60-63");
         assertThat(tail.toByteArray()).isEqualTo(Arrays.copyOfRange(body, 60, 64));
     }
 
     @Test
     public void open_streams_a_stored_blob_back_and_a_missing_key_throws() throws IOException {
         byte[] body = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
-        objects.put("acme/blobs/opened", body);
+        server.stubFor(get(urlPathEqualTo("/repo/acme/blobs/opened")).atPriority(1)
+                .willReturn(aResponse().withStatus(200).withHeader("ETag", "\"stub\"").withBody(body)));
         try (InputStream in = store.open("blobs/opened")) {
             assertThat(in.readAllBytes()).as("open() streams the stored bytes back").isEqualTo(body);
         }
@@ -134,14 +117,24 @@ public class S3GetRequestTest {
     public void exists_and_size_fail_loud_on_a_non_404_head() {
         // The existence screen must distinguish absent (404 -> false / -1) from a backend fault: a 403 auth failure
         // (like a 503 throttle) has to surface, or a live artifact reads as a silent 404 miss (and writeBlob's
-        // exists() dedup probe could skip re-uploading it during the outage). The stub answers a HEAD on "*/faulted"
-        // with a 403, so exists() must throw (never return false) and size() must throw IOException (never return -1).
+        // exists() dedup probe could skip re-uploading it during the outage). The stub answers a HEAD on the faulted
+        // key with a 403, so exists() must throw (never return false) and size() must throw IOException (never -1).
+        server.stubFor(head(urlPathEqualTo("/repo/acme/blobs/faulted")).atPriority(1)
+                .willReturn(aResponse().withStatus(403)));
         assertThatThrownBy(() -> store.exists("blobs/faulted"))
                 .as("a non-404 HEAD makes exists() fail loud, never report the object absent")
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> store.size("blobs/faulted"))
                 .as("a non-404 HEAD makes size() throw IOException, never return -1")
                 .isInstanceOf(IOException.class);
+    }
+
+    /** The {@code Range} header of the most recent request that carried one (events are newest-first). */
+    private String lastRange() {
+        return server.getAllServeEvents().stream()
+                .map(event -> event.getRequest().getHeader("Range"))
+                .filter(Objects::nonNull)
+                .findFirst().orElse(null);
     }
 
     /** Mirrors the server's range sink: forwards only a window of the bytes written, and is a {@link

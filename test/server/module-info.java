@@ -27,6 +27,7 @@
  * @jenesis.pin io.micrometer/micrometer-observation 1.17.0 SHA-256/2fc95a327578d3b2a81c3ff40e646a4a21e46b0153ccbbf91690142bf80d9661
  * @jenesis.pin jakarta.annotation/jakarta.annotation-api 3.0.0 SHA-256/b01f55552284cfb149411e64eabca75e942d26d2e1786b32914250e4330afaa2
  * @jenesis.pin net.bytebuddy/byte-buddy 1.18.3 SHA-256/d78396e3c5bce3f2865c9186647481e5589d34cacc632484715b686108d17c66
+ * @jenesis.pin net.bytebuddy/byte-buddy-agent 1.17.7 SHA-256/a9ba887dca252ad61b7d5153294f34e6f3bdf4b2736b04373d13615a695fc0ff
  * @jenesis.pin net.java.dev.jna/jna 5.18.1 SHA-256/260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557
  * @jenesis.pin org.apache.logging.log4j/log4j-api 2.25.4 SHA-256/c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d
  * @jenesis.pin org.apache.logging.log4j/log4j-to-slf4j 2.25.4 SHA-256/d7b78fc0aaaa5e8ada388b29d718b0ab187e512965bed0b259bb4ab299f13db2
@@ -45,6 +46,8 @@
  * @jenesis.pin org.junit.jupiter/junit-jupiter-engine 6.1.0 SHA-256/ea707b9647084619a0fc911cefb25037540d58b2800f8ead1fc6a2baf58b1da5
  * @jenesis.pin org.junit.jupiter/junit-jupiter-params 6.1.0 SHA-256/b987eea3205185a76f3659a39e67503cb7b682d8b7be03be4b9f92b710f0eec0
  * @jenesis.pin org.junit.platform.console 6.1.0
+ * @jenesis.pin org.mockito/mockito-core 5.23.0 SHA-256/ae295bebd5d11fab97ab297815dc7617188b86003cbce3dfd5c0d5c3a6cc4a0c
+ * @jenesis.pin org.objenesis/objenesis 3.3 SHA-256/02dfd0b0439a5591e35b708ed2f5474eb0948f53abf74637e959b8e4ef69bfeb
  * @jenesis.pin org.junit.platform/junit-platform-commons 6.1.0 SHA-256/1d9046ab17ec7edafb0bc7945d2e59d7180fff4f28c734b823b51001e769f71b
  * @jenesis.pin org.junit.platform/junit-platform-console 6.1.0 SHA-256/715f2e54d39e02edd76c33e934341c0562769955e9ad7682898623e73485a729
  * @jenesis.pin org.junit.platform/junit-platform-engine 6.1.0 SHA-256/3fb6be76c26ab0f94fe084e3fd0a39e1d25e22129929a61b29bd80a052b93ea5
@@ -124,7 +127,6 @@ open module build.jenesis.repository.test {
     requires tools.jackson.databind;
     requires org.apache.tomcat.embed.core;
     requires java.net.http;
-    requires jdk.httpserver;
     requires org.slf4j;
     requires ch.qos.logback.classic;
     requires ch.qos.logback.core;
@@ -136,6 +138,7 @@ open module build.jenesis.repository.test {
     requires jdk.net;
     requires wiremock.standalone;
     requires org.testcontainers;
+    requires org.mockito;
     // WSPI.2 (b): the two publication hooks are one discovered seam - a PublishInterceptor IS a PublicationObserver,
     // so the screen fixtures register through the single PublicationObserver clause and Publication splits them into
     // the verdict chain by instanceof.

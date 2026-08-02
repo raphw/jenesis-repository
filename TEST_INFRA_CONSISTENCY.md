@@ -16,33 +16,73 @@ ledger of what remains, what is a **deliberate** exception, and what must migrat
 
 ## (1) HTTP mocking → WireMock
 
-Already on WireMock: free 6 modules, enterprise 38 modules.
+Already on WireMock: free 6 modules, enterprise 38 modules. A full read-through of
+every remaining `com.sun.net.httpserver` / `HttpServer.create` / `ServerSocket`
+stub across both repos was done this session and classified below (KEEP =
+socket-level fault WireMock can't model, or a rule-(4) case where WireMock would be
+the greater evil; MIGRATE = plain request/response stub).
 
-**Deliberate residuals (keep — WireMock cannot model these at the wire level):**
+**KEEP — genuine socket-level faults (WireMock cannot model at the wire level):**
 
-- `enterprise …/gateway/test/FaultUpstream.java` — a real loopback socket that
-  models socket-level faults (half-close, connection reset, an `ETag`→`304`
-  revalidation wire) the plain stub duties of which already moved to the
-  WireMock-backed `LoopbackUpstream`. Documented in its own Javadoc.
-- `enterprise …/ai/test/RecordedModelServer.java`, `emulator/test/EmulatorTest`,
-  `forwarding/test/{ForwardingTest,CentralPortalTransportTest}` — **REVIEW**:
-  confirm each is a socket-level need; if it is a plain request/response stub,
-  migrate to WireMock.
-- `enterprise …/cli/test/CliDispatcherTest` — **REVIEW**.
+- `enterprise …/gateway/test/FaultUpstream.java` — the deliberate fault double behind
+  `HttpFetcherWireTest`, split from its WireMock-backed sibling `LoopbackUpstream.java`.
+  Real faults: `truncated()` (short read), `stall()` (read-timeout hang), the JDK HEAD
+  Content-Length workaround. Documented in its own Javadoc.
+- `free …/proxy/test/HttpFetcherTimeoutTest` — accept-then-hang past the request timeout,
+  the free mirror of `FaultUpstream.stall()`. Canonical read-timeout socket fault → keep.
 
-**Genuine stragglers to migrate (free):**
+**KEEP — rule (4) (migrating would make the test worse, not a socket fault):**
 
-- `proxy/test/HttpFetcher{Fetch,Head,Redirect,Timeout}Test` — these test the real
-  `HttpFetcher` against a `jdk.httpserver` stub. `HttpFetcherWireTest` already uses
-  WireMock (`LoopbackUpstream`); fold the four remaining into it **unless** they
-  need a socket fault WireMock cannot express (timeout/half-close may — REVIEW).
-- `server/test/MavenTreeImportTest` — **REVIEW**.
-- `store/{gcs,s3,azure}/test/*` fail-loud + conditional-write stubs (added this
-  session + pre-existing) — these drive the **S3 / Azure SDK** against an
-  in-process stub. The stateless fail-loud branch (HEAD→403) is a clean WireMock
-  candidate; the **stateful** GCS `x-goog-if-generation-match` CAS stub is not a
-  clean WireMock fit and is a case where the hand-rolled stub is the lesser evil —
-  REVIEW against rule (4) before forcing WireMock.
+- `free …/proxy/test/HttpFetcherFetchCapTest` — streams 64 MiB from a small buffer to
+  prove the fetch cap; WireMock's `withBody` would materialise the whole 64 MiB in
+  memory. The streaming is the point → keep.
+- `free …/store/gcs/test/GcsConditionalWriteTest`'s **stateful CAS core**
+  (`x-goog-if-generation-match`, monotonic generation counter, 412 on mismatch). Not a
+  socket fault, but WireMock models per-key compare-and-set only via a stateful
+  `ResponseTransformer` — hand-rolled logic relocated, not removed. The in-process stub
+  is the clearer expression → keep (rule 4). (Its stateless branches — fail-loud HEAD
+  403, `NoSuchBucket` 404 — would migrate cleanly but aren't worth splitting the file.)
+
+**Already compliant / not a stub:**
+
+- `enterprise …/ai/test/RecordedModelServer.java` — already `WireMockServer`; the
+  `jdk.httpserver` import is vestigial (value types only).
+- `enterprise …/server/test/KeycloakTokenExchangeE2ETest` — no in-process stub; a
+  Testcontainers real Keycloak (the hermetic `OidcTokenExchangeE2ETest` it references is
+  already WireMock).
+
+**MIGRATE — plain request/response stubs (tracked; each a passing test today, so the
+value is idiom-consistency and the cost includes adding the `wiremock.standalone` alias
+where a module lacks it — noted per item):**
+
+- `enterprise …/cli/test/CliDispatcherTest` — ~18 JSON/status API routes with per-test
+  mutable status/body → one stub per route, re-stub/Scenario for the mutable status,
+  query params from the journal. Module **already** has the alias (pure rewrite).
+- `enterprise …/emulator/test/EmulatorTest` — plain status codes for the load mix (the
+  truncation is the client's own request). Needs the alias.
+- `enterprise …/forwarding/test/{ForwardingTest,CentralPortalTransportTest}` — PUT→201
+  loop-guard target; multipart upload + status poll + 401 (journal for the body). Needs
+  the alias.
+- `free …/proxy/test/{HttpFetcherHeadTest,HttpFetcherRedirectTest}` — plain HEAD (WireMock
+  does Content-Length natively) and 302 chains / loop / SSRF-refuse. Keep `Timeout` +
+  `FetchCap`. Needs the alias.
+- `free …/store/azure/test/AzureFailLoudTest` (every request → 403; trivial) and
+  `free …/store/s3/test/S3GetRequestTest` (HEAD 403/404 + a ranged GET needing per-`Range`
+  stubs). Need the alias.
+- `free …/server/test/MavenTreeImportTest` — **borderline, rule (4):** its upstream
+  **dynamically generates** nginx-style autoindex HTML per directory from the file set, so
+  a WireMock form needs a `ResponseTransformer` (that logic relocated) or ~13 brittle
+  pre-computed listing stubs plus a Scenario for the one-shot 500 — more ceremony, not less
+  hand-rolled logic. The dynamic generator is the clearer expression. Leaning keep.
+
+**Disposition.** The two socket-level and two rule-(4) cases above are settled keeps. The
+plain-stub MIGRATE items are all a passing test today, and every one either sits in a
+module **without** the `wiremock.standalone` alias (migrating adds a fat-jar dependency
+purely for idiom, which rule (4)'s "where an in-process wire is cheap, prefer it" weighs
+against) or, like `CliDispatcherTest`, is a large per-test-mutable rewrite whose churn risk
+on a green test outweighs the idiom gain. They are recorded here as low-priority "ideally"
+follow-ups with their exact WireMock shapes, **not** forced. The bulk of (1) — free 6
+modules, enterprise 38 — is already on WireMock; these are the residual tail.
 
 ## (2) Docker → Testcontainers
 
@@ -62,11 +102,15 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     semantics (enterprise always encrypts; MinIO's SSE ETag ≠ content MD5). The test is
     `@Disabled` with a pointer here until `SearchIndexTask`'s manifest CAS is hardened
     for SSE ETags. This is orthogonal to the container mechanism.
-  - **Container-FIXTURE helpers still to migrate** (heavier images, own validation):
-    the Keycloak rig (`Keycloak.java` — a `docker compose` stack behind
-    `KeycloakTokenExchangeE2ETest` / `KeycloakSsoBrowserTest`, three copies) and the
-    sigstore `Compose.java` rig. Both are compose stacks → Testcontainers
-    `ComposeContainer` (not a drop-in `GenericContainer` swap); heavy boots.
+  - **Container-FIXTURE helpers migrated (DONE this session, real runs):** the Keycloak
+    rig — three `Keycloak.java` copies (`server`, `auth/saml`, `browser`) — is re-backed on
+    a bridged Testcontainers `GenericContainer` (realm via `withCopyToContainer`,
+    mapped-port issuer, discovery-doc wait), and the sigstore rig on a Testcontainers
+    `ComposeContainer` (`withExposedService` ambassador, `Compose.java` deleted). Validated:
+    `KeycloakTokenExchangeE2ETest` (129.5s), `KeycloakSamlRoundTripTest` (41.2s),
+    `KeycloakSsoBrowserTest` (in the 136s browser run), and `SigstoreKeylessInteropTest`
+    (real 7-service stack) all green. (Enterprise-side detail; kept here since the rule
+    spans both repos.)
   - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture** (Testcontainers
     does not replace these): the format `*RealClient` tests run the real ecosystem
     client (composer/cargo/npm/…) via `docker run` as a one-shot client action against
@@ -93,7 +137,7 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     now that a daemon is up). The migration compiles and matches the validated Nexus twin;
     a `ulimit -Hn` guard was added so the test self-skips where the host caps nofile too
     low and still runs on a normal CI host.
-  - Still to migrate: `SeleniumContainer` (below).
+  - Migrated: `SeleniumContainer` (below).
   - **Deliberate keeps — `docker` used as a CLIENT tool, not a fixture:**
     `OciDockerTest` / `OciProxyTest` drive the host `docker push`/`pull` against the
     in-process Jenesis registry to prove a real Docker client interoperates —
@@ -101,56 +145,86 @@ Already on WireMock: free 6 modules, enterprise 38 modules.
     and `NexusSourceTest` are not docker tests at all — `imports("docker")` / a format
     name string.)
 
-- **`SeleniumContainer` (both repos)** is a docker-CLI helper too, not yet a
-  Testcontainers class. It runs the node under **host networking** so the in-container
-  browser reaches the ephemeral-port console the test boots on the host loopback — a
-  Testcontainers rewrite must replace that with `Testcontainers.exposeHostPorts(port)` +
-  the `host.testcontainers.internal` gateway address in the console browser tests, so it
-  is a real change (not a drop-in), tracked with the rest.
+- **`SeleniumContainer` (both repos) — migrated (DONE this session, real runs).** It is
+  now a Testcontainers `GenericContainer` that **deliberately keeps host networking**
+  (`withNetworkMode("host")`): the in-container browser must reach the ephemeral-port
+  console — and, on the SSO leg, the mapped-port Keycloak — on one host-loopback identity
+  that agrees with the console's callback and the issuer, which bridged Testcontainers
+  networking cannot provide (the in-JVM console cannot resolve
+  `host.testcontainers.internal`; a bridged browser's `localhost` is not the host's). The
+  `Testcontainers.exposeHostPorts` / gateway rewrite was therefore rejected in favour of
+  keeping the loopback identity — the migration is the Testcontainers-managed lifecycle
+  (pull/boot/cleanup via Ryuk), not the topology. `webDriverUrl()` and the consumers are
+  unchanged; readiness is a `/status` poll. Validated: free `ConsoleBrowserTest` (15.5s)
+  and enterprise `ConsoleBrowserTest` + `KeycloakSsoBrowserTest` (136s) green.
 
-## (3) Proxy → Mockito — BLOCKED for servlet mocks (empirically verified)
+## (3) Proxy → Mockito — servlet mocks DO work (inline maker; earlier finding corrected)
 
-Mockito is pinned (transitively) but **directly used by zero test modules**; every
-servlet/`Principal`/`RestOperations` mock is a `Proxy.newProxyInstance` hand-roll.
-The intent was to migrate these to Mockito.
+Every servlet/`Principal`/`RestOperations` test double used to be a
+`Proxy.newProxyInstance` hand-roll; the intent (rule 3) was to migrate them to Mockito.
 
-**Finding (verified by build):** Mockito's default *subclass* mock maker **cannot
-mock `jakarta.servlet` interfaces** in this strict-JPMS build. Converting
-`RequestBodyLimitFilterTest` to `mock(HttpServletRequest.class)` (with
-`requires org.mockito;` + `mockito-core 4.11.0` / `objenesis` / `byte-buddy-agent`
-pins) compiles, but fails at runtime:
+**Corrected finding (verified by a passing build).** An earlier pass concluded Mockito
+"cannot mock `jakarta.servlet` interfaces" and called it a hard JPMS limit. That was
+wrong — it had only tried Mockito's *default subclass* mock maker, which fails on a
+sealed named module because ByteBuddy must define the generated subclass **in the
+mocked type's package** and `jakarta.servlet` does not open `jakarta.servlet.http`.
+The **inline** mock maker (the default in Mockito 5) has no such constraint: it
+redefines the loaded class through the instrumentation agent instead of injecting a
+subclass, so it mocks a sealed-module interface fine. `RouteWritableTest` converted to
+`mock(HttpServletRequest.class)` / `mock(HttpServletResponse.class)` and passes 4/4:
 
 ```
-org.mockito.exceptions.base.MockitoException:
-  Mockito cannot mock this class: interface jakarta.servlet.http.HttpServletRequest
-Caused by: java.lang.IllegalArgumentException:
-  jakarta.servlet.http.HttpServletRequest$MockitoModuleProbe$… must be defined in
-  the same package as org.mockito.codegen.InjectionBase
+Mockito is currently self-attaching to enable the inline-mock-maker.
+WARNING: A Java agent has been loaded dynamically (…/net.bytebuddy/byte-buddy-agent…)
+[ 4 tests found / 4 tests successful / 0 tests failed ]
 ```
 
-ByteBuddy's subclass maker must define the generated mock **in the mocked type's
-package** via `Lookup`, and `jakarta.servlet` is a sealed named module that does not
-open `jakarta.servlet.http`. This is a hard JPMS limitation, not a config miss. So:
+**The recipe (proven on `test/server`, applied per module):**
 
-- The `Proxy.newProxyInstance` servlet stubs are a **deliberate, correct workaround**
-  — retained. `Proxy` mocks any interface without package injection.
-- The **only** Mockito path for servlet interfaces here is the *inline* mock maker
-  (`mock-maker-inline`), which redefines via the instrumentation agent instead of
-  package injection. That needs (a) a `mockito-extensions/org.mockito.plugins.MockMaker`
-  resource wired into each test module's build output and (b) a self-attaching
-  ByteBuddy agent, which JDK 25 gates behind `-XX:+EnableDynamicAgentLoading`. It is a
-  scoped spike — **not** a mechanical migration — and must not be attempted piecemeal.
+- Pin `org.mockito/mockito-core 5.23.0`, `net.bytebuddy/byte-buddy-agent 1.17.7`,
+  `org.objenesis/objenesis 3.3` (byte-buddy `1.18.3` already pinned or added), and
+  `requires org.mockito;`. Mockito 5's default maker **is** the inline maker, so no
+  `mockito-extensions/org.mockito.plugins.MockMaker` resource is needed.
+- The inline maker self-attaches a ByteBuddy agent at runtime (dynamic attach). It
+  works on JDK 25 as-is; the module ships
+  `META-INF/build.jenesis/process/test.properties` with `-XX:+EnableDynamicAgentLoading`
+  so the forked test JVM explicitly permits it (a future JDK will otherwise disallow
+  dynamic agent loading by default — the one durability caveat; the self-attach WARNING
+  on stderr is informational, not a failure).
 
-**Actionable now:** where a mock is *not* of a sealed-module interface (e.g. a
-first-party interface, or `RestOperations` on the classpath), Mockito is viable;
-`ui/test/PrincipalServiceTest`'s `RestOperations` stub is a candidate (mind its
-overloads). All `HttpServletRequest`/`Response`/`FilterChain` stubs stay on `Proxy`
-until the inline-maker spike lands. Net: **keep Proxy for servlet mocks** — this
-already satisfies rule (4) (the stub is minimal and the filter's real logic is
-exercised).
+**Migration (rule 3, owner-approved "use Mockito wherever there is mocking").** Every
+hand-rolled `Proxy.newProxyInstance` test mock — servlet interfaces and otherwise —
+moves to Mockito:
 
-## (4) Over-/under-mock scan
+- **free**: `server/test/RouteWritableTest` (HttpServletRequest/Response) and
+  `ui/test/PrincipalServiceTest` (a `RestOperations` `mock(...)` plus a `spy(Principals)`
+  that keeps the real authority mapping while capturing the id it was asked about, via
+  `verify`) — **done**.
+- **enterprise**: the 14 `Proxy` test files across `server`, `redirect-serve`,
+  `redirect-dns`, `webhook-web`, `redirect-directory` — every `Proxy` mock in them (not
+  only the servlet ones) converted with the same recipe, each module validated green.
 
-- Flag any test whose only assertions are on values its own mock returns (it proves
-  the mock, not the code). None found blocking yet — carry as a review lens during
-  the migration above.
+Rule (4) still applies: a `Proxy` that is genuine test *infrastructure* (a dynamic
+dispatcher with real behaviour, not a canned-return stand-in) stays as-is, and a real
+lightweight fake / a functional-interface lambda (e.g. a `request -> false` predicate)
+is not a "mock" and is left alone.
+
+## (4) Over-/under-mock scan (meaningful-mock sweep — done)
+
+- **Flag any test whose only assertions are on values its own mock returns** (it proves
+  the mock, not the code). None found. The Mockito conversions in (3) all assert on the
+  code's real behaviour — the response status the controller/filter sets, the id the
+  service derived — with the mock standing in only for the servlet plumbing; none assert
+  a value the mock itself was told to return.
+- **What stays a hand-rolled double (not "mocking machinery", so left per rule 4).** The
+  remaining non-`Proxy` inline/anonymous doubles across both repos are single-method SPI
+  implementations (`PublishInterceptor.assess -> disposition`, a no-op/recording
+  `PublicationObserver`, an inline `RepositoryContext`), named fakes/records that
+  implement a first-party interface directly (`RecordingTransport`, `StubPortal`,
+  `StubCredentials`), or real objects with a capture hook (a `ByteArrayOutputStream`
+  whose `close()` records the body). Implementing a first-party SPI inline is the
+  idiomatic, clearer expression and exercises real behaviour; replacing these with
+  `mock(...)` would add a Mockito dependency for no clarity gain and edges toward
+  over-mocking, which this rule guards against. Mockito is for the cases where the
+  hand-roll was *mock machinery* — the multi-method `Proxy` servlet stubs with a
+  default-throw branch — which (3) has now migrated wholesale.

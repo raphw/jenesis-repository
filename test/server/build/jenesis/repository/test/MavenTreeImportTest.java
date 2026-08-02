@@ -1,7 +1,6 @@
 package build.jenesis.repository.test;
 
 import build.jenesis.repository.server.RepositoryApplication;
-import module jdk.httpserver;
 import module org.junit.jupiter.api;
 
 import module java.base;
@@ -9,15 +8,26 @@ import module java.net.http;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse.BodyHandlers;
 
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.extension.ResponseDefinitionTransformerV2;
+import com.github.tomakehurst.wiremock.http.ResponseDefinition;
+import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.any;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Drives the vendor-neutral {@code maven} migration over HTTP against a plain JDK {@code HttpServer} serving a Maven
- * tree with generated autoindex pages - no Nexus, no Artifactory, no vendor API: the proof that any server exposing
- * the Maven layout is a migration source. A {@code POST /admin/import} walks the directory listing in the background
- * and the artifacts are then served, with metadata and checksum sidecars left behind; a walk whose subtree listing
- * fails once records a {@code tree:} cursor and a second {@code POST} naming the job resumes past the completed
- * subtree; and a URL whose host does not answer at all is rejected up front with a {@code 400}.
+ * Drives the vendor-neutral {@code maven} migration over HTTP against a WireMock upstream serving a Maven tree with
+ * generated autoindex pages - no Nexus, no Artifactory, no vendor API: the proof that any server exposing the Maven
+ * layout is a migration source. A {@code POST /admin/import} walks the directory listing in the background and the
+ * artifacts are then served, with metadata and checksum sidecars left behind; a walk whose subtree listing fails once
+ * records a {@code tree:} cursor and a second {@code POST} naming the job resumes past the completed subtree; and a URL
+ * whose host does not answer at all is rejected up front with a {@code 400}. The autoindex generation and the one-shot
+ * subtree failure are a WireMock response transformer over the seeded file set - the "any Maven-layout server"
+ * behaviour the hand-rolled stub expressed, without a {@code jdk.httpserver}.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class MavenTreeImportTest {
@@ -25,7 +35,7 @@ public class MavenTreeImportTest {
     @TempDir
     static Path root;
 
-    private HttpServer upstream;
+    private WireMockServer upstream;
     private RepositoryApplication.Running running;
     private HttpClient client;
     private String base;
@@ -34,7 +44,7 @@ public class MavenTreeImportTest {
     private final AtomicBoolean betaFailedOnce = new AtomicBoolean();
 
     @BeforeAll
-    public void setUp() throws IOException {
+    public void setUp() {
         System.setProperty("JENESIS_STORE_ROOT", root.toString());
 
         files.put("/steady/org/acme/one/1.0/one-1.0.jar", "first jar".getBytes(StandardCharsets.UTF_8));
@@ -44,24 +54,11 @@ public class MavenTreeImportTest {
         files.put("/flaky/alpha/a/1.0/a-1.0.jar", "alpha jar".getBytes(StandardCharsets.UTF_8));
         files.put("/flaky/beta/b/1.0/b-1.0.jar", "beta jar".getBytes(StandardCharsets.UTF_8));
 
-        upstream = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        url = "http://localhost:" + upstream.getAddress().getPort();
-        upstream.createContext("/", exchange -> {
-            String path = exchange.getRequestURI().getPath();
-            byte[] file = files.get(path);
-            if (file != null) {
-                respond(exchange, 200, file);
-            } else if (path.endsWith("/")) {
-                if (path.equals("/flaky/beta/") && betaFailedOnce.compareAndSet(false, true)) {
-                    respond(exchange, 500, new byte[0]);
-                } else {
-                    listing(exchange, path);
-                }
-            } else {
-                respond(exchange, 404, new byte[0]);
-            }
-        });
+        upstream = new WireMockServer(WireMockConfiguration.options().bindAddress("localhost").dynamicPort()
+                .extensions(new MavenTree(files, betaFailedOnce)));
         upstream.start();
+        upstream.stubFor(any(anyUrl()).willReturn(aResponse()));
+        url = "http://localhost:" + upstream.port();
 
         // Auth now defaults on; this test exercises the feature, not authorization, so pin the anonymous
         // (auth=false) opt-out to preserve its intent - the request path stays unauthenticated.
@@ -74,31 +71,10 @@ public class MavenTreeImportTest {
         base = "http://localhost:" + running.port() + "/repository";
     }
 
-    /** A plain autoindex page: the direct children of the directory, each a relative link, as nginx would render. */
-    private void listing(HttpExchange exchange, String path) throws IOException {
-        TreeSet<String> children = new TreeSet<>();
-        for (String key : files.keySet()) {
-            if (key.startsWith(path)) {
-                String rest = key.substring(path.length());
-                int slash = rest.indexOf('/');
-                children.add(slash < 0 ? rest : rest.substring(0, slash + 1));
-            }
-        }
-        if (children.isEmpty()) {
-            respond(exchange, 404, new byte[0]);
-            return;
-        }
-        StringBuilder page = new StringBuilder("<html><body><h1>Index of " + path + "</h1><a href=\"../\">../</a>");
-        for (String child : children) {
-            page.append("<a href=\"").append(child).append("\">").append(child).append("</a>");
-        }
-        respond(exchange, 200, page.append("</body></html>").toString().getBytes(StandardCharsets.UTF_8));
-    }
-
     @AfterAll
     public void tearDown() {
         running.close();
-        upstream.stop(0);
+        upstream.stop();
         System.clearProperty("JENESIS_STORE_ROOT");
         System.clearProperty("jenesis.repository.auth");
         System.clearProperty("jenesis.repository.block-private-import-hosts");
@@ -178,12 +154,67 @@ public class MavenTreeImportTest {
         return json.substring(start, json.indexOf('"', start));
     }
 
-    private static void respond(HttpExchange exchange, int status, byte[] body) throws IOException {
-        exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            if (body.length > 0) {
-                out.write(body);
+    /**
+     * The "any Maven-layout server" upstream: a seeded file served at its exact path, an nginx-style autoindex page
+     * generated for a directory path, a one-shot {@code 500} for the {@code /flaky/beta/} subtree (so a walk fails once
+     * and resumes), and a {@code 404} otherwise - a 1:1 port of the former hand-rolled handler.
+     */
+    private static final class MavenTree implements ResponseDefinitionTransformerV2 {
+
+        private final Map<String, byte[]> files;
+        private final AtomicBoolean betaFailedOnce;
+
+        private MavenTree(Map<String, byte[]> files, AtomicBoolean betaFailedOnce) {
+            this.files = files;
+            this.betaFailedOnce = betaFailedOnce;
+        }
+
+        @Override
+        public String getName() {
+            return "maven-tree";
+        }
+
+        @Override
+        public boolean applyGlobally() {
+            return true;
+        }
+
+        @Override
+        public ResponseDefinition transform(ServeEvent event) {
+            String requestUrl = event.getRequest().getUrl();
+            String path = requestUrl.indexOf('?') < 0 ? requestUrl : requestUrl.substring(0, requestUrl.indexOf('?'));
+            byte[] file = files.get(path);
+            if (file != null) {
+                return aResponse().withStatus(200).withBody(file).build();
             }
+            if (path.endsWith("/")) {
+                if (path.equals("/flaky/beta/") && betaFailedOnce.compareAndSet(false, true)) {
+                    return aResponse().withStatus(500).build();
+                }
+                return listing(path);
+            }
+            return aResponse().withStatus(404).build();
+        }
+
+        /** A plain autoindex page: the direct children of the directory, each a relative link, as nginx would render. */
+        private ResponseDefinition listing(String path) {
+            TreeSet<String> children = new TreeSet<>();
+            for (String key : files.keySet()) {
+                if (key.startsWith(path)) {
+                    String rest = key.substring(path.length());
+                    int slash = rest.indexOf('/');
+                    children.add(slash < 0 ? rest : rest.substring(0, slash + 1));
+                }
+            }
+            if (children.isEmpty()) {
+                return aResponse().withStatus(404).build();
+            }
+            StringBuilder page = new StringBuilder("<html><body><h1>Index of " + path + "</h1><a href=\"../\">../</a>");
+            for (String child : children) {
+                page.append("<a href=\"").append(child).append("\">").append(child).append("</a>");
+            }
+            return aResponse().withStatus(200)
+                    .withBody(page.append("</body></html>").toString().getBytes(StandardCharsets.UTF_8)).build();
         }
     }
 }
