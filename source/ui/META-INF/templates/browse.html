@@ -76,6 +76,12 @@
                 <td th:text="${e.folder} ? 'folder' : 'artifact'">type</td>
                 <td class="app-list__num" th:text="${e.size}">—</td>
             </tr>
+            <tr th:if="${truncated}">
+                <td colspan="3" th:text="'Showing the first ' + ${cap}
+                        + ' entries in this folder; navigate into a subfolder to see more.'">
+                    Showing the first entries in this folder.
+                </td>
+            </tr>
         </th:block>
         </tbody>
     </table>

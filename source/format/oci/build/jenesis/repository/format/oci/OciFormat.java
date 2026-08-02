@@ -170,8 +170,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             }
             String id = UUID.randomUUID().toString();
             // Record when the session opened so the reaper can age it out if it is streamed into but never finalized.
-            store.write(SESSIONS + id, new ByteArrayInputStream(
-                    Long.toString(clock.millis()).getBytes(StandardCharsets.UTF_8)));
+            writeSession(store, id, clock.millis(), 0L, 0L);
             exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/uploads/" + id);
             exchange.setResponseHeader("Docker-Upload-UUID", id);
             exchange.setResponseHeader("Range", "0-0");
@@ -180,10 +179,10 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         }
         String id = session.startsWith("/") ? session.substring(1) : session;
         if (method.equals("PATCH")) {
-            append(store, id, exchange.requestStream());
+            long uploaded = append(store, id, exchange.requestStream());
             exchange.setResponseHeader("Location", "/v2/" + name + "/blobs/uploads/" + id);
             exchange.setResponseHeader("Docker-Upload-UUID", id);
-            exchange.setResponseHeader("Range", "0-" + (uploaded(store, id) - 1));
+            exchange.setResponseHeader("Range", "0-" + (uploaded - 1));
             exchange.respond(202);
             return;
         }
@@ -200,19 +199,52 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         exchange.respond(404);
     }
 
-    /** Stream one received chunk straight to its own object under the upload session, indexed by its arrival order,
-     *  so a chunked docker push never accumulates the growing layer in memory. */
-    private static void append(ArtifactStore store, String id, InputStream chunk) throws IOException {
-        store.write("oci/uploads/" + id + "/" + store.list("oci/uploads/" + id).size(), chunk);
+    /** Stream one received chunk straight to its own object under the upload session, indexed by its arrival order, so
+     *  a chunked docker push never accumulates the growing layer in memory. The session marker carries the running
+     *  chunk count and received-byte total, advanced by one write here, so neither the next chunk index nor the
+     *  received-bytes total needs a full re-list / re-sum of the staged chunks per {@code PATCH} - an N-chunk push
+     *  stays O(N), not O(N^2), store round-trips (the old per-PATCH re-sum cost ~N^2/2 {@code HEAD}s on an object
+     *  store). Returns the running byte total for the {@code Range} header. */
+    private long append(ArtifactStore store, String id, InputStream chunk) throws IOException {
+        long[] session = session(store, id);
+        long timestamp = session[0] == 0L ? clock.millis() : session[0];   // a stray chunk with no POST starts the clock
+        long index = session[1];
+        store.write("oci/uploads/" + id + "/" + index, chunk);
+        long size = Math.max(store.size("oci/uploads/" + id + "/" + index), 0L);
+        long bytes = session[2] + size;
+        writeSession(store, id, timestamp, index + 1, bytes);
+        return bytes;
     }
 
-    /** The bytes received for this upload session so far - the sum of its chunk sizes - for the {@code Range} header. */
-    private static long uploaded(ArtifactStore store, String id) throws IOException {
-        long total = 0;
-        for (String index : store.list("oci/uploads/" + id)) {
-            total += store.size("oci/uploads/" + id + "/" + index);
+    /** The session marker as {@code [openMillis, chunkCount, byteTotal]}, all-zero when no marker is present. The
+     *  first line is the open timestamp {@link #reap} ages the session out on; the chunk count and byte total follow,
+     *  advanced per chunk by {@link #append} so the next index and {@code Range} total are read, never re-scanned. */
+    private static long[] session(ArtifactStore store, String id) throws IOException {
+        Optional<ArtifactStore.Versioned> marker = store.readVersioned(SESSIONS + id);
+        if (marker.isEmpty()) {
+            return new long[] {0L, 0L, 0L};
         }
-        return total;
+        String[] lines = new String(marker.get().content(), StandardCharsets.UTF_8).trim().split("\n", -1);
+        return new long[] {sessionField(lines, 0), sessionField(lines, 1), sessionField(lines, 2)};
+    }
+
+    private static long sessionField(String[] lines, int index) {
+        if (index >= lines.length) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(lines[index].trim());
+        } catch (NumberFormatException malformed) {
+            return 0L;
+        }
+    }
+
+    /** Write the session marker: the open timestamp on the first line (what {@link #reap} reads), then the running
+     *  chunk count and received-byte total {@link #append} advances per chunk. */
+    private static void writeSession(ArtifactStore store, String id, long openMillis, long count, long bytes)
+            throws IOException {
+        store.write(SESSIONS + id, new ByteArrayInputStream(
+                (openMillis + "\n" + count + "\n" + bytes).getBytes(StandardCharsets.UTF_8)));
     }
 
     /** The session's chunks concatenated in arrival order as one stream, each opened only once the previous is
@@ -263,8 +295,9 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             }
             Instant startedAt;
             try {
-                startedAt = Instant.ofEpochMilli(Long.parseLong(
-                        new String(marker.get().content(), StandardCharsets.UTF_8).trim()));
+                // The open timestamp is the marker's first line; the chunk count and byte total follow it.
+                String first = new String(marker.get().content(), StandardCharsets.UTF_8).trim().split("\n", 2)[0];
+                startedAt = Instant.ofEpochMilli(Long.parseLong(first.trim()));
             } catch (NumberFormatException malformed) {
                 continue; // a marker we cannot read as a timestamp is left for an operator, never blindly reaped
             }

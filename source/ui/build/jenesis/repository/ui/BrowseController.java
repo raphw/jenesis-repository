@@ -52,9 +52,11 @@ public class BrowseController {
     @GetMapping("/browse")
     public String browse(@RequestParam(name = "path", defaultValue = "") String path, Model model) throws IOException {
         String safe = sanitize(path);
-        List<Map<String, Object>> entries = children(safe);
+        Listing listing = children(safe);
         model.addAttribute("path", safe);
-        model.addAttribute("entries", entries);
+        model.addAttribute("entries", listing.entries());
+        model.addAttribute("truncated", listing.truncated());
+        model.addAttribute("cap", MAX_CHILDREN);
         model.addAttribute("crumbs", crumbs(safe));
         model.addAttribute("hasParent", !safe.isEmpty());
         model.addAttribute("parent", parent(safe));
@@ -64,7 +66,10 @@ public class BrowseController {
     /** The lazy-children fragment: just the child rows under {@code path}, fetched on demand when a folder expands. */
     @GetMapping("/browse/children")
     public String children(@RequestParam(name = "path", defaultValue = "") String path, Model model) throws IOException {
-        model.addAttribute("entries", children(sanitize(path)));
+        Listing listing = children(sanitize(path));
+        model.addAttribute("entries", listing.entries());
+        model.addAttribute("truncated", listing.truncated());
+        model.addAttribute("cap", MAX_CHILDREN);
         return "browse :: rows";
     }
 
@@ -121,29 +126,63 @@ public class BrowseController {
         return escaped.toString();
     }
 
-    /** The immediate children under a (sanitized) browse path, each classified folder-vs-artifact with a size. */
-    private List<Map<String, Object>> children(String path) throws IOException {
+    /** A page of immediate children under a browse path plus whether the directory held more than the render cap. */
+    private record Listing(List<Map<String, Object>> entries, boolean truncated) {
+    }
+
+    /** The most immediate children a single browse renders. A directory with an enormous fan-out (a repo with a
+     *  million top-level packages, or a coordinate with hundreds of thousands of timestamped versions) is navigated
+     *  into, not scrolled, so the console caps what it materialises rather than building - and rendering - the whole
+     *  set in heap. */
+    private static final int MAX_CHILDREN = 1000;
+
+    /** The immediate children under a (sanitized) browse path, each classified folder-vs-artifact with a size - paged
+     *  and capped so a high-fan-out directory can never materialise a millions-entry {@code List} (or fire a store
+     *  round-trip per child) and OOM the console. */
+    private Listing children(String path) throws IOException {
         String prefix = path.isEmpty() ? ROOT : ROOT + "/" + path;
         int depth = path.isEmpty() ? 1 : path.split("/").length + 1;
         List<Map<String, Object>> entries = new ArrayList<>();
-        for (String name : store.list(prefix)) {
-            if (path.isEmpty() && name.equals(QUARANTINE)) {
-                // The withheld-artifact review subtree is not part of the served namespace: it never appears in the
-                // root folder listing (sanitize also refuses to navigate into it), so a browse discloses only the paths
-                // and sizes a GET would - the same confinement the /assets export's walk applies.
-                continue;
-            }
-            String childPath = path.isEmpty() ? name : path + "/" + name;
-            boolean folder = !store.list(ROOT + "/" + childPath).isEmpty();
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("name", name);
-            entry.put("path", childPath);
-            entry.put("folder", folder);
-            entry.put("depth", depth);
-            entry.put("size", folder ? "—" : size("/" + childPath));
-            entries.add(entry);
+        // Page the immediate children (one past the cap, to detect truncation) instead of materialising the whole
+        // directory as one List; a real backend seeks rather than re-lists. The withheld-review subtree is never part
+        // of the served namespace, so it is skipped at the root exactly as before.
+        try {
+            store.page(prefix, "", MAX_CHILDREN + 1, name -> {
+                if (path.isEmpty() && name.equals(QUARANTINE)) {
+                    return;
+                }
+                String childPath = path.isEmpty() ? name : path + "/" + name;
+                try {
+                    boolean folder = hasChild(ROOT + "/" + childPath);
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("name", name);
+                    entry.put("path", childPath);
+                    entry.put("folder", folder);
+                    entry.put("depth", depth);
+                    entry.put("size", folder ? "—" : size("/" + childPath));
+                    entries.add(entry);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         }
-        return entries;
+        boolean truncated = entries.size() > MAX_CHILDREN;
+        if (truncated) {
+            entries.remove(entries.size() - 1);
+        }
+        return new Listing(entries, truncated);
+    }
+
+    /** Whether a prefix has at least one immediate child, tested with a bounded one-element page rather than listing
+     *  (and discarding) the child's entire subtree just to check emptiness - so classifying a child as a folder is a
+     *  single seek, not O(its own child count) round-trips (the old {@code list(...).isEmpty()} was a full subtree
+     *  scan per child, quadratic across a large directory). */
+    private boolean hasChild(String prefix) {
+        boolean[] any = {false};
+        store.page(prefix, "", 1, name -> any[0] = true);
+        return any[0];
     }
 
     /** The human-readable stored size of the blob a published request path points at, or {@code —} when unknown. */

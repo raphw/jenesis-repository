@@ -120,6 +120,43 @@ class OciFormatTest {
     }
 
     @Test
+    void chunked_upload_advances_the_range_from_the_marker_without_re_scanning_staged_chunks() throws IOException {
+        // Each PATCH advances the received-byte Range from the session marker, NOT by re-listing and re-summing every
+        // staged chunk (which was O(N^2) store round-trips over an N-chunk push - ~N^2/2 HEADs on an object store).
+        // The counting store proves no PATCH lists the chunk directory: the running total is read from the marker.
+        CountingUploadsList counting = new CountingUploadsList(store);
+        FakeExchange begin = new FakeExchange("POST", "/v2/app/blobs/uploads/");
+        format.handle(begin, counting);
+        String id = begin.responseHeader("Docker-Upload-UUID");
+
+        byte[] chunk = "0123456789".getBytes(StandardCharsets.UTF_8);   // 10 bytes per chunk
+        counting.reset();
+        for (int i = 1; i <= 5; i++) {
+            FakeExchange patch = new FakeExchange("PATCH", "/v2/app/blobs/uploads/" + id, chunk);
+            format.handle(patch, counting);
+            assertThat(patch.status()).isEqualTo(202);
+            assertThat(patch.responseHeader("Range")).as("the Range reflects the running byte total")
+                    .isEqualTo("0-" + (i * 10 - 1));
+        }
+        assertThat(counting.uploadsListings())
+                .as("no PATCH re-lists the staged chunks - the running total is read from the session marker")
+                .isZero();
+
+        byte[] full = new byte[50];
+        for (int i = 0; i < 5; i++) {
+            System.arraycopy(chunk, 0, full, i * 10, 10);
+        }
+        String hex = sha256(full);
+        FakeExchange put = new FakeExchange("PUT", "/v2/app/blobs/uploads/" + id, new byte[0],
+                Map.of("digest", "sha256:" + hex), Map.of());
+        format.handle(put, counting);
+        assertThat(put.status()).as("the layer finalizes from the staged chunks").isEqualTo(201);
+        FakeExchange get = new FakeExchange("GET", "/v2/app/blobs/sha256:" + hex);
+        format.handle(get, counting);
+        assertThat(get.responseBytes()).as("the reassembled layer is byte-for-byte the pushed chunks").isEqualTo(full);
+    }
+
+    @Test
     void a_stale_un_finalized_upload_session_is_reaped_after_its_ttl() throws IOException {
         MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
         OciFormat reaping = new OciFormat(clock, Duration.ofHours(24));
@@ -641,5 +678,83 @@ class OciFormatTest {
         format.proxy(new FakeExchange("GET", "/v2/app/manifests/1.0",
                 new byte[0], Map.of(), Map.of("Accept", MANIFEST_TYPE)), store, UPSTREAM, fetcher);
         assertThat(hits.get()).as("a re-pull re-hits upstream - nothing was cached").isEqualTo(2);
+    }
+
+    /** A store decorator that counts how many times the chunk directory ({@code oci/uploads/<id>}) is listed, so a
+     *  test can prove a chunked upload's per-PATCH cost never re-scans the staged chunks. Everything else delegates. */
+    private static final class CountingUploadsList implements ArtifactStore {
+
+        private final ArtifactStore delegate;
+        private int uploadsListings;
+
+        private CountingUploadsList(ArtifactStore delegate) {
+            this.delegate = delegate;
+        }
+
+        private void reset() {
+            uploadsListings = 0;
+        }
+
+        private int uploadsListings() {
+            return uploadsListings;
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            if (prefix.startsWith("oci/uploads/")) {
+                uploadsListings++;
+            }
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            delegate.delete(key);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
     }
 }
