@@ -68,33 +68,41 @@ public final class PublishedAssets {
      * does.
      */
     public void walk(String after, int cap, Visitor visitor) throws IOException {
-        collect("", after, cap, new int[]{0}, visitor);
+        collect(after, cap, new int[]{0}, visitor);
     }
 
-    private void collect(String relative, String after, int cap, int[] emitted, Visitor visitor) throws IOException {
-        if (emitted[0] >= cap) {
-            return;
-        }
-        List<String> children = store.list(relative.isEmpty() ? ROOT : ROOT + "/" + relative);
-        if (children.isEmpty()) {
-            if (!relative.isEmpty()) {
-                emit(relative, after, emitted, visitor);
-            }
-            return;
-        }
-        for (String child : children) {
+    private void collect(String after, int cap, int[] emitted, Visitor visitor) throws IOException {
+        // Iterative work-list, not recursion: a published request-path's depth is client-controlled (the deploy
+        // controller only rejects '..', not depth), so a deeply nested deploy would otherwise overflow the stack on
+        // every catalogue / export walk - a durable StackOverflowError that slips past the IOException/RuntimeException
+        // handlers. Pushing a node's eligible children in reverse pops them in store-list (emission) order, so the walk
+        // yields the exact pre-order DFS the paging cursor (skip/compare) assumes. Mirrors StoreStaging.collect.
+        Deque<String> pending = new ArrayDeque<>();
+        pending.push("");
+        while (!pending.isEmpty()) {
             if (emitted[0] >= cap) {
                 return;
             }
-            if (relative.isEmpty() && child.equals(QUARANTINE)) {
-                // The quarantine review subtree is stored but never served; it is not an enumerable asset.
+            String relative = pending.pop();
+            List<String> children = store.list(relative.isEmpty() ? ROOT : ROOT + "/" + relative);
+            if (children.isEmpty()) {
+                if (!relative.isEmpty()) {
+                    emit(relative, after, emitted, visitor);
+                }
                 continue;
             }
-            String childRelative = relative.isEmpty() ? child : relative + "/" + child;
-            if (skip(childRelative, after)) {
-                continue;
+            for (int index = children.size() - 1; index >= 0; index--) {
+                String child = children.get(index);
+                if (relative.isEmpty() && child.equals(QUARANTINE)) {
+                    // The quarantine review subtree is stored but never served; it is not an enumerable asset.
+                    continue;
+                }
+                String childRelative = relative.isEmpty() ? child : relative + "/" + child;
+                if (skip(childRelative, after)) {
+                    continue;
+                }
+                pending.push(childRelative);
             }
-            collect(childRelative, after, cap, emitted, visitor);
         }
     }
 
