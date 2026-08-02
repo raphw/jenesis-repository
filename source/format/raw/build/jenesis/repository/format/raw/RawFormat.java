@@ -109,8 +109,27 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat, Repositor
     }
 
     private void listing(String path, ArtifactStore store, FormatExchange exchange) throws IOException {
-        List<String> children = store.list("publish" + path.substring(0, path.length() - 1));
+        String prefix = "publish" + path.substring(0, path.length() - 1);
+        List<String> children = store.list(prefix);
         if (children.isEmpty()) {
+            exchange.respond(404);
+            return;
+        }
+        // The directory listing must not disclose a leaf a GET/HEAD would not serve: located() applies the withheld
+        // (quarantine/retraction) screens, so a withheld artifact 404s on GET but its pointer name still lives under
+        // publish/, and writing every child verbatim leaked the existence - and the name - of a withheld artifact.
+        // Screen each leaf the same way the item routes do. A child that is itself a directory (it has its own
+        // children under publish/) is a sub-listing, not a servable leaf, so it is kept unconditionally; a leaf is
+        // kept only when located() resolves it (published, blob present, not withheld).
+        Publication publication = new Publication(store);
+        List<String> visible = new ArrayList<>();
+        for (String child : children) {
+            boolean directory = !store.list(prefix + "/" + child).isEmpty();
+            if (directory || publication.located(path + child).isPresent()) {
+                visible.add(child);
+            }
+        }
+        if (visible.isEmpty()) {
             exchange.respond(404);
             return;
         }
@@ -120,7 +139,7 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat, Repositor
             writer.writeDTD("<!DOCTYPE html>");
             writer.writeStartElement("html");
             writer.writeStartElement("body");
-            for (String child : children) {
+            for (String child : visible) {
                 writer.writeStartElement("a");
                 writer.writeAttribute("href", child);
                 writer.writeCharacters(child);

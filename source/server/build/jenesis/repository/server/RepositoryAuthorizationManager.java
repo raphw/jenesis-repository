@@ -42,17 +42,30 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
         String required = method.equals("GET") || method.equals("HEAD")
                 ? Authorization.REPOSITORY_READ
                 : Authorization.REPOSITORY_WRITE;
+        String uri = request.getRequestURI();
         String scope = request.getHeader("Jenesis-Repository-Name");
         // The asset enumeration scopes the store it reads by the ?repo= parameter, not the routed name, so authorize
         // the repository that is actually enumerated - otherwise a key scoped to repository A could satisfy the header
         // check for A and then read repository B by passing repo=B. Read the parameter only for that GET route (never
         // on an upload path, where touching getParameter could drain a form-encoded body). When repo is absent the
         // controller falls back to the routed name, which is exactly this header, so the scopes stay in lock-step.
-        if ("/api/assets".equals(request.getRequestURI())) {
+        if ("/api/assets".equals(uri)) {
             String repo = request.getParameter("repo");
             if (repo != null && !repo.isBlank()) {
                 scope = repo;
             }
+        }
+        // GET /api/logs and GET /api/consistency serve DEPLOYMENT-WIDE content - every repository's / every tenant's log
+        // lines (logger names + messages carrying other scopes' coordinates, paths, errors) and the whole fleet's
+        // per-node consistency state. Authorizing them against the caller's self-named Jenesis-Repository-Name lets a
+        // key scoped to a single repository read every other scope's content by naming its own repository (a cross-scope
+        // leak, the same class the /api/assets ?repo re-scope closes). Bind them to the deployment-wide scope "*"
+        // instead, so only a key holding a wildcard (deployment-wide) grant may read them - a repository-scoped key is
+        // refused. A "*" grant still reads the whole view (the intended deployment-observability feature); a per-repo
+        // grant no longer does.
+        if (("GET".equals(method) || "HEAD".equals(method))
+                && ("/api/logs".equals(uri) || "/api/consistency".equals(uri))) {
+            scope = "*";
         }
         String key = request.getHeader("Jenesis-Repository-Key");
         // Reuse the router's own resolution of the in-repository path (the request URI with the /repository prefix

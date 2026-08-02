@@ -28,6 +28,7 @@ public class RecentLogsE2ETest {
     private HttpClient client;
     private String root;
     private String reader;
+    private String scoped;
     private String bogus;
 
     @BeforeAll
@@ -39,6 +40,8 @@ public class RecentLogsE2ETest {
         Authorization authorization = Authorization.enforcing(backend);
         reader = Authorization.mint("acme");
         authorization.grant(reader, "*", Authorization.REPOSITORY_READ);
+        scoped = Authorization.mint("acme");
+        authorization.grant(scoped, "acme-repo", Authorization.REPOSITORY_READ);   // read on ONE repository, not "*"
         bogus = Authorization.mint("acme");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
@@ -60,9 +63,18 @@ public class RecentLogsE2ETest {
         assertThat(send("/api/logs", bogus).statusCode()).as("an unprovisioned key -> 403").isEqualTo(403);
 
         HttpResponse<String> ok = send("/api/logs", reader);
-        assertThat(ok.statusCode()).as("a repository:read key reads the tail").isEqualTo(200);
+        assertThat(ok.statusCode()).as("a deployment-wide (*) read key reads the tail").isEqualTo(200);
         assertThat(ok.body()).as("the read is the recent-logs tail document")
                 .contains("\"cursor\"").contains("\"count\"").contains("\"entries\"");
+    }
+
+    @Test
+    public void a_key_scoped_to_one_repository_cannot_read_the_deployment_wide_logs() throws Exception {
+        // The tail is deployment-wide (every repository's log lines). A key granted read on ONE repository, not "*",
+        // must not read it by naming its own repository - that is a cross-scope content leak. The route is authorized
+        // against the deployment-wide scope "*", so only a wildcard grant satisfies it.
+        assertThat(send("/api/logs", scoped).statusCode())
+                .as("a repository-scoped read key is refused the deployment-wide logs").isEqualTo(403);
     }
 
     @Test

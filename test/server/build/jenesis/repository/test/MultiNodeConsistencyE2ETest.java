@@ -29,6 +29,7 @@ public class MultiNodeConsistencyE2ETest {
     private HttpClient client;
     private String root;
     private String reader;
+    private String scoped;
     private String bogus;
 
     @BeforeAll
@@ -42,6 +43,8 @@ public class MultiNodeConsistencyE2ETest {
         Authorization authorization = Authorization.enforcing(backend);
         reader = Authorization.mint("acme");
         authorization.grant(reader, "*", Authorization.REPOSITORY_READ);
+        scoped = Authorization.mint("acme");
+        authorization.grant(scoped, "acme-repo", Authorization.REPOSITORY_READ);   // read on ONE repository, not "*"
         bogus = Authorization.mint("acme");
         server = RepositoryApplication.start(0);
         client = HttpClient.newHttpClient();
@@ -63,7 +66,16 @@ public class MultiNodeConsistencyE2ETest {
     public void the_consistency_endpoint_is_key_gated() throws Exception {
         assertThat(send(null).statusCode()).as("no key -> 401").isEqualTo(401);
         assertThat(send(bogus).statusCode()).as("an unprovisioned key -> 403").isEqualTo(403);
-        assertThat(send(reader).statusCode()).as("a repository:read key reads the fleet view").isEqualTo(200);
+        assertThat(send(reader).statusCode()).as("a deployment-wide (*) read key reads the fleet view").isEqualTo(200);
+    }
+
+    @Test
+    public void a_key_scoped_to_one_repository_cannot_read_the_deployment_wide_fleet_view() throws Exception {
+        // The fleet view is deployment-wide (every node's per-repository consistency state). A key granted read on ONE
+        // repository, not "*", must not read it by naming its own repository - that is a cross-scope content leak. The
+        // route is authorized against the deployment-wide scope "*", so only a wildcard grant satisfies it.
+        assertThat(send(scoped).statusCode())
+                .as("a repository-scoped read key is refused the deployment-wide fleet view").isEqualTo(403);
     }
 
     @Test
