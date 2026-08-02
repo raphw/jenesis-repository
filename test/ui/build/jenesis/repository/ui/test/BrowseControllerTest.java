@@ -60,6 +60,30 @@ class BrowseControllerTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void a_leaf_a_get_would_not_serve_is_screened_out_of_the_browse() throws IOException {
+        // The browse must disclose only what a GET would serve: a leaf whose blob is absent (a withheld/retracted
+        // artifact, or a pointer whose blob a garbage collection reclaimed) resolves located() to empty and 404s on a
+        // GET, so its name and tree position must NOT appear in the browse - the same screen the raw listing applies.
+        // A live sibling stays listed; a sub-directory is kept unconditionally.
+        publication.link("/com/example/live-1.0.jar", store.writeBlob(
+                new ByteArrayInputStream("live".getBytes(StandardCharsets.UTF_8))));
+        publication.link("/com/example/gone-1.0.jar",
+                "0000000000000000000000000000000000000000000000000000000000000000");   // pointer to a blob that is gone
+        publication.link("/com/example/nested/b-1.0.jar", store.writeBlob(
+                new ByteArrayInputStream("b".getBytes(StandardCharsets.UTF_8))));
+
+        BrowseController controller = new BrowseController(store);
+        Model model = new ConcurrentModel();
+        controller.browse("com/example", model);
+
+        List<Map<String, Object>> entries = (List<Map<String, Object>>) model.getAttribute("entries");
+        assertThat(entries).extracting(e -> e.get("name"))
+                .as("the dangling leaf is screened out; the live leaf and the sub-directory stay")
+                .containsExactlyInAnyOrder("live-1.0.jar", "nested");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void a_directory_larger_than_the_render_cap_is_capped_and_flagged_truncated() throws IOException {
         String hash = store.writeBlob(new ByteArrayInputStream("x".getBytes(StandardCharsets.UTF_8)));
         for (int i = 0; i < 1001; i++) {   // one past the render cap

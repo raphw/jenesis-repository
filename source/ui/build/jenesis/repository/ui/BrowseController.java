@@ -143,23 +143,44 @@ public class BrowseController {
         String prefix = path.isEmpty() ? ROOT : ROOT + "/" + path;
         int depth = path.isEmpty() ? 1 : path.split("/").length + 1;
         List<Map<String, Object>> entries = new ArrayList<>();
+        int[] seen = {0};
         // Page the immediate children (one past the cap, to detect truncation) instead of materialising the whole
         // directory as one List; a real backend seeks rather than re-lists. The withheld-review subtree is never part
-        // of the served namespace, so it is skipped at the root exactly as before.
+        // of the served namespace, so it is skipped at the root. A leaf is disclosed only when located() resolves it
+        // (published, blob present, not withheld) - the same serve-screen the raw listing and the /assets export
+        // apply, so the browse never leaks the name or tree position of an artifact a GET would 404: a retracted or
+        // quarantined artifact, or a pointer whose blob a garbage collection reclaimed. A sub-directory is kept
+        // unconditionally (it is a listing, not a servable leaf). `seen` counts the raw children so a screened-out
+        // leaf can never hide the truncation flag (it stays keyed on the store's child count, not the rendered rows).
         try {
             store.page(prefix, "", MAX_CHILDREN + 1, name -> {
                 if (path.isEmpty() && name.equals(QUARANTINE)) {
                     return;
                 }
+                seen[0]++;
+                if (entries.size() >= MAX_CHILDREN) {
+                    return;                              // render cap reached; keep counting `seen` for truncation
+                }
                 String childPath = path.isEmpty() ? name : path + "/" + name;
                 try {
                     boolean folder = hasChild(ROOT + "/" + childPath);
+                    String size;
+                    if (folder) {
+                        size = "—";
+                    } else {
+                        Optional<String> located = publication.located("/" + childPath);
+                        if (located.isEmpty()) {
+                            return;                      // a leaf a GET would not serve: do not disclose its name
+                        }
+                        long bytes = store.size(located.get());
+                        size = bytes < 0 ? "—" : humanSize(bytes);
+                    }
                     Map<String, Object> entry = new LinkedHashMap<>();
                     entry.put("name", name);
                     entry.put("path", childPath);
                     entry.put("folder", folder);
                     entry.put("depth", depth);
-                    entry.put("size", folder ? "—" : size("/" + childPath));
+                    entry.put("size", size);
                     entries.add(entry);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
@@ -168,10 +189,7 @@ public class BrowseController {
         } catch (UncheckedIOException e) {
             throw e.getCause();
         }
-        boolean truncated = entries.size() > MAX_CHILDREN;
-        if (truncated) {
-            entries.remove(entries.size() - 1);
-        }
+        boolean truncated = seen[0] > MAX_CHILDREN;
         return new Listing(entries, truncated);
     }
 
@@ -183,16 +201,6 @@ public class BrowseController {
         boolean[] any = {false};
         store.page(prefix, "", 1, name -> any[0] = true);
         return any[0];
-    }
-
-    /** The human-readable stored size of the blob a published request path points at, or {@code —} when unknown. */
-    private String size(String requestPath) throws IOException {
-        String key = publication.located(requestPath).orElse(null);
-        if (key == null) {
-            return "—";
-        }
-        long bytes = store.size(key);
-        return bytes < 0 ? "—" : humanSize(bytes);
     }
 
     /** The breadcrumb trail: a clickable root plus one crumb per accumulated path segment (the last is the current). */
