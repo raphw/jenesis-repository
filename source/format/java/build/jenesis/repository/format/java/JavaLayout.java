@@ -12,16 +12,33 @@ public final class JavaLayout {
     private JavaLayout() {
     }
 
+    /** The most decompressed bytes read from a single jar entry the inspection materialises (the manifest and the
+     *  {@code module-info.class}). Both are small metadata - a few KB - so a far larger entry is a decompression bomb:
+     *  a crafted jar whose tiny stored blob inflates a high-ratio {@code MANIFEST.MF} to gigabytes would otherwise be
+     *  buffered whole in heap here (an OOM DoS on the shared JVM on every jar publish). Over the cap the entry is
+     *  ignored (treated as no module) rather than inflated unbounded. */
+    private static final int MAX_METADATA_ENTRY = 1 << 20;
+
     /** The module name a jar declares - its {@code module-info} name, or its {@code Automatic-Module-Name} - or null
-     *  when it carries neither (a plain jar, not a module). The jar is read as a stream (typically opened back from
-     *  storage after the blob was streamed in), so the artifact is never buffered whole in memory to be inspected. */
+     *  when it carries neither (a plain jar, not a module). The jar is walked as a stream (typically opened back from
+     *  storage after the blob was streamed in), so the artifact is never buffered whole in memory; the only entries read
+     *  into heap - the manifest and {@code module-info.class} - are each size-capped ({@link #MAX_METADATA_ENTRY}), so a
+     *  decompression bomb in either cannot inflate unbounded. Other entries are streamed past, never materialised. */
     public static String moduleName(InputStream jar) {
-        try (JarInputStream in = new JarInputStream(jar)) {
-            String automatic = in.getManifest() == null ? null
-                    : in.getManifest().getMainAttributes().getValue("Automatic-Module-Name");
-            for (JarEntry entry; (entry = in.getNextJarEntry()) != null; ) {
+        try (ZipInputStream in = new ZipInputStream(jar)) {
+            String automatic = null;
+            for (ZipEntry entry; (entry = in.getNextEntry()) != null; ) {
                 if (entry.getName().equals("module-info.class")) {
-                    return ModuleDescriptor.read(in).name();
+                    byte[] descriptor = bounded(in);
+                    if (descriptor != null) {
+                        return ModuleDescriptor.read(ByteBuffer.wrap(descriptor)).name();
+                    }
+                } else if (entry.getName().equals("META-INF/MANIFEST.MF")) {
+                    byte[] bytes = bounded(in);
+                    if (bytes != null) {
+                        automatic = new Manifest(new ByteArrayInputStream(bytes))
+                                .getMainAttributes().getValue("Automatic-Module-Name");
+                    }
                 }
             }
             // A module-info name is JVM-validated by read(); an Automatic-Module-Name is a raw manifest string that
@@ -31,6 +48,22 @@ public final class JavaLayout {
         } catch (IOException | RuntimeException _) {
             return null;
         }
+    }
+
+    /** The current zip entry's decompressed bytes, or null once they exceed {@link #MAX_METADATA_ENTRY} - so a
+     *  high-ratio decompression bomb is abandoned at the cap instead of inflated whole into heap. */
+    private static byte[] bounded(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        for (int read; (read = in.read(buffer)) != -1; ) {
+            total += read;
+            if (total > MAX_METADATA_ENTRY) {
+                return null;                                    // over the cap: a bomb, ignore this entry
+            }
+            out.write(buffer, 0, read);
+        }
+        return out.toByteArray();
     }
 
     /** The name if it is a legal Java module name (dot-separated Java identifiers), else null. Uses the JDK's own

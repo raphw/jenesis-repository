@@ -50,6 +50,31 @@ class JavaLayoutTest {
     }
 
     @Test
+    void module_name_ignores_a_decompression_bomb_manifest_instead_of_buffering_it() throws IOException {
+        // A crafted jar whose tiny stored blob inflates a high-ratio MANIFEST.MF past the metadata cap must not be
+        // buffered whole in heap (an OOM DoS on the shared JVM on every jar publish). The oversized manifest is
+        // ignored - so its Automatic-Module-Name is never read - and moduleName returns null rather than inflating
+        // gigabytes. Without the cap this jar would read the whole manifest and return "com.example.bomb".
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (JarOutputStream jar = new JarOutputStream(bytes)) {
+            jar.putNextEntry(new JarEntry("META-INF/MANIFEST.MF"));
+            jar.write("Manifest-Version: 1.0\r\nAutomatic-Module-Name: com.example.bomb\r\n"
+                    .getBytes(StandardCharsets.UTF_8));
+            byte[] pad = new byte[64 * 1024];
+            Arrays.fill(pad, (byte) 'a');                       // a single repeated byte deflates to ~nothing
+            for (int written = 0; written < 4 * 1024 * 1024; written += pad.length) {
+                jar.write(pad);                                 // ~4 MiB inflated, far past the 1 MiB metadata cap
+            }
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("com/example/Foo.class"));
+            jar.write(new byte[]{1, 2, 3});
+            jar.closeEntry();
+        }
+        assertThat(JavaLayout.moduleName(new ByteArrayInputStream(bytes.toByteArray())))
+                .as("the oversized manifest is ignored, not read for its module name").isNull();
+    }
+
+    @Test
     void module_name_is_null_for_a_stream_that_is_not_a_jar() {
         assertThat(JavaLayout.moduleName(new ByteArrayInputStream("not a jar".getBytes(StandardCharsets.UTF_8))))
                 .isNull();
