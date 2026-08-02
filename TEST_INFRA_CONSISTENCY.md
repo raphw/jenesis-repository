@@ -209,8 +209,22 @@ dispatcher with real behaviour, not a canned-return stand-in) stays as-is, and a
 lightweight fake / a functional-interface lambda (e.g. a `request -> false` predicate)
 is not a "mock" and is left alone.
 
-## (4) Over-/under-mock scan
+## (4) Over-/under-mock scan (meaningful-mock sweep — done)
 
-- Flag any test whose only assertions are on values its own mock returns (it proves
-  the mock, not the code). None found blocking yet — carry as a review lens during
-  the migration above.
+- **Flag any test whose only assertions are on values its own mock returns** (it proves
+  the mock, not the code). None found. The Mockito conversions in (3) all assert on the
+  code's real behaviour — the response status the controller/filter sets, the id the
+  service derived — with the mock standing in only for the servlet plumbing; none assert
+  a value the mock itself was told to return.
+- **What stays a hand-rolled double (not "mocking machinery", so left per rule 4).** The
+  remaining non-`Proxy` inline/anonymous doubles across both repos are single-method SPI
+  implementations (`PublishInterceptor.assess -> disposition`, a no-op/recording
+  `PublicationObserver`, an inline `RepositoryContext`), named fakes/records that
+  implement a first-party interface directly (`RecordingTransport`, `StubPortal`,
+  `StubCredentials`), or real objects with a capture hook (a `ByteArrayOutputStream`
+  whose `close()` records the body). Implementing a first-party SPI inline is the
+  idiomatic, clearer expression and exercises real behaviour; replacing these with
+  `mock(...)` would add a Mockito dependency for no clarity gain and edges toward
+  over-mocking, which this rule guards against. Mockito is for the cases where the
+  hand-roll was *mock machinery* — the multi-method `Proxy` servlet stubs with a
+  default-throw branch — which (3) has now migrated wholesale.
