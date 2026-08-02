@@ -192,18 +192,22 @@ WARNING: A Java agent has been loaded dynamically (…/net.bytebuddy/byte-buddy-
   dynamic agent loading by default — the one durability caveat; the self-attach WARNING
   on stderr is informational, not a failure).
 
-**Migration (rule 3, "Full migration" — owner-approved).** All servlet-interface
-`Proxy` stubs move to Mockito:
+**Migration (rule 3, owner-approved "use Mockito wherever there is mocking").** Every
+hand-rolled `Proxy.newProxyInstance` test mock — servlet interfaces and otherwise —
+moves to Mockito:
 
-- **free**: `server/test/RouteWritableTest` — **done** (the exemplar above).
-- **enterprise**: the 14 servlet-`Proxy` test files across `server`, `redirect-serve`,
-  `redirect-dns`, `webhook-web`, `redirect-directory` — converted with the same recipe,
-  each module validated green.
+- **free**: `server/test/RouteWritableTest` (HttpServletRequest/Response) and
+  `ui/test/PrincipalServiceTest` (a `RestOperations` `mock(...)` plus a `spy(Principals)`
+  that keeps the real authority mapping while capturing the id it was asked about, via
+  `verify`) — **done**.
+- **enterprise**: the 14 `Proxy` test files across `server`, `redirect-serve`,
+  `redirect-dns`, `webhook-web`, `redirect-directory` — every `Proxy` mock in them (not
+  only the servlet ones) converted with the same recipe, each module validated green.
 
-**Remaining rule-3 item (not a servlet mock):** `free ui/test/PrincipalServiceTest`
-still stubs `RestOperations` (a classpath Spring interface — the subclass maker would
-already handle it) via `Proxy`; converting it is a separate small follow-up (mind its
-overloaded `exchange`/`getForObject` signatures when stubbing).
+Rule (4) still applies: a `Proxy` that is genuine test *infrastructure* (a dynamic
+dispatcher with real behaviour, not a canned-return stand-in) stays as-is, and a real
+lightweight fake / a functional-interface lambda (e.g. a `request -> false` predicate)
+is not a "mock" and is left alone.
 
 ## (4) Over-/under-mock scan
 
