@@ -146,14 +146,34 @@ public final class MavenMetadata {
         StringBuilder rebuilt = new StringBuilder(xml.length() + reconciled.size() * 32);
         rebuilt.append(xml, 0, open).append("<versions>");
         for (String version : reconciled) {
-            rebuilt.append('\n').append(baseIndent).append("  <version>").append(version).append("</version>");
+            // Escape the version text exactly as the StAX derivation path does (element() -> writeCharacters): a version
+            // is a published folder name off store.list, so it is attacker-controlled and may legitimately carry an
+            // ampersand (a valid path/filename char) or an angle bracket. Appended raw it would emit malformed XML - a
+            // bare '&' breaks every fetching client's metadata parse (a self-inflicted index DoS) - or inject markup.
+            rebuilt.append('\n').append(baseIndent).append("  <version>").append(xmlText(version))
+                    .append("</version>");
         }
         rebuilt.append('\n').append(baseIndent).append("</versions>");
         rebuilt.append(xml, selfClosed ? contentStart : contentEnd + "</versions>".length(), xml.length());
         return rebuilt.toString().getBytes(StandardCharsets.UTF_8);
     }
 
-    /** The {@code <version>} texts a {@code <versions>} block already lists, in document order. */
+    /** Escape a text node for the hand-built reconcile document - the character-data escapes {@code XMLStreamWriter
+     *  .writeCharacters} applies on the derivation path, so both paths treat a version folder name identically. */
+    private static String xmlText(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** Reverse of {@link #xmlText} - decode the character-data escapes so a version parsed out of the stored document
+     *  is compared and re-emitted in the same raw form as a folder name off {@code store.list}. Without this, a stored
+     *  {@code &amp;} would fail to dedupe against its raw folder twin (listing it twice) and would be double-escaped
+     *  ({@code &amp;amp;}) on re-emit. {@code &amp;} is decoded last so an escaped entity never decodes twice. */
+    private static String xmlUnescape(String text) {
+        return text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+    }
+
+    /** The {@code <version>} texts a {@code <versions>} block already lists, in document order, decoded to their raw
+     *  form so they line up with the folder names {@link #versions} returns. */
     private static List<String> listedVersions(String inner) {
         List<String> listed = new ArrayList<>();
         int cursor = 0;
@@ -166,7 +186,7 @@ public final class MavenMetadata {
             if (end < 0) {
                 return listed;
             }
-            listed.add(inner.substring(start + "<version>".length(), end).trim());
+            listed.add(xmlUnescape(inner.substring(start + "<version>".length(), end).trim()));
             cursor = end + "</version>".length();
         }
     }

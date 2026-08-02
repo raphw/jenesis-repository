@@ -97,6 +97,35 @@ class MavenMetadataTest {
         assertThat(xml).contains("<release>2.0</release>");
     }
 
+    @Test
+    void the_reconcile_path_escapes_a_version_folder_name_with_xml_special_characters() throws IOException {
+        // The opt-in compute/reconcile path rebuilds the <versions> block by hand from store.list folder names, which
+        // are attacker-controlled and may carry an ampersand (a valid path/filename char). Appended raw it would emit a
+        // bare '&' - malformed XML that every fetching Maven client fails to parse (a self-inflicted index DoS) - or
+        // inject markup. The reconcile path must escape exactly as the StAX derivation path (serve) does.
+        store = ArtifactStoreProvider.resolve("filesystem",
+                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+        Publication publication = new Publication(store);
+        publication.link("/maven/org/example/lib/1.0/lib-1.0.jar", "abc1");
+        publication.link("/maven/org/example/lib/a&b/lib-a&b.jar", "abc2");   // a version folder with a raw ampersand
+        String stored = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata>\n  <groupId>org.example</groupId>\n"
+                + "  <artifactId>lib</artifactId>\n  <versioning>\n    <versions>\n      <version>1.0</version>\n"
+                + "    </versions>\n  </versioning>\n</metadata>\n";
+        publication.link("/maven/org/example/lib/maven-metadata.xml",
+                publication.storeBlob(new ByteArrayInputStream(stored.getBytes(StandardCharsets.UTF_8))));
+        metadata = new MavenMetadata(store);
+
+        String xml = new String(metadata.computed("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).as("the missing version folder is reconciled in, XML-escaped")
+                .contains("<version>a&amp;b</version>");
+        assertThat(xml).as("never a bare ampersand that breaks the served document")
+                .doesNotContain("<version>a&b</version>");
+        assertThat(xml).as("the already-listed version survives, escaped once (not double-escaped)")
+                .contains("<version>1.0</version>");
+    }
+
     private static boolean order(String xml, String... versions) {
         int previous = -1;
         for (String version : versions) {
