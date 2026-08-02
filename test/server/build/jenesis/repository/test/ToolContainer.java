@@ -54,9 +54,12 @@ final class ToolContainer implements AutoCloseable {
                 .withNetworkMode("host")
                 .withFileSystemBind(work.toAbsolutePath().toString(), "/work", BindMode.READ_WRITE)
                 .withWorkingDirectory("/work")
+                // Many tool images set the tool itself as their ENTRYPOINT (helm, ...), which would swallow the
+                // keep-alive command as a subcommand; reset the entrypoint to a shell so the container just parks.
+                .withCreateContainerCmdModifier(cmd -> cmd.withEntrypoint("/bin/sh")
+                        .withCmd("-c", "echo TOOLCONTAINER_READY; exec sleep infinity"))
                 // Host networking exposes no ports and the keep-alive command emits no service log of its own, so gate
                 // readiness on a marker line the command prints before it parks on sleep.
-                .withCommand("sh", "-c", "echo TOOLCONTAINER_READY; exec sleep infinity")
                 .waitingFor(Wait.forLogMessage(".*TOOLCONTAINER_READY.*\\n", 1)
                         .withStartupTimeout(Duration.ofSeconds(120)));
         forwardProxyAndCa(container);
