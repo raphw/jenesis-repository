@@ -30,6 +30,14 @@ class IndexSourceTest {
         return source;
     }
 
+    private ImportSource authenticatedSource(FakeFetcher fetcher) {
+        ImportRequest request = new ImportRequest(URI.create("http://source.local"), ".")
+                .withFormat("fake").withCredentials("operator", "s3cr3t");
+        ImportSource source = provider.create(request, fetcher);
+        assertThat(source).isNotNull();
+        return source;
+    }
+
     private static FakeFetcher reachable() {
         return new FakeFetcher().on("http://source.local/", 200, new byte[0]);
     }
@@ -132,6 +140,41 @@ class IndexSourceTest {
                 (format, path, content) -> content.open().close(), cursor -> { }))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("500");
+    }
+
+    @Test
+    void a_cross_origin_download_to_a_private_host_is_refused() {
+        // The download URL derives from the foreign index and is fetched as an INITIAL request, which HttpFetcher's
+        // redirect-only SSRF screen never inspects. A cross-origin URL the index aims at a loopback/metadata host must
+        // be refused here (the same guard NexusSource applies to its listing-derived downloads) - never proxied.
+        FakeFetcher fetcher = reachable()
+                .on("http://source.local/index", 200,
+                        "evil/x.bin http://127.0.0.1/x.bin\n".getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> source(fetcher, null).forEach(
+                (format, path, content) -> content.open().close(), cursor -> { }))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("cross-origin download to a private/loopback host");
+        assertThat(fetcher.urls).as("the internal target was never actually fetched")
+                .doesNotContain("http://127.0.0.1/x.bin");
+    }
+
+    @Test
+    void the_operator_credential_never_travels_to_a_cross_origin_download() throws IOException {
+        // The operator's basic-auth authenticates same-origin index reads and downloads, but must not be sent to a
+        // third host a foreign index redirects the bytes to (the same scoping NexusSource applies and HttpFetcher does
+        // on a cross-origin redirect). The index read stays authenticated; the cross-origin asset download does not.
+        FakeFetcher fetcher = reachable()
+                .on("http://source.local/index", 200,
+                        "alpha/a.bin http://files.local/a.bin\n".getBytes(StandardCharsets.UTF_8))
+                .on("http://files.local/a.bin", 200, "bytes".getBytes(StandardCharsets.UTF_8));
+        authenticatedSource(fetcher).forEach(
+                (format, path, content) -> content.open().close(), cursor -> { });
+
+        Map<String, String> indexHeaders = fetcher.headersFor("http://source.local/index");
+        Map<String, String> downloadHeaders = fetcher.headersFor("http://files.local/a.bin");
+        assertThat(indexHeaders).as("the same-origin index read is authenticated").containsKey("Authorization");
+        assertThat(downloadHeaders).as("the cross-origin download must NOT carry the operator credential")
+                .doesNotContainKey("Authorization");
     }
 
     @Test

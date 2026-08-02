@@ -28,4 +28,15 @@ final class FakeFetcher implements ProxyFormat.Fetcher {
         headers.add(Map.copyOf(requestHeaders));
         return Optional.ofNullable(responses.get(url.toString()));
     }
+
+    /** The request headers the last request to {@code url} carried, or an empty map when it was never requested - so a
+     *  test can assert which requests were (and were not) given a credential. */
+    Map<String, String> headersFor(String url) {
+        for (int i = urls.size() - 1; i >= 0; i--) {
+            if (urls.get(i).equals(url)) {
+                return headers.get(i);
+            }
+        }
+        return Map.of();
+    }
 }

@@ -46,10 +46,11 @@ public final class IndexSourceProvider implements ImportSourceProvider {
         if (format == null) {
             return null;
         }
+        URI root = root(request);
         ProxyFormat.Fetcher walker = request.username() != null && request.password() != null
-                ? authorized(fetcher, request.username(), request.password())
+                ? authorized(fetcher, request.username(), request.password(), root)
                 : fetcher;
-        IndexSource source = new IndexSource(format, root(request), walker, request.cursor());
+        IndexSource source = new IndexSource(format, root, walker, request.cursor());
         return source.reachable() ? source : null;
     }
 
@@ -73,29 +74,40 @@ public final class IndexSourceProvider implements ImportSourceProvider {
         return URI.create(url.append('/').toString());
     }
 
-    /** The shared fetcher with HTTP basic credentials injected on every fetch and download (unless a request
-     *  already carries its own {@code Authorization}), so one wrapper authenticates whatever the format reads. */
-    private static ProxyFormat.Fetcher authorized(ProxyFormat.Fetcher fetcher, String username, String password) {
+    /** The shared fetcher with HTTP basic credentials injected on every SAME-ORIGIN fetch and download (unless a
+     *  request already carries its own {@code Authorization}), so one wrapper authenticates whatever the format reads
+     *  from the operator's own server. A cross-origin URL - a download the foreign index aimed at a third host - is
+     *  never given the operator's credential: it must not travel off the origin the operator pointed the importer at
+     *  (the same scoping NexusSource applies, and the same reason HttpFetcher drops credentials on a cross-origin
+     *  redirect). The reads the format's enumerate issues are same-origin index pages under {@code root}, so they
+     *  stay authenticated. */
+    private static ProxyFormat.Fetcher authorized(ProxyFormat.Fetcher fetcher, String username, String password,
+                                                  URI root) {
         String token = Base64.getEncoder().encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
         String authorization = "Basic " + token;
         return new ProxyFormat.Fetcher() {
             @Override
             public Optional<ProxyFormat.Fetched> fetch(URI url, Map<String, String> requestHeaders) throws IOException {
-                return fetcher.fetch(url, merged(requestHeaders));
+                return fetcher.fetch(url, merged(url, requestHeaders));
             }
 
             @Override
             public Optional<ProxyFormat.Download> download(URI url, Map<String, String> requestHeaders) throws IOException {
-                return fetcher.download(url, merged(requestHeaders));
+                return fetcher.download(url, merged(url, requestHeaders));
             }
 
-            private Map<String, String> merged(Map<String, String> requestHeaders) {
-                if (requestHeaders.containsKey("Authorization")) {
+            private Map<String, String> merged(URI url, Map<String, String> requestHeaders) {
+                if (requestHeaders.containsKey("Authorization") || !sameOrigin(url)) {
                     return requestHeaders;
                 }
                 Map<String, String> merged = new HashMap<>(requestHeaders);
                 merged.put("Authorization", authorization);
                 return merged;
+            }
+
+            private boolean sameOrigin(URI url) {
+                return Objects.equals(root.getScheme(), url.getScheme())
+                        && Objects.equals(root.getRawAuthority(), url.getRawAuthority());
             }
         };
     }

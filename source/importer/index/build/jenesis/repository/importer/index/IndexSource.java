@@ -2,6 +2,7 @@ package build.jenesis.repository.importer.index;
 
 import module java.base;
 
+import build.jenesis.repository.format.PrivateHosts;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.importer.ImportSource;
@@ -92,12 +93,29 @@ public final class IndexSource implements ImportSource {
     }
 
     private InputStream open(ProxyFormat.Coordinate coordinate) throws IOException {
-        ProxyFormat.Download download = fetcher.download(coordinate.url(), coordinate.headers())
-                .orElseThrow(() -> new IOException("No response from " + coordinate.url()));
+        URI url = coordinate.url();
+        // The download URL derives from a foreign index (a name/tag the upstream controls, spliced into an absolute URL
+        // by the format's enumerate), and it is fetched as an INITIAL request - not a redirect - so HttpFetcher's
+        // redirect-only SSRF screen never inspects it. A CROSS-ORIGIN download aimed at a private/loopback/metadata host
+        // is refused here through the shared PrivateHosts guard the redirect chain uses, exactly as NexusSource guards
+        // its listing-derived downloads. A SAME-ORIGIN download is not screened: it goes where the operator already
+        // pointed the importer (and the credential wrapper only authenticates same-origin reads for the same reason).
+        if (!sameOrigin(url) && PrivateHosts.resolvesToPrivate(url.getHost())) {
+            throw new IOException("Refusing a cross-origin download to a private/loopback host: " + url);
+        }
+        ProxyFormat.Download download = fetcher.download(url, coordinate.headers())
+                .orElseThrow(() -> new IOException("No response from " + url));
         if (download.status() != 200) {
             download.close();
-            throw new IOException("Download failed (" + download.status() + ") for " + coordinate.url());
+            throw new IOException("Download failed (" + download.status() + ") for " + url);
         }
         return download.body();
+    }
+
+    /** Whether {@code url} shares {@code root}'s scheme and authority - the same origin the operator pointed the
+     *  importer at. A cross-origin download URL is one the foreign index redirected the bytes to. */
+    private boolean sameOrigin(URI url) {
+        return Objects.equals(root.getScheme(), url.getScheme())
+                && Objects.equals(root.getRawAuthority(), url.getRawAuthority());
     }
 }
