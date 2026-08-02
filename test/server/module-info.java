@@ -132,6 +132,11 @@ open module build.jenesis.repository.test {
     requires ch.qos.logback.core;
     requires org.junit.jupiter;
     requires org.assertj.core;
+    // RepositoryAuthorizationManagerFailClosedTest drives the AuthorizationManager directly (no booted server), so the
+    // test module reads the Spring Security types it takes and returns - RequestAuthorizationContext (web) and
+    // AuthorizationResult (core) - which the server module requires but does not re-export.
+    requires spring.security.web;
+    requires spring.security.core;
 
     // WireMock's shaded HttpClient5 reaches for jdk/net/Sockets at runtime; an automatic module roots no requires, so
     // the consumer must root jdk.net explicitly or the tests throw NoClassDefFoundError: jdk/net/Sockets.

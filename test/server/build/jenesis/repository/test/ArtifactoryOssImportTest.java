@@ -102,8 +102,14 @@ public class ArtifactoryOssImportTest {
                 // Artifactory 6.x refuses to boot on the default nofile=1024 ulimit; raise it as the docker-run flag did.
                 .withCreateContainerCmdModifier(cmd -> cmd.getHostConfig()
                         .withUlimits(new Ulimit[]{new Ulimit("nofile", 32768L, 32768L)}))
+                // Artifactory 6.x answers /api/system/ping with 401 during its security-warmup phase and only flips to
+                // 200 once the access service is up; insisting on 200 here made the container "fail to start" whenever
+                // warmup ran past the window even though the process was healthy. Treat ANY HTTP response (200 or the
+                // warmup 401) as "the process is up", then let the authenticated awaitReady loop below confirm real
+                // readiness (it polls for a 200 with admin credentials for a further four minutes).
                 .waitingFor(Wait.forHttp("/artifactory/api/system/ping").forPort(8081)
-                        .forStatusCode(200).withStartupTimeout(Duration.ofMinutes(4)));
+                        .forStatusCodeMatching(code -> code == 200 || code == 401)
+                        .withStartupTimeout(Duration.ofMinutes(4)));
         try {
             container.start();
         } catch (RuntimeException bootFailed) {

@@ -170,6 +170,34 @@ class MavenSourceTest {
     }
 
     @Test
+    void a_listing_canonical_file_link_at_a_foreign_or_metadata_host_is_not_followed() throws IOException {
+        // A Nexus-style index row links each file at its canonical download URL, which HtmlListing admits only when it
+        // shares the listing's authority - so a row pointing a "file" at a different host (a cloud metadata service, a
+        // loopback control plane, or any third party) is chrome the walk drops, not an initial request it fires. This
+        // is the listing-derived counterpart of the fetcher's redirect SSRF screen: the operator base is the only
+        // authority the Maven walk ever fetches from, so a poisoned listing cannot steer it at an internal host.
+        Map<String, ProxyFormat.Fetched> responses = new HashMap<>();
+        responses.put(ROOT, ok("""
+                <html><body>
+                <a href="lib-1.0.jar">lib-1.0.jar</a>
+                <a href="http://169.254.169.254/root/lib-1.0.jar">metadata</a>
+                <a href="http://127.0.0.1/root/lib-1.0.jar">loopback</a>
+                <a href="https://other.example/root/lib-1.0.jar">foreign</a>
+                </body></html>"""));
+        responses.put(ROOT + "lib-1.0.jar", ok("jar-bytes"));
+        FakeFetcher fetcher = new FakeFetcher(responses);
+
+        List<String> paths = new ArrayList<>();
+        source(fetcher).forEach((format, path, content) -> paths.add(path), cursor -> { });
+
+        assertThat(paths).as("only the same-authority file is an asset; the foreign and private links are dropped")
+                .containsExactly("lib-1.0.jar");
+        assertThat(fetcher.urls).as("no listing-derived link at a foreign or private host is ever fetched")
+                .doesNotContain("http://169.254.169.254/root/lib-1.0.jar", "http://127.0.0.1/root/lib-1.0.jar",
+                        "https://other.example/root/lib-1.0.jar");
+    }
+
+    @Test
     void a_failed_directory_listing_is_an_io_exception() {
         Map<String, ProxyFormat.Fetched> responses = tree();
         responses.put(ROOT + "com/", status(500));
@@ -447,6 +475,49 @@ class MavenSourceTest {
                 .containsExactlyInAnyOrder(
                         "org/a/lib/1.0/lib-1.0.jar", "org/a/lib/1.0/lib-1.0.pom",
                         "org/b/lib/1.0/lib-1.0.jar", "org/b/lib/1.0/lib-1.0.pom");
+    }
+
+    @Test
+    void a_slash_or_traversal_laced_version_is_refused_on_the_index_and_the_metadata_refresh() throws IOException {
+        // The version is the coordinate part - alongside the group the existing org..evil fixture already covers -
+        // that is spliced into the layout path, twice over: u[2] from an index record and every <version> a
+        // maven-metadata.xml refresh lists. Both are guarded, so a version bearing a path separator or a traversal
+        // segment is skipped, never fetched: an index record whose u[2] is unsafe yields no coordinate at all (not
+        // even tracked for a refresh), and a refreshed version that would escape the layout is dropped before its pom
+        // URL is built - no store write outside the coordinate's own directory can be steered from a hostile version.
+        String root = "https://mirror.example/repo/";
+        Map<String, ProxyFormat.Fetched> responses = indexFallback(index(List.of(
+                record("u", "org.acme|lib|1.0|NA|NA", "i", "jar|1|1|0|0|0|jar"),
+                record("u", "org.evil|hack|../../../secret|NA|NA", "i", "jar|1|1|0|0|0|jar"),
+                record("u", "org.evil|slash|1.0/beta|NA|NA", "i", "jar|1|1|0|0|0|jar"))));
+        // The benign coordinate's metadata lists a legitimate new version (1.1) and two hostile ones the refresh refuses.
+        responses.put(root + "org/acme/lib/maven-metadata.xml", ok("""
+                <metadata><versioning><versions>
+                  <version>1.0</version>
+                  <version>1.1</version>
+                  <version>../../../evil</version>
+                  <version>1.0/beta</version>
+                </versions></versioning></metadata>"""));
+        responses.put(root + "org/acme/lib/1.1/lib-1.1.pom", ok("<project><packaging>jar</packaging></project>"));
+        FakeFetcher fetcher = new FakeFetcher(responses);
+
+        List<String> paths = new ArrayList<>();
+        new MavenSource(URI.create("https://mirror.example/repo"), ".", fetcher)
+                .forEach((format, path, content) -> paths.add(path), cursor -> { });
+
+        assertThat(paths).as("the safe coordinate imports its index record and its refreshed 1.1; the traversal and "
+                + "slash versions - both in the index and in the metadata - yield nothing")
+                .containsExactly(
+                        "org/acme/lib/1.0/lib-1.0.jar",
+                        "org/acme/lib/1.0/lib-1.0.pom",
+                        "org/acme/lib/1.1/lib-1.1.pom",
+                        "org/acme/lib/1.1/lib-1.1.jar");
+        assertThat(paths).as("no reported path escapes a coordinate's own layout directory")
+                .allSatisfy(path -> assertThat(path).doesNotContain("secret", "beta", "evil", "org/evil"));
+        assertThat(fetcher.urls).as("the unsafe-version records are never even refreshed, and no hostile pom is fetched")
+                .noneSatisfy(url -> assertThat(url).contains("org/evil"))
+                .noneSatisfy(url -> assertThat(url).contains("secret"))
+                .noneSatisfy(url -> assertThat(url).contains("beta"));
     }
 
     @FunctionalInterface

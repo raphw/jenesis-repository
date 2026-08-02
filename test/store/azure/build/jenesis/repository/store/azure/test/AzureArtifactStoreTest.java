@@ -121,6 +121,50 @@ public class AzureArtifactStoreTest {
     }
 
     @Test
+    public void an_aborted_write_leaves_no_readable_blob_and_does_not_poison_the_dedupe() throws IOException {
+        // BlobOutputStream commits its staged block list in close() - even after the source failed mid-stream - so a
+        // close after a failed transfer would land a TRUNCATED blob at the key. write() guards this by closing only
+        // after a complete transfer: a source that throws mid-stream abandons the stream unclosed, the staged blocks
+        // are never committed, and nothing readable lands. This is load-bearing for writeBlob's content-addressed
+        // dedupe: were a truncated blob committed at blobs/<hash>, the exists() probe would then skip every future
+        // re-upload of the true bytes - permanent corruption. The abort must therefore leave the key absent, so the
+        // true content still writes and reads back afterward.
+        String key = "blobs/aborted";
+        InputStream aborting = new InputStream() {
+            private int served;
+
+            @Override
+            public int read() throws IOException {
+                if (served++ < 3) {
+                    return 'x';
+                }
+                throw new IOException("client hung up mid-stream");
+            }
+        };
+
+        assertThat(store.exists(key)).as("absent before the write").isFalse();
+        assertThatThrownBy(() -> store.write(key, aborting)).isInstanceOf(IOException.class);
+
+        assertThat(store.exists(key)).as("an aborted write commits nothing - no truncated/partial blob at the key")
+                .isFalse();
+        assertThat(store.size(key)).as("a missing blob sizes to -1, not a truncated length").isEqualTo(-1L);
+        assertThatThrownBy(() -> {
+            try (InputStream in = store.open(key)) {
+                in.readAllBytes();
+            }
+        }).as("the key is unreadable, never a silently truncated commit").isInstanceOf(IOException.class);
+
+        // The dedupe stays honest: with nothing committed, the true content still writes and reads back in full.
+        byte[] body = {1, 2, 3, 4, 5, 6, 7, 8};
+        store.write(key, new ByteArrayInputStream(body));
+        assertThat(store.exists(key)).isTrue();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        store.read(key, out);
+        assertThat(out.toByteArray()).as("the real bytes land after the earlier abort left the key clean").isEqualTo(body);
+        store.delete(key);
+    }
+
+    @Test
     public void open_streams_a_stored_blob_back_and_a_missing_key_throws() throws IOException {
         byte[] body = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
         store.write("blobs/opened", new ByteArrayInputStream(body));
