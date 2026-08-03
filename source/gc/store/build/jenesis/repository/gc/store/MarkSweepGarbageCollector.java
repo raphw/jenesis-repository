@@ -380,10 +380,17 @@ public final class MarkSweepGarbageCollector implements GarbageCollector, Observ
             } else if (parsed.pass() < generation && Duration.between(parsed.since(), now).compareTo(graceFloor) >= 0
                     && referencesStillStand()) {
                 // Condemned by an earlier pass, still unreferenced by this one, past the wall-clock grace floor
-                // (zero by default), and our reference shards still stand (the lease fence below). The marker read
-                // above is the final guard - a re-link cleared it on the write path - and the completed mark's shard
-                // needs no re-read: it gained nothing but duplicates since the pass finished. Blob first, marker
-                // last, so a crash in between leaves only a marker the convergence leg removes.
+                // (zero by default), and our reference shards still stand (the lease fence below). Re-read the marker
+                // as the final guard immediately before the destructive delete - after the lease-fence round-trip, not
+                // the stale read from before it: a dedup re-publish that re-referenced these bytes since we judged them
+                // clears the marker on its write path (the contract Publication.link documents), so a marker gone now
+                // means the blob was re-linked and must be spared. The completed mark's shard needs no re-read: it
+                // gained nothing but duplicates since the pass finished. Blob first, marker last, so a crash in between
+                // leaves only a marker the convergence leg removes.
+                if (store.readVersioned(marker).isEmpty()) {
+                    spared++;   // a concurrent re-publish cleared the marker since we judged it - these bytes are referenced again
+                    return;
+                }
                 deleteIfPresent(store, key);
                 deleteIfPresent(store, marker);
                 collected++;
