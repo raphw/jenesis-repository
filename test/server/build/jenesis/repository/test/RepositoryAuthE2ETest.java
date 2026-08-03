@@ -208,6 +208,59 @@ public class RepositoryAuthE2ETest {
                 .as("a write key clears authorization (reaches the controller, never 401/403)").isNotIn(401, 403);
     }
 
+    @Test
+    public void an_anonymous_read_grant_does_not_open_the_deployment_wide_operator_observability() throws Exception {
+        // Regression for an anonymous-grant cross-scope disclosure. With the public-mirror opt-in
+        // jenesis.repository.anonymous-rights=repository:read enabled, the anonymous grant parses to the WILDCARD scope
+        // "*" - exactly what the deployment-wide operator routes (/api/logs, /api/consistency, the /actuator subtree)
+        // are rebound to - so a completely KEYLESS caller would satisfy covers("*","*",path)+grantedBy("repository:read")
+        // and read the fleet log ring / whole-fleet consistency state / actuator metrics with no key at all. These
+        // operator-observability routes must require an authenticated key even when the anonymous role is on. /api/posture
+        // stays intentionally anonymous (a public advisory), and the anonymous artifact mirror keeps working. Booted as a
+        // second server (sharing this class's store, so the ci/ro grants stay valid) with the anonymous role enabled.
+        System.setProperty("jenesis.repository.anonymous-rights", "repository:read");
+        try (RepositoryApplication.Running anon = RepositoryApplication.start(0)) {
+            String anonRoot = "http://localhost:" + anon.port();
+            // Keyless operator-observability reads are refused (403 FORBIDDEN), NOT served against the anonymous grant.
+            // If the guard is reverted these become 200 (the leak), so each assertion is load-bearing.
+            assertThat(anonGet(anonRoot + "/api/logs", null).statusCode())
+                    .as("keyless /api/logs is refused even with the anonymous read grant").isEqualTo(403);
+            assertThat(anonGet(anonRoot + "/api/consistency", null).statusCode())
+                    .as("keyless /api/consistency is refused even with the anonymous read grant").isEqualTo(403);
+            assertThat(anonGet(anonRoot + "/actuator/metrics", null).statusCode())
+                    .as("keyless /actuator/metrics is refused even with the anonymous read grant").isEqualTo(403);
+            // /api/posture stays intentionally anonymous - a keyless read is still served.
+            assertThat(anonGet(anonRoot + "/api/posture", null).statusCode())
+                    .as("/api/posture stays anonymous-readable, not caught by the operator guard").isEqualTo(200);
+            // A wildcard ("*") read KEY still reads the operator view - the guard rejects only keyless callers.
+            assertThat(anonGet(anonRoot + "/api/logs", ro).statusCode())
+                    .as("a wildcard (*) read key still reads /api/logs").isEqualTo(200);
+            // The anonymous artifact mirror is preserved: deploy with the write key, then a keyless GET still reads it.
+            assertThat(anonPut(anonRoot + "/repository/maven/org/anon/m/1/m-1.jar", ci).statusCode()).isEqualTo(201);
+            assertThat(anonGet(anonRoot + "/repository/maven/org/anon/m/1/m-1.jar", null).statusCode())
+                    .as("a keyless artifact GET still works (anonymous mirror preserved)").isEqualTo(200);
+        } finally {
+            System.clearProperty("jenesis.repository.anonymous-rights");
+        }
+    }
+
+    private HttpResponse<byte[]> anonGet(String url, String key) throws IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url)).GET();
+        if (key != null) {
+            request.header("Jenesis-Repository-Key", key);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private HttpResponse<byte[]> anonPut(String url, String key) throws IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url))
+                .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[]{1, 2, 3}));
+        if (key != null) {
+            request.header("Jenesis-Repository-Key", key);
+        }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
     private HttpResponse<byte[]> apiGet(String path, String key) throws IOException, InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(root + path)).GET();
         if (key != null) {

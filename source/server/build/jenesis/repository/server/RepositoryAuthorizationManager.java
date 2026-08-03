@@ -80,12 +80,18 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
         // still reads the whole view (the intended deployment-observability feature); a per-repo grant no longer does.
         // (/actuator/health is permit-all in the security chain, so it never reaches this manager; binding the /actuator
         // subtree to "*" here covers /actuator/metrics, /actuator/info and any other exposed actuator endpoint.)
-        if (("GET".equals(method) || "HEAD".equals(method))
-                && ("/api/logs".equals(uri) || "/api/consistency".equals(uri) || "/api/posture".equals(uri)
-                        || "/actuator".equals(uri) || uri.startsWith("/actuator/"))) {
+        // The deployment-wide OPERATOR-observability routes: GET/HEAD /api/logs, /api/consistency and the /actuator
+        // subtree. /api/posture is deployment-wide too and is bound to "*" alongside them, but it is INTENTIONALLY
+        // anonymous-readable (a public advisory, already tested), so it is deliberately kept OUT of this operator set.
+        boolean operatorObservability = ("GET".equals(method) || "HEAD".equals(method))
+                && ("/api/logs".equals(uri) || "/api/consistency".equals(uri)
+                        || "/actuator".equals(uri) || uri.startsWith("/actuator/"));
+        if (operatorObservability
+                || (("GET".equals(method) || "HEAD".equals(method)) && "/api/posture".equals(uri))) {
             scope = "*";
         }
         String key = request.getHeader("Jenesis-Repository-Key");
+        boolean keyless = key == null || key.isBlank();
         // Reuse the router's own resolution of the in-repository path (the request URI with the /repository prefix
         // stripped, exactly as the format dispatcher matches on) rather than re-deriving it here, so a path-scoped
         // grant (<repo>:<prefix>) authorizes exactly the subtree it grants. A repository-wide grant carries no prefix
@@ -106,6 +112,21 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
                 decision = authorization.authorize(key, scope, path, required);
             }
         } catch (IOException e) {
+            decision = Authorization.Decision.FORBIDDEN;
+        }
+        // Close an anonymous-grant cross-scope disclosure on the deployment-wide operator-observability routes. When an
+        // operator enables the public-mirror opt-in jenesis.repository.anonymous-rights=repository:read, the anonymous
+        // grant parses to the WILDCARD scope "*" - exactly what these routes are rebound to above - so a completely
+        // KEYLESS caller would satisfy covers("*","*",path) + grantedBy("repository:read") and authorize() ALLOWS it,
+        // reading the deployment-wide operator view (the fleet log ring, the whole fleet's consistency state, the
+        // actuator metrics) with no key at all. That contradicts the intent stated above: only a key holding a wildcard
+        // grant may read them. Refuse the keyless caller here - downgrade that anonymous-grant ALLOWED to FORBIDDEN, so
+        // the anonymous wildcard grant can no longer satisfy an operator route. Scoped to keyless + ALLOWED, so every
+        // other outcome is untouched: a keyless request on an enforcing deployment WITHOUT the anonymous role is already
+        // UNAUTHORIZED (a 401, not ALLOWED) and is left exactly as-is; a present wildcard KEY still reads them; a
+        // repository-scoped key is still refused via covers; and the anonymous artifact GET and the intentionally-
+        // anonymous /api/posture advisory (outside operatorObservability) are unchanged.
+        if (operatorObservability && keyless && decision == Authorization.Decision.ALLOWED) {
             decision = Authorization.Decision.FORBIDDEN;
         }
         request.setAttribute("jenesis.repository.decision", decision);
