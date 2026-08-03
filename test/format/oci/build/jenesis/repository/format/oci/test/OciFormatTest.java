@@ -509,6 +509,83 @@ class OciFormatTest {
     }
 
     @Test
+    void the_tag_list_honours_n_and_last_paging_with_a_link_and_still_screens_a_withheld_tag() throws IOException {
+        // Five tags of one image, the middle one withheld. tags/list must page through n/last exactly as the
+        // Distribution spec defines - a bounded window per request, resumed after `last`, with a Link to the next
+        // page - and must never disclose the withheld tag, over-fetching past it so a full page of servable tags
+        // is still returned.
+        for (String tag : List.of("v1", "v2", "v3", "v4", "v5")) {
+            push("img", tag, ("{\"t\":\"" + tag + "\"}").getBytes(StandardCharsets.UTF_8));
+        }
+        withhold("{\"t\":\"v3\"}".getBytes(StandardCharsets.UTF_8));   // v3's manifest is held - never listed
+
+        // First page of two servable tags: v1, v2. A Link carries the next n/last.
+        FakeExchange first = new FakeExchange("GET", "/v2/img/tags/list", new byte[0], Map.of("n", "2"), Map.of());
+        format.handle(first, store);
+        assertThat(first.status()).isEqualTo(200);
+        assertThat(first.responseText()).isEqualTo("{\"name\":\"img\",\"tags\":[\"v1\",\"v2\"]}");
+        assertThat(first.responseHeader("Link")).isEqualTo("</v2/img/tags/list?n=2&last=v2>; rel=\"next\"");
+
+        // Resume after v2: the withheld v3 is screened (over-fetched past), so the page is v4, v5 - a further page
+        // does not remain, so no Link.
+        FakeExchange second = new FakeExchange("GET", "/v2/img/tags/list", new byte[0],
+                Map.of("n", "2", "last", "v2"), Map.of());
+        format.handle(second, store);
+        assertThat(second.responseText())
+                .as("v3 is withheld and screened, so the resumed page is the surviving v4, v5")
+                .isEqualTo("{\"name\":\"img\",\"tags\":[\"v4\",\"v5\"]}");
+        assertThat(second.responseHeader("Link")).as("no servable tag remains past v5").isNull();
+
+        // A page that lands exactly on the last surviving tag still stops cleanly (n=4 -> v1,v2,v4,v5, no next page).
+        FakeExchange whole = new FakeExchange("GET", "/v2/img/tags/list", new byte[0], Map.of("n", "4"), Map.of());
+        format.handle(whole, store);
+        assertThat(whole.responseText()).isEqualTo("{\"name\":\"img\",\"tags\":[\"v1\",\"v2\",\"v4\",\"v5\"]}");
+        assertThat(whole.responseHeader("Link")).isNull();
+
+        // A non-numeric or non-positive n is a 400, exactly as _catalog rejects it (never a 500).
+        for (String bad : List.of("abc", "0", "-1")) {
+            FakeExchange invalid = new FakeExchange("GET", "/v2/img/tags/list", new byte[0], Map.of("n", bad), Map.of());
+            format.handle(invalid, store);
+            assertThat(invalid.status()).as("tags/list n=" + bad + " is a 400").isEqualTo(400);
+        }
+    }
+
+    @Test
+    void the_catalog_serves_a_bounded_page_with_n_last_and_a_link_screening_an_all_withheld_image() throws IOException {
+        // Four images in lexicographic order; the whole of `gamma` is withheld (its only tag held). _catalog must
+        // serve a bounded page honouring n/last with a Link to the next, and must omit the fully-withheld image's
+        // name (a fully-held image is not disclosed while its bytes 404, AUDIT §5/§8).
+        push("alpha", "1.0", "{\"i\":\"alpha\"}".getBytes(StandardCharsets.UTF_8));
+        push("beta", "1.0", "{\"i\":\"beta\"}".getBytes(StandardCharsets.UTF_8));
+        push("gamma", "1.0", "{\"i\":\"gamma\"}".getBytes(StandardCharsets.UTF_8));
+        push("delta", "1.0", "{\"i\":\"delta\"}".getBytes(StandardCharsets.UTF_8));
+        withhold("{\"i\":\"gamma\"}".getBytes(StandardCharsets.UTF_8));   // gamma has no surviving tag - never catalogued
+
+        // First bounded page of two: alpha, beta (lexicographic). A Link carries the next n/last.
+        FakeExchange first = new FakeExchange("GET", "/v2/_catalog", new byte[0], Map.of("n", "2"), Map.of());
+        format.handle(first, store);
+        assertThat(first.status()).isEqualTo(200);
+        assertThat(first.responseText()).isEqualTo("{\"repositories\":[\"alpha\",\"beta\"]}");
+        assertThat(first.responseHeader("Link")).isEqualTo("</v2/_catalog?n=2&last=beta>; rel=\"next\"");
+
+        // Resume after beta: gamma is all-withheld and screened (over-fetched past), so the page is just delta - the
+        // only remaining servable image - and no further page remains.
+        FakeExchange second = new FakeExchange("GET", "/v2/_catalog", new byte[0],
+                Map.of("n", "2", "last", "beta"), Map.of());
+        format.handle(second, store);
+        assertThat(second.responseText())
+                .as("gamma is fully withheld and screened, so the resumed page is delta only")
+                .isEqualTo("{\"repositories\":[\"delta\"]}");
+        assertThat(second.responseHeader("Link")).as("no servable image remains past delta").isNull();
+
+        // The unpaged catalog lists exactly the three servable images in order, gamma absent, no Link.
+        FakeExchange all = new FakeExchange("GET", "/v2/_catalog");
+        format.handle(all, store);
+        assertThat(all.responseText()).isEqualTo("{\"repositories\":[\"alpha\",\"beta\",\"delta\"]}");
+        assertThat(all.responseHeader("Link")).isNull();
+    }
+
+    @Test
     void enumeration_walks_the_registrys_own_index_end_to_end() throws IOException {
         byte[] config = "{\"os\":\"linux\"}".getBytes(StandardCharsets.UTF_8);
         byte[] layer = "layer-bytes".getBytes(StandardCharsets.UTF_8);

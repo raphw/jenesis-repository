@@ -434,25 +434,88 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         }
     }
 
+    /** The number of tag / image-name pointers paged from the store per seek-resume batch: large enough that a full
+     *  page of results is usually one round-trip, bounded so a single request never materialises an arbitrarily large
+     *  child set (the flat {@code oci/<name>/tags} set, or a directory level of the {@code oci/} image tree) as one
+     *  {@link ArtifactStore#list} + sort. Over-fetching past withheld pointers pages on across batches as needed. */
+    private static final int PAGE_BATCH = 256;
+
+    /**
+     * {@code GET /v2/<name>/tags/list} honouring the Distribution API's optional {@code n} (max results) and
+     * {@code last} (resume-after) paging: the tag pointer set is paged through the store's
+     * {@link ArtifactStore#page seek-resume primitive} (immediate children, lexicographic order) rather than listed and
+     * sorted whole, so a request reads a bounded window of tags, not the entire set into heap. A withheld tag is
+     * screened out exactly as its manifest 404s on a pull - the tags/list must not disclose a tag whose manifest is
+     * held (AUDIT §5/§8, its existence included) - and the walk over-fetches past withheld tags so a full page of
+     * <em>servable</em> tags is still returned when some are screened. When a further page remains a
+     * {@code Link; rel="next"} carries the next {@code n}/{@code last}, exactly as {@link #catalog} does for
+     * {@code _catalog}.
+     */
     private void tags(String name, ArtifactStore store, FormatExchange exchange) throws IOException {
         if (!isImageName(name)) {
             exchange.respond(404);                              // a traversal-laced image name lists no tags
             return;
         }
-        // A withheld tag is screened out of the listing exactly as its manifest 404s on a pull: the tags/list must not
-        // disclose a tag whose manifest is held (AUDIT §5/§8 - never disclose a withheld artifact, its existence
-        // included). Bounded: one pointer resolve + one marker probe per tag already listed, no re-list.
+        Integer limit = pageSize(exchange);
+        if (limit == null) {
+            return;                                             // a non-numeric or non-positive n is a 400, already sent
+        }
+        String last = exchange.queryParameter("last");
+        String base = "oci/" + name + "/tags";
         List<String> tags = new ArrayList<>();
-        for (String tag : store.list("oci/" + name + "/tags")) {
-            if (!tagWithheld(store, name, tag)) {
+        boolean more = false;
+        String cursor = last == null ? "" : last;
+        paging:
+        while (true) {
+            List<String> batch = new ArrayList<>();
+            store.page(base, cursor, PAGE_BATCH, batch::add);
+            if (batch.isEmpty()) {
+                break;                                          // no further children past the cursor
+            }
+            cursor = batch.getLast();
+            for (String tag : batch) {
+                if (tagWithheld(store, name, tag)) {
+                    continue;                                   // over-fetch past a withheld tag, never disclosing it
+                }
+                if (tags.size() == limit) {
+                    more = true;                                // a servable tag beyond the page proves a next page
+                    break paging;
+                }
                 tags.add(tag);
+            }
+            if (batch.size() < PAGE_BATCH) {
+                break;                                          // the store had no full batch left - the set is drained
             }
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
         body.put("tags", tags);
+        if (more) {
+            exchange.setResponseHeader("Link", "</v2/" + name + "/tags/list?n=" + limit + "&last="
+                    + URLEncoder.encode(tags.getLast(), StandardCharsets.UTF_8) + ">; rel=\"next\"");
+        }
         exchange.setResponseHeader("Content-Type", "application/json");
         exchange.respond(200, JSON.writeValueAsString(body).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Parse the Distribution {@code n} page-size query parameter shared by {@code tags/list} and {@code _catalog}:
+     *  absent means unbounded ({@link Integer#MAX_VALUE}); a non-numeric or non-positive {@code n} is refused
+     *  {@code 400} (a zero or negative page size would otherwise read {@code getLast()} off an empty page or index a
+     *  negative range - each an unhandled 500). Returns {@code null} once it has already responded {@code 400}. */
+    private static Integer pageSize(FormatExchange exchange) throws IOException {
+        String limit = exchange.queryParameter("n");
+        int page;
+        try {
+            page = limit == null ? Integer.MAX_VALUE : Integer.parseInt(limit);
+        } catch (NumberFormatException invalid) {
+            exchange.respond(400);
+            return null;
+        }
+        if (page <= 0) {
+            exchange.respond(400);
+            return null;
+        }
+        return page;
     }
 
     /** Whether the manifest {@code tag} of {@code name} points at is currently withheld - the tag resolved through its
@@ -469,36 +532,36 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         return isDigestHex(hex) && store.exists("withheld/" + hex);
     }
 
-    /** The Distribution catalog ({@code GET /v2/_catalog}): every image name that carries at least one tag pointer,
-     *  sorted, honouring the API's optional {@code n}/{@code last} paging with a {@code Link} to the next page -
-     *  the index through which a registry (and a jenesis repository serving this format) is enumerable, so
-     *  migration off this repository works over the format's own protocol. */
+    /**
+     * The Distribution catalog ({@code GET /v2/_catalog}): every image name that carries at least one servable
+     * (non-withheld) tag, in lexicographic order, honouring the API's optional {@code n} (max results) / {@code last}
+     * (resume-after) paging with a {@code Link} to the next page - the index through which a registry (and a jenesis
+     * repository serving this format) is enumerable, so migration off this repository works over the format's own
+     * protocol.
+     *
+     * <p><b>Bounded, not a whole-plane scan.</b> A page is a bounded seek through the store's
+     * {@link ArtifactStore#page seek-resume primitive} (see {@link #catalogPage}), never a {@code list}-every-node +
+     * {@code Collections.sort} of every image name with a per-image tag re-list - which bounded only the JSON array,
+     * not the work or heap, making a catalog walk O(total<sup>2</sup>). Only the images on (and just past) the page pay
+     * the surviving-tag screen, and only the O(depth) active traversal frontier is held in heap.
+     *
+     * <p><b>Interim, not a durable index.</b> The audit's ideal is a durable, generation-flipped, lexicographically
+     * sorted image-name index rebuilt by a fleet-exclusive maintenance task, read as a pure seek. This edition has no
+     * such generation-index precedent to mirror (no {@code StorageNamespace}, no generation-directory /
+     * {@code built}-marker index, and no scheduler wiring a format into {@code RebuildPass}), so rather than ship a
+     * half-built durable index this bounds the per-request work and heap of the live walk and emits the same
+     * {@code Link} paging - the same shape {@code tags/list} now uses.
+     */
     private void catalog(ArtifactStore store, FormatExchange exchange) throws IOException {
-        List<String> repositories = new ArrayList<>();
-        images(store, repositories);
-        Collections.sort(repositories);
+        Integer limit = pageSize(exchange);
+        if (limit == null) {
+            return;                                             // a non-numeric or non-positive n is a 400, already sent
+        }
         String last = exchange.queryParameter("last");
-        if (last != null) {
-            repositories.removeIf(name -> name.compareTo(last) <= 0);
-        }
-        String limit = exchange.queryParameter("n");
-        int page;
-        try {
-            page = limit == null ? Integer.MAX_VALUE : Integer.parseInt(limit);
-        } catch (NumberFormatException invalid) {
-            exchange.respond(400);
-            return;
-        }
-        if (page <= 0) {
-            // n is a positive page size. A zero or negative n would take the truncation branch below and either empty
-            // the list then read getLast() off it (n=0 -> NoSuchElementException) or index subList with a negative
-            // fromIndex (n<0 -> IndexOutOfBoundsException), each an unhandled 500. Reject it exactly as a non-numeric n.
-            exchange.respond(400);
-            return;
-        }
-        if (page < repositories.size()) {
-            repositories.subList(page, repositories.size()).clear();
-            exchange.setResponseHeader("Link", "</v2/_catalog?n=" + page + "&last="
+        CatalogPage catalog = catalogPage(store, last, limit);
+        List<String> repositories = catalog.names();
+        if (catalog.more()) {
+            exchange.setResponseHeader("Link", "</v2/_catalog?n=" + limit + "&last="
                     + URLEncoder.encode(repositories.getLast(), StandardCharsets.UTF_8) + ">; rel=\"next\"");
         }
         exchange.setResponseHeader("Content-Type", "application/json");
@@ -506,35 +569,170 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
                 .getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Collect every image name under the {@code oci/} prefix - a directory with a non-empty {@code tags} child.
-     *  The format's own sidecar prefixes ({@code types}, {@code uploads}, {@code upload-sessions}) and the
-     *  {@code tags} leaf itself are reserved by this layout and never image-name segments.
+    /** One {@code _catalog} page: up to {@code limit} servable image names in lexicographic order, and whether a
+     *  further servable name remains beyond it (the {@code Link; rel="next"} cue). */
+    private record CatalogPage(List<String> names, boolean more) {
+    }
+
+    /**
+     * Page up to {@code limit} servable image names, in lexicographic order, strictly after {@code last}, over the
+     * {@code oci/} pointer tree - a bounded seek, never a whole-plane scan.
      *
-     *  <p>Walked with an explicit work-list, never recursion: an image name is client-controlled and multi-segment, so
-     *  a deeply nested push ({@code PUT /v2/a/a/.../a/manifests/...}) makes the {@code oci/} pointer tree arbitrarily
-     *  deep, and a recursive walk of it would overflow the call stack on a plain {@code GET /v2/_catalog} - a
-     *  {@code StackOverflowError} that slips past the {@code IOException}/{@code RuntimeException} handlers and denies
-     *  the catalog to every reader (the same reason {@code PublishedAssets.collect} is iterative). The deque holds only
-     *  the frontier of prefixes (O(depth) heap), and {@code catalog} sorts the result, so the visit order is immaterial. */
-    private void images(ArtifactStore store, List<String> names) throws IOException {
-        Deque<String> pending = new ArrayDeque<>();
-        pending.push("");                                       // the oci/ root
-        while (!pending.isEmpty()) {
-            String prefix = pending.pop();
-            for (String child : store.list(prefix.isEmpty() ? "oci" : "oci/" + prefix)) {
-                if (child.equals("tags") || prefix.isEmpty()
-                        && (child.equals("types") || child.equals("uploads") || child.equals("upload-sessions"))) {
-                    continue;
-                }
-                String name = prefix.isEmpty() ? child : prefix + "/" + child;
-                // An image is catalogued only if it has a surviving (non-withheld) tag: a fully-held image - every tag's
-                // manifest withheld - must not be disclosed in the catalog while its bytes 404 (AUDIT §5/§8), so its
-                // name is omitted just as a held tag is dropped from tags/list.
-                if (hasSurvivingTag(store, name)) {
-                    names.add(name);
-                }
-                pending.push(name);                             // descend without recursing - depth is client-controlled
+     * <p>An image name is client-controlled and multi-segment, so the {@code oci/} tree is arbitrarily deep and broad.
+     * This is an ordered k-way merge over that tree through the store's {@link ArtifactStore#page seek-resume
+     * primitive}: a priority frontier of lazy directory cursors, each paging the immediate children of one tree level
+     * on demand and peeking its next full name, so the globally smallest unseen name is always the frontier minimum.
+     * Popping it emits it (screened by {@link #hasSurvivingTag}, over-fetching past withheld / childless-parent nodes)
+     * and opens its own subtree. The frontier holds only the O(depth) cursors along the active descent - never the
+     * whole name set - and the walk is iterative, so a deeply nested push cannot overflow the stack on a plain
+     * {@code GET /v2/_catalog} (the {@code StackOverflowError} the old work-list walk was written to avoid).
+     *
+     * <p>Resume is a seek, not a rescan: {@link #seed} primes the frontier with cursors that only ever yield names
+     * strictly greater than {@code last}, so a page never re-walks the names already served on earlier pages.
+     */
+    private CatalogPage catalogPage(ArtifactStore store, String last, int limit) throws IOException {
+        PriorityQueue<DirCursor> frontier = new PriorityQueue<>(Comparator.comparing(DirCursor::peekFull));
+        seed(store, last, frontier);
+        List<String> names = new ArrayList<>();
+        boolean more = false;
+        while (!frontier.isEmpty()) {
+            DirCursor cursor = frontier.poll();
+            String name = cursor.peekFull();                    // the frontier minimum - the smallest unseen name
+            cursor.advance();
+            if (cursor.hasChild()) {
+                frontier.add(cursor);                           // its next sibling re-enters at its new position
             }
+            DirCursor child = new DirCursor(store, name, "");   // descend - a deeper name may be servable
+            if (child.hasChild()) {
+                frontier.add(child);
+            }
+            // An image is catalogued only if it has a surviving (non-withheld) tag: a fully-held image - every tag's
+            // manifest withheld - must not be disclosed while its bytes 404 (AUDIT §5/§8), just as a held tag is
+            // dropped from tags/list. A childless parent name (no tags of its own) is screened out the same way.
+            if (hasSurvivingTag(store, name)) {
+                if (names.size() == limit) {
+                    more = true;                                // a servable name beyond the page proves a next page
+                    break;
+                }
+                names.add(name);
+            }
+        }
+        return new CatalogPage(names, more);
+    }
+
+    /** Prime the merge frontier so every name it yields is strictly greater than {@code last} - the resume seek. With
+     *  no {@code last}, one cursor over the {@code oci/} root. With a {@code last}, one cursor per level of {@code last}'s
+     *  ancestor path paging that level's children after the path segment (the branches that sort after {@code last}),
+     *  plus one over {@code last} itself (whose children all sort after it). Each path segment is used as a store
+     *  <em>base</em> only after it is proven traversal-free (a {@code last} is a client query value, never validated as
+     *  an image name); a segment used purely as a {@code startAfter} comparison is safe as-is. */
+    private void seed(ArtifactStore store, String last, PriorityQueue<DirCursor> frontier) {
+        if (last == null || last.isEmpty()) {
+            add(frontier, new DirCursor(store, "", ""));
+            return;
+        }
+        String[] segments = last.split("/", -1);
+        StringBuilder prefix = new StringBuilder();
+        boolean safe = true;
+        for (int index = 0; index < segments.length && safe; index++) {
+            // prefix is built only from already-safe segments, so it is a traversal-free base; segments[index] is used
+            // here purely as a startAfter comparison string, so it needs no such check.
+            add(frontier, new DirCursor(store, prefix.toString(), segments[index]));
+            if (!safeSegment(segments[index])) {
+                safe = false;                                   // a '..'/empty segment is no real image path - stop deeper
+                break;
+            }
+            if (prefix.length() > 0) {
+                prefix.append('/');
+            }
+            prefix.append(segments[index]);
+        }
+        if (safe) {
+            add(frontier, new DirCursor(store, prefix.toString(), ""));   // prefix == last; its children all sort after it
+        }
+    }
+
+    /** A store-base segment is traversal-free when it is non-empty and neither {@code .} nor {@code ..} nor carries a
+     *  backslash - the {@link #isImageName} per-segment test, applied to a {@code last} query value before it is used
+     *  as part of an {@code oci/...} store base. */
+    private static boolean safeSegment(String segment) {
+        return !segment.isEmpty() && !segment.equals(".") && !segment.equals("..") && segment.indexOf('\\') < 0;
+    }
+
+    /** Add a cursor to the frontier only if it still has a child to peek - an exhausted cursor never enters. */
+    private static void add(PriorityQueue<DirCursor> frontier, DirCursor cursor) {
+        if (cursor.hasChild()) {
+            frontier.add(cursor);
+        }
+    }
+
+    /**
+     * A lazy, resumable cursor over the immediate child directory names of one {@code oci/} tree level, paged through
+     * {@link ArtifactStore#page} a bounded batch at a time and buffered, so a merge over a broad tree never lists a
+     * whole directory level into heap. The format's own sidecar prefixes ({@code types}, {@code uploads},
+     * {@code upload-sessions}) and the {@code tags} leaf are reserved by this layout and never image-name segments, so
+     * they are skipped. Exposes the next child's full image name for the frontier ordering.
+     */
+    private static final class DirCursor {
+
+        private final ArtifactStore store;
+        private final String prefix;                            // the image-name path of this level, "" = oci/ root
+        private final String base;                              // the store key prefix this level pages under
+        private final Deque<String> buffer = new ArrayDeque<>();
+        private String cursor;                                  // the store.page startAfter for the next batch
+        private boolean exhausted;
+
+        private DirCursor(ArtifactStore store, String prefix, String startAfter) {
+            this.store = store;
+            this.prefix = prefix;
+            this.base = prefix.isEmpty() ? "oci" : "oci/" + prefix;
+            this.cursor = startAfter;
+            fill();
+        }
+
+        /** Refill the buffer from the next store page(s), skipping the reserved sidecar / {@code tags} names, until it
+         *  holds a child or the level is drained - so {@link #peek} always sees the next real child if one remains. */
+        private void fill() {
+            while (buffer.isEmpty() && !exhausted) {
+                List<String> batch = new ArrayList<>();
+                store.page(base, cursor, PAGE_BATCH, batch::add);
+                if (batch.isEmpty()) {
+                    exhausted = true;
+                    return;
+                }
+                cursor = batch.getLast();
+                if (batch.size() < PAGE_BATCH) {
+                    exhausted = true;
+                }
+                for (String child : batch) {
+                    if (reserved(child)) {
+                        continue;
+                    }
+                    buffer.add(child);
+                }
+            }
+        }
+
+        /** The reserved children that are never image-name segments: the {@code tags} leaf at any level, and the
+         *  format's sidecar spaces at the {@code oci/} root ({@code prefix} empty). */
+        private boolean reserved(String child) {
+            return child.equals("tags") || prefix.isEmpty()
+                    && (child.equals("types") || child.equals("uploads") || child.equals("upload-sessions"));
+        }
+
+        private boolean hasChild() {
+            return !buffer.isEmpty();
+        }
+
+        /** The next child's full image name (the level prefix joined with the child segment) - the frontier key. */
+        private String peekFull() {
+            String child = buffer.peek();
+            return prefix.isEmpty() ? child : prefix + "/" + child;
+        }
+
+        private void advance() {
+            buffer.poll();
+            fill();
         }
     }
 
