@@ -3,6 +3,7 @@ package build.jenesis.repository.format.maven;
 import module java.base;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.ServableNames;
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
@@ -111,7 +112,7 @@ public final class MavenMetadata {
      * {@code <snapshotVersions>}) is returned untouched, and so is one that already lists every stored folder - only a
      * genuinely missing version rewrites the element, adding it in Maven version order.
      */
-    private byte[] reconcileVersions(String documentPath, byte[] storedXml) {
+    private byte[] reconcileVersions(String documentPath, byte[] storedXml) throws IOException {
         String xml = new String(storedXml, StandardCharsets.UTF_8);
         int open = xml.indexOf("<versions>");
         int contentStart;
@@ -133,13 +134,26 @@ public final class MavenMetadata {
             contentEnd = contentStart;
             selfClosed = true;
         }
-        List<String> folders = versions(coordinatePath(documentPath));
-        Set<String> existing = new HashSet<>(listedVersions(xml.substring(contentStart, contentEnd)));
-        if (existing.containsAll(folders)) {
+        String coordinatePath = coordinatePath(documentPath);
+        List<String> folders = versions(coordinatePath);
+        List<String> listed = listedVersions(xml.substring(contentStart, contentEnd));
+        // Screen the versions the STORED document itself lists, not only the folders (F5): a version withheld after
+        // the publisher authored the document must vanish from the reconciled <versions> too - its name must not
+        // survive in the served bytes - so reconcile can now REMOVE a held version, not only add a newly published
+        // folder. The screen stats no blob (HIDE_WITHHELD), so a fake-hash / no-blob / non-jar version the publisher
+        // listed is kept exactly as before; only a held one is dropped.
+        ServableNames servableNames = new ServableNames(store);
+        SequencedSet<String> union = new LinkedHashSet<>();
+        for (String version : listed) {
+            if (servableNames.disclosableVersionFolder("/maven/" + coordinatePath + "/" + version)) {
+                union.add(version);
+            }
+        }
+        union.addAll(folders);
+        if (union.equals(new LinkedHashSet<>(listed))) {
+            // Nothing to add and nothing withheld to drop - preserve the publisher's document byte-for-byte.
             return storedXml;
         }
-        SequencedSet<String> union = new LinkedHashSet<>(existing);
-        union.addAll(folders);
         List<String> reconciled = new ArrayList<>(union);
         reconciled.sort(MavenMetadata::compareVersions);
         String baseIndent = indentBefore(xml, open);
@@ -208,7 +222,7 @@ public final class MavenMetadata {
      * The bytes for a metadata request - the XML derived from the coordinate's published version folders, or its
      * SHA-1 / MD5 checksum - or empty if the path is not a metadata request or the coordinate has no versions.
      */
-    public Optional<byte[]> serve(String requestPath) {
+    public Optional<byte[]> serve(String requestPath) throws IOException {
         if (!isMetadataRequest(requestPath)) {
             return Optional.empty();
         }
@@ -234,7 +248,8 @@ public final class MavenMetadata {
         return Optional.of(xml);
     }
 
-    private List<String> versions(String coordinatePath) {
+    private List<String> versions(String coordinatePath) throws IOException {
+        ServableNames servableNames = new ServableNames(store);
         List<String> versions = new ArrayList<>();
         for (String child : store.list("publish/maven/" + coordinatePath)) {
             // The coordinate directory holds version folders alongside the artifact-level maven-metadata.xml and
@@ -244,6 +259,16 @@ public final class MavenMetadata {
             if (child.equals("maven-metadata.xml") || child.startsWith("maven-metadata.xml.")
                     || child.endsWith(".sha1") || child.endsWith(".md5") || child.endsWith(".sha256")
                     || child.endsWith(".sha512") || child.endsWith(".asc")) {
+                continue;
+            }
+            // Screen the version FOLDER through the one enumeration seam (F5): a withheld version's name must never
+            // appear in the served or reconciled <versions>/<latest>/<release>. HIDE_WITHHELD (the policy
+            // disclosableVersionFolder applies) stats NO blob, so a fake-hash / no-blob / non-jar-packaging version
+            // keeps listing - only a version a hold retracts (a quarantine review pointer, or the interceptor chain)
+            // is dropped. A hostile / non-ASCII folder name is contained inside the seam and fails closed, never an
+            // InvalidPathException out of metadata generation. This is packaging-neutral: no extension heuristic, the
+            // whole version folder is the unit of disclosure.
+            if (!servableNames.disclosableVersionFolder("/maven/" + coordinatePath + "/" + child)) {
                 continue;
             }
             versions.add(child);

@@ -126,6 +126,108 @@ class MavenMetadataTest {
                 .contains("<version>1.0</version>");
     }
 
+    /** Withhold a published version by linking a {@code /quarantine<servedPath>} review pointer under it - the
+     *  free-core hold convention every hold writer uses and the one {@code ServableNames.disclosableVersionFolder}
+     *  reads (a version with &ge;1 quarantine child is held). The served pointer stays, so the version FOLDER is still
+     *  enumerated by {@code store.list} - the screen, not the folder's absence, is what must hide it. */
+    private void withhold(String version, String leaf) throws IOException {
+        new Publication(store).link("/quarantine/maven/org/example/lib/" + version + "/" + leaf, "held-" + version);
+    }
+
+    @Test
+    void a_withheld_version_is_absent_from_the_served_metadata_and_from_latest_and_release() throws IOException {
+        // Trap #1: a version held after publication must not appear in <versions>, <latest> or <release>, even though
+        // its folder is still enumerated. Revert the disclosableVersionFolder screen and 2.0 reappears - load-bearing.
+        publish(List.of("1.0", "2.0"));
+        withhold("2.0", "lib-2.0.jar");
+
+        String xml = new String(metadata.serve("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).as("the held version's name never appears in the served index")
+                .doesNotContain("<version>2.0</version>").doesNotContain("2.0");
+        assertThat(xml).contains("<version>1.0</version>");
+        assertThat(xml).as("latest/release are re-derived over the surviving set only")
+                .contains("<latest>1.0</latest>").contains("<release>1.0</release>");
+        // Its own artifact GET already 404s (located empty), so hiding the name only closes the enumeration leak.
+        assertThat(new Publication(store).located("/maven/org/example/lib/2.0/lib-2.0.jar")).isEmpty();
+    }
+
+    @Test
+    void a_fake_hash_version_with_no_stored_blob_is_still_listed() throws IOException {
+        // Trap #2 - the exact case that reverted the last attempt: HIDE_WITHHELD stats no blob, so a version linked
+        // with a fake hash and no stored blob (its GET 404s) is NOT withheld and MUST keep listing. The distinction
+        // from trap #1 is the quarantine pointer alone - both versions here have fake hashes and no blob.
+        publish(List.of("1.0", "3.0"));
+
+        String xml = new String(metadata.serve("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).contains("<version>1.0</version>").contains("<version>3.0</version>");
+        assertThat(new Publication(store).located("/maven/org/example/lib/3.0/lib-3.0.jar"))
+                .as("blob is genuinely absent - the version is listed anyway, it is not withheld").isEmpty();
+    }
+
+    @Test
+    void a_non_ascii_version_folder_is_screened_without_crashing() throws IOException {
+        // Trap #3: the screen runs store.list over the version folder path; a non-ASCII folder name must not throw an
+        // InvalidPathException out of metadata generation (the seam contains it and fails closed). A servable
+        // non-ASCII version stays listed; a held non-ASCII version is hidden - both without a 500.
+        publish(List.of("1.0", "naïve", "café"));
+        withhold("café", "lib-café.jar");
+
+        String xml = new String(metadata.serve("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).as("a servable non-ASCII version survives the screen, no InvalidPathException")
+                .contains("<version>naïve</version>").contains("<version>1.0</version>");
+        assertThat(xml).as("a held non-ASCII version is hidden").doesNotContain("<version>café</version>");
+    }
+
+    @Test
+    void a_non_jar_packaging_version_is_screened_with_no_extension_heuristic() throws IOException {
+        // Trap #4: the screen is packaging-neutral - the whole version folder is the unit, no .jar-leaf heuristic. A
+        // .pom-only servable version lists; a .war-only held version hides.
+        publish(List.of("1.0"));
+        Publication publication = new Publication(store);
+        publication.link("/maven/org/example/lib/5.0/lib-5.0.pom", "abc5");   // .pom-only, servable
+        publication.link("/maven/org/example/lib/6.0/lib-6.0.war", "abc6");   // .war-only version...
+        withhold("6.0", "lib-6.0.war");                                       // ...held
+
+        String xml = new String(metadata.serve("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).as("a pom-only (non-jar) servable version is listed - no extension heuristic")
+                .contains("<version>5.0</version>").contains("<version>1.0</version>");
+        assertThat(xml).as("a held war-only version is hidden").doesNotContain("<version>6.0</version>");
+    }
+
+    @Test
+    void reconcile_drops_a_version_the_stored_document_lists_once_it_is_withheld() throws IOException {
+        // Trap #5: reconcileVersions must not re-add - and must actively remove - a withheld version, even one the
+        // publisher's own stored document already lists. The union is screened on both legs (folders AND the stored
+        // <versions>), so a version held after upload vanishes from the reconciled bytes.
+        store = ArtifactStoreProvider.resolve("filesystem",
+                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+        Publication publication = new Publication(store);
+        publication.link("/maven/org/example/lib/1.0/lib-1.0.jar", "abc1");
+        publication.link("/maven/org/example/lib/2.0/lib-2.0.jar", "abc2");
+        withhold("2.0", "lib-2.0.jar");
+        String stored = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata>\n  <groupId>org.example</groupId>\n"
+                + "  <artifactId>lib</artifactId>\n  <versioning>\n    <versions>\n      <version>1.0</version>\n"
+                + "      <version>2.0</version>\n    </versions>\n  </versioning>\n</metadata>\n";
+        publication.link("/maven/org/example/lib/maven-metadata.xml",
+                publication.storeBlob(new ByteArrayInputStream(stored.getBytes(StandardCharsets.UTF_8))));
+        metadata = new MavenMetadata(store);
+
+        String xml = new String(metadata.computed("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).as("the withheld version the stored document listed is removed on reconcile")
+                .doesNotContain("<version>2.0</version>");
+        assertThat(xml).contains("<version>1.0</version>");
+    }
+
     private static boolean order(String xml, String... versions) {
         int previous = -1;
         for (String version : versions) {
