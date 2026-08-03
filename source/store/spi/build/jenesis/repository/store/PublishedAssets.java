@@ -116,8 +116,17 @@ public final class PublishedAssets {
         if (names.state(requestPath) != ServableNames.State.SERVABLE) {
             return;
         }
-        String hash = publication.blob(requestPath).orElseThrow(
-                () -> new IOException("servable pointer vanished under " + requestPath));
+        // Race-tolerant follow-up read: the servable screen above and this pointer read are two separate store round
+        // trips, and a concurrent unpublish/evict/DELETE can remove the pointer in the window between them (a single
+        // store.exists stat on S3/GCS/Azure). A pointer that vanished after it screened SERVABLE is SKIPPED, not thrown
+        // - throwing here would abort the whole enumeration (truncating the /assets NDJSON export, 500-ing /api/assets),
+        // the pre-seam "skip and continue". This only relaxes a *vanished* pointer: a genuinely withheld path was
+        // already screened out above and never reaches here, so no withheld path is disclosed.
+        Optional<String> pointer = publication.blob(requestPath);
+        if (pointer.isEmpty()) {
+            return;
+        }
+        String hash = pointer.get();
         long size = store.size("blobs/" + hash);
         visitor.visit(new Entry(requestPath, size, hash));
         emitted[0]++;
