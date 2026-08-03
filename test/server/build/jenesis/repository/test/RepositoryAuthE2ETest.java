@@ -167,6 +167,22 @@ public class RepositoryAuthE2ETest {
     }
 
     @Test
+    public void the_deployment_wide_actuator_is_refused_a_repository_scoped_key() throws Exception {
+        // /actuator/metrics and /actuator/info serve DEPLOYMENT-WIDE operational data - Micrometer request
+        // counts/URIs/statuses across every repository, JVM internals, build info. Like /api/logs|consistency|posture
+        // they are bound to the deployment-wide scope "*", so a key scoped to a single repository cannot read them by
+        // naming its own repository. /actuator/health stays permit-all (liveness), reachable without a "*" grant.
+        assertThat(apiGet("/actuator/metrics", releasesRo).statusCode())
+                .as("a repository-scoped read key is refused the deployment-wide actuator metrics").isEqualTo(403);
+        assertThat(apiGet("/actuator/info", releasesRo).statusCode())
+                .as("... and the deployment-wide actuator info").isEqualTo(403);
+        assertThat(apiGet("/actuator/metrics", ro).statusCode())
+                .as("a deployment-wide (*) read key reads the actuator metrics").isEqualTo(200);
+        assertThat(apiGet("/actuator/health", releasesRo).statusCode())
+                .as("actuator health stays permit-all, reachable by a repository-scoped key").isEqualTo(200);
+    }
+
+    @Test
     public void a_percent_encoded_deployment_wide_route_cannot_evade_the_scope_rebind() throws Exception {
         // The "*"-scope rebind classifies on the DECODED path Spring routes on, not the raw request URI. Spring matches
         // the mapping against the decoded path, so /api/po%73ture still routes to PostureController; without decoding
