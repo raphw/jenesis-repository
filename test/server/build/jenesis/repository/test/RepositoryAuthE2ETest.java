@@ -145,13 +145,25 @@ public class RepositoryAuthE2ETest {
 
     @Test
     public void the_api_reads_are_key_gated_like_every_other_wire_read() throws Exception {
-        // W9.1: the deployment-wide /api reads (posture, capabilities) ride the same deny-by-default
-        // RepositoryAuthorizationManager as every other surface - no key is 401, a repository:read key is 200. They
-        // are not an open backdoor that enumerates the deployment (posture names every unsafe setting) without a key.
-        for (String path : List.of("/api/posture", "/api/capabilities")) {
-            assertThat(apiGet(path, null).statusCode()).as(path + " without a key -> 401").isEqualTo(401);
-            assertThat(apiGet(path, ro).statusCode()).as(path + " with a repository:read key -> 200").isEqualTo(200);
-        }
+        // W9.1: the /api reads ride the same deny-by-default RepositoryAuthorizationManager as every other surface - no
+        // key is 401, and they are not an open backdoor that enumerates the deployment without a key. /api/capabilities
+        // (the installed-feature list, not per-tenant data) is a repository:read surface like any other.
+        assertThat(apiGet("/api/capabilities", null).statusCode()).as("no key -> 401").isEqualTo(401);
+        assertThat(apiGet("/api/capabilities", ro).statusCode()).as("a repository:read key -> 200").isEqualTo(200);
+    }
+
+    @Test
+    public void the_deployment_wide_posture_is_refused_a_repository_scoped_key() throws Exception {
+        // /api/posture serves DEPLOYMENT-WIDE content - every tenant's unsafe-setting advisories (tenant, scope, the
+        // exact jenesis.* key/value). Like /api/logs and /api/consistency it is bound to the deployment-wide scope "*",
+        // so a key scoped to a single repository cannot read every other tenant's posture by naming its own repository
+        // (the cross-scope leak class the /api/assets ?repo re-scope closes). No key is 401; a repository-scoped read key
+        // is 403; only a wildcard ("*") read key reads the whole enumeration.
+        assertThat(apiGet("/api/posture", null).statusCode()).as("no key -> 401").isEqualTo(401);
+        assertThat(apiGet("/api/posture", releasesRo).statusCode())
+                .as("a repository-scoped read key is refused the deployment-wide posture").isEqualTo(403);
+        assertThat(apiGet("/api/posture", ro).statusCode())
+                .as("a deployment-wide (*) read key reads the whole posture").isEqualTo(200);
     }
 
     @Test

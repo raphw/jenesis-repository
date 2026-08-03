@@ -55,16 +55,18 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
                 scope = repo;
             }
         }
-        // GET /api/logs and GET /api/consistency serve DEPLOYMENT-WIDE content - every repository's / every tenant's log
-        // lines (logger names + messages carrying other scopes' coordinates, paths, errors) and the whole fleet's
-        // per-node consistency state. Authorizing them against the caller's self-named Jenesis-Repository-Name lets a
-        // key scoped to a single repository read every other scope's content by naming its own repository (a cross-scope
-        // leak, the same class the /api/assets ?repo re-scope closes). Bind them to the deployment-wide scope "*"
-        // instead, so only a key holding a wildcard (deployment-wide) grant may read them - a repository-scoped key is
-        // refused. A "*" grant still reads the whole view (the intended deployment-observability feature); a per-repo
-        // grant no longer does.
+        // GET /api/logs, GET /api/consistency and GET /api/posture serve DEPLOYMENT-WIDE content - every repository's /
+        // every tenant's log lines (logger names + messages carrying other scopes' coordinates, paths, errors), the
+        // whole fleet's per-node consistency state, and every tenant's unsafe-setting advisories (each posture row names
+        // the tenant, scope and the exact jenesis.* key/value that is unsafe - the deployment's whole security-weakness
+        // enumeration, though never a resolved secret value). Authorizing them against the caller's self-named
+        // Jenesis-Repository-Name lets a key scoped to a single repository read every other scope's content by naming its
+        // own repository (a cross-scope leak, the same class the /api/assets ?repo re-scope closes). Bind them to the
+        // deployment-wide scope "*" instead, so only a key holding a wildcard (deployment-wide) grant may read them - a
+        // repository-scoped key is refused. A "*" grant still reads the whole view (the intended deployment-observability
+        // feature); a per-repo grant no longer does.
         if (("GET".equals(method) || "HEAD".equals(method))
-                && ("/api/logs".equals(uri) || "/api/consistency".equals(uri))) {
+                && ("/api/logs".equals(uri) || "/api/consistency".equals(uri) || "/api/posture".equals(uri))) {
             scope = "*";
         }
         String key = request.getHeader("Jenesis-Repository-Key");
