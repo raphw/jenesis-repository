@@ -237,6 +237,36 @@ class RebuildPassTest {
     }
 
     @Test
+    void a_withheld_and_gc_reclaimed_pointer_is_skipped_not_delivered_as_torn() throws IOException {
+        ArtifactStore store = store("withheld-and-gone");
+        String served = publish(store, "/maven/app-1.0.jar", "served payload");
+        // A withheld artifact whose blob a later garbage collection ALSO reclaimed: the pointer stands, its blob is
+        // gone, and a retraction interceptor withholds the path. The former hand-rolled discrimination
+        // (located().isEmpty() && store.exists("blobs/" + named)) mis-classified this as a merely-torn pointer - the
+        // absent blob flipped the && to false, so it read "not withheld" and DELIVERED it, reinstating a withheld
+        // artifact into every rebuilt index. Through the seam the withhold probe runs first, so the state is WITHHELD
+        // and the pointer is correctly skipped - the one intended behaviour change of this migration.
+        String gone = publish(store, "/maven/app-1.1.jar", "withheld then reclaimed");
+        store.delete("blobs/" + gone);
+        Publication screened = new Publication(store, List.of(new PublishInterceptor() {
+            @Override
+            public boolean withheld(String path, ArtifactStore store) {
+                return path.equals("/maven/app-1.1.jar");
+            }
+        }));
+        Recording consumer = new Recording();
+
+        Optional<WalkPass> pass = RebuildPass.run(walk(), store, screened, List.of("publish"), List.of(consumer));
+
+        assertThat(pass).hasValueSatisfying(result -> assertThat(result.complete()).isTrue());
+        assertThat(consumer.derived).as("a withheld-and-reclaimed pointer is withheld, not torn - never delivered")
+                .containsOnlyKeys("/maven/app-1.0.jar")
+                .containsEntry("/maven/app-1.0.jar", served);
+        assertThat(consumer.derived).as("the withheld-and-gone artifact is not reinstated as a torn pointer")
+                .doesNotContainKey("/maven/app-1.1.jar");
+    }
+
+    @Test
     void reserved_roots_are_refused_and_no_consumer_means_nothing_is_enumerated() throws IOException {
         ArtifactStore store = store("guards");
         publish(store, "/artifact", "bytes");

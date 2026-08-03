@@ -3,6 +3,7 @@ package build.jenesis.repository.walk;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.ServableNames;
 
 import module java.base;
 
@@ -128,7 +129,7 @@ public final class RebuildPass {
 
         private final ArtifactWalk walk;
         private final ArtifactStore store;
-        private final Publication publication;
+        private final ServableNames names;
         private final List<WalkConsumer> consumers;
         private boolean started;
 
@@ -136,7 +137,7 @@ public final class RebuildPass {
                          List<WalkConsumer> consumers) {
             this.walk = walk;
             this.store = store;
-            this.publication = publication;
+            this.names = new ServableNames(store, publication);
             this.consumers = consumers;
         }
 
@@ -165,7 +166,7 @@ public final class RebuildPass {
                 return; // a sidecar row, marker or index - not a serving pointer, never delivered
             }
             String path = key.startsWith("publish/") ? key.substring("publish".length()) : key;
-            if (key.startsWith("publish/") && withheld(path, named)) {
+            if (key.startsWith("publish/") && withheld(path)) {
                 return; // withheld from serving - a GET would 404 it, so a rebuild must not reinstate it into an index
             }
             if (!started) {
@@ -180,17 +181,21 @@ public final class RebuildPass {
         }
 
         /** Whether the free {@code publish/} namespace withholds this request path from serving - the quarantine read
-         *  side {@code PublishedAssets} screens through {@link Publication#located}, mirrored here so a rebuild never
+         *  side {@code PublishedAssets} screens, mirrored here through the one servable-name seam so a rebuild never
          *  reinstates a withheld artifact into a consumer's index. The quarantine review subtree
          *  ({@code publish/quarantine/...}) is stored but never served, exactly as {@code PublishedAssets} never
-         *  descends it; and a screen that retracts an already-linked path after the fact leaves {@code located} empty
-         *  while its blob is still stored. A torn pointer whose blob is simply gone is not withheld - it is delivered
-         *  as the torn state a reconcile consumer repairs - so only a present-blob-but-unlocatable path is skipped. */
-        private boolean withheld(String requestPath, String named) throws IOException {
+         *  descends it. Otherwise the discrimination is the seam's first-class {@link ServableNames.State}: a
+         *  {@link ServableNames.State#WITHHELD} path (an interceptor retracts it, or a {@code withheld/<hash>} marker) is
+         *  skipped; a {@link ServableNames.State#BLOB_GONE} torn pointer is <em>not</em> withheld - it is delivered as
+         *  the torn state a reconcile consumer repairs. This replaces the former hand-rolled
+         *  {@code located().isEmpty() && blobs exists} test, which mis-classified a withheld-AND-gc-reclaimed pointer as
+         *  merely torn (its blob absent flipped the {@code &&} to false) and so delivered it; the seam runs the withhold
+         *  probe first, so such a pointer now reads {@code WITHHELD} and is correctly skipped. */
+        private boolean withheld(String requestPath) throws IOException {
             if (requestPath.equals("/quarantine") || requestPath.startsWith("/quarantine/")) {
                 return true;
             }
-            return publication.located(requestPath).isEmpty() && store.exists("blobs/" + named);
+            return names.state(requestPath) == ServableNames.State.WITHHELD;
         }
     }
 }

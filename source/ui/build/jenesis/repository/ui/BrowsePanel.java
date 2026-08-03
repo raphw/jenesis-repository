@@ -1,6 +1,7 @@
 package build.jenesis.repository.ui;
 
 import build.jenesis.repository.store.ArtifactStore;
+import build.jenesis.repository.store.ServableNames;
 
 import module java.base;
 
@@ -33,7 +34,7 @@ public final class BrowsePanel implements Panel {
         // /assets export never walks it), so it is not offered as a quick link - matching BrowseController's browse.
         List<String> namespaces = new ArrayList<>();
         for (String name : store.list("publish")) {
-            if (!name.equals("quarantine")) {
+            if (!ServableNames.reviewSubtree(name)) {
                 namespaces.add(name);
             }
         }

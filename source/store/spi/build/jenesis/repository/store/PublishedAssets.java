@@ -13,8 +13,9 @@ import module java.base;
  * <p>It is a pure metadata walk: each entry's path, size and SHA-256 come straight from the pointer (the pointer's
  * content <em>is</em> the hex digest; the size is a {@code blobs/<hash>} stat), <strong>no artifact blob is ever
  * opened</strong>, in keeping with the read-first bias. A path a {@link PublishInterceptor} withholds (a retracted or
- * quarantined artifact) is skipped through {@link Publication#located}, so the walk yields exactly what a {@code GET}
- * would, and the top-level {@code /quarantine} review subtree is never descended.
+ * quarantined artifact) is skipped through the {@link ServableNames servable-name seam} ({@link ServableNames#state}),
+ * so the walk yields exactly what a {@code GET} would, and the top-level {@code /quarantine} review subtree is never
+ * descended.
  *
  * <p>The order is a depth-first walk of the pointer tree - name-sorted siblings, each container fully descended
  * before the next sibling - so a caller can page by an opaque cursor (a resumed walk skips every entry that sorts at
@@ -29,12 +30,9 @@ public final class PublishedAssets {
     /** The store subtree the walk is rooted at: the formats' published request-path pointer tree. */
     private static final String ROOT = "publish";
 
-    /** The reserved top-level subtree under {@code publish/} holding artifacts the gate withholds: a {@code GET} does
-     *  not serve them, so the walk never descends it. */
-    private static final String QUARANTINE = "quarantine";
-
     private final ArtifactStore store;
     private final Publication publication;
+    private final ServableNames names;
 
     /** Walk the {@code publish/} tree of a doubly-scoped ({@code root.scope(tenant).scope(repository)}) store. */
     public PublishedAssets(ArtifactStore store) {
@@ -46,6 +44,7 @@ public final class PublishedAssets {
     public PublishedAssets(ArtifactStore store, Publication publication) {
         this.store = store;
         this.publication = publication;
+        this.names = new ServableNames(store, publication);
     }
 
     /** One walked pointer fact: the serving request path (leading slash), the blob's stored size, and the SHA-256 hex
@@ -93,7 +92,7 @@ public final class PublishedAssets {
             }
             for (int index = children.size() - 1; index >= 0; index--) {
                 String child = children.get(index);
-                if (relative.isEmpty() && child.equals(QUARANTINE)) {
+                if (relative.isEmpty() && ServableNames.reviewSubtree(child)) {
                     // The quarantine review subtree is stored but never served; it is not an enumerable asset.
                     continue;
                 }
@@ -111,14 +110,15 @@ public final class PublishedAssets {
             return;
         }
         String requestPath = "/" + relative;
-        Optional<String> located = publication.located(requestPath);
-        if (located.isEmpty()) {
-            // Withheld (quarantine interceptor) or the blob is gone - not a served asset, so not enumerable.
+        // The one enumeration screen: a leaf is an enumerable asset only when a GET would serve it (published, blob
+        // present, not withheld) - routed through the servable-name seam so this walk and a download can never disagree
+        // on what is held. Withheld (a retraction interceptor) or blob-gone leaves are skipped, exactly as before.
+        if (names.state(requestPath) != ServableNames.State.SERVABLE) {
             return;
         }
-        String key = located.get();
-        String hash = key.substring("blobs/".length());
-        long size = store.size(key);
+        String hash = publication.blob(requestPath).orElseThrow(
+                () -> new IOException("servable pointer vanished under " + requestPath));
+        long size = store.size("blobs/" + hash);
         visitor.visit(new Entry(requestPath, size, hash));
         emitted[0]++;
     }

@@ -3,6 +3,7 @@ package build.jenesis.repository.ui;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.store.PublishedAssets;
+import build.jenesis.repository.store.ServableNames;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -34,18 +35,16 @@ public class BrowseController {
     /** The store subtree the browse is rooted at: the formats' published request-path pointer tree. */
     private static final String ROOT = "publish";
 
-    /** The reserved top-level subtree under {@code publish/} that holds artifacts the gate is withholding: a GET does
-     *  not serve them and the {@code /assets} export never walks them, so the interactive browse hides it too. */
-    private static final String QUARANTINE = "quarantine";
-
     private final ArtifactStore store;
     private final Publication publication;
     private final PublishedAssets assets;
+    private final ServableNames names;
 
     public BrowseController(ArtifactStore store) {
         this.store = store;
         this.publication = new Publication(store);
         this.assets = new PublishedAssets(store, publication);
+        this.names = new ServableNames(store, publication);
     }
 
     /** The full browse page: the breadcrumb trail to {@code path} and the immediate children under it. */
@@ -146,15 +145,17 @@ public class BrowseController {
         int[] seen = {0};
         // Page the immediate children (one past the cap, to detect truncation) instead of materialising the whole
         // directory as one List; a real backend seeks rather than re-lists. The withheld-review subtree is never part
-        // of the served namespace, so it is skipped at the root. A leaf is disclosed only when located() resolves it
-        // (published, blob present, not withheld) - the same serve-screen the raw listing and the /assets export
-        // apply, so the browse never leaks the name or tree position of an artifact a GET would 404: a retracted or
-        // quarantined artifact, or a pointer whose blob a garbage collection reclaimed. A sub-directory is kept
-        // unconditionally (it is a listing, not a servable leaf). `seen` counts the raw children so a screened-out
-        // leaf can never hide the truncation flag (it stays keyed on the store's child count, not the rendered rows).
+        // of the served namespace, so it is skipped at the root (through the servable-name seam's one home of the
+        // reserved name). A leaf is disclosed only when the seam judges it servable under HIDE_WITHHELD_AND_GONE
+        // (published, blob present, not withheld) - the same serve-screen the raw listing and the /assets export apply,
+        // routed through the one seam so the browse can never disagree with a GET on what is held: a retracted or
+        // quarantined artifact, or a pointer whose blob a garbage collection reclaimed, is never leaked by name or tree
+        // position. A sub-directory is kept unconditionally (it is a listing, not a servable leaf). `seen` counts the
+        // raw children so a screened-out leaf can never hide the truncation flag (it stays keyed on the store's child
+        // count, not the rendered rows).
         try {
             store.page(prefix, "", MAX_CHILDREN + 1, name -> {
-                if (path.isEmpty() && name.equals(QUARANTINE)) {
+                if (path.isEmpty() && ServableNames.reviewSubtree(name)) {
                     return;
                 }
                 seen[0]++;
@@ -168,9 +169,12 @@ public class BrowseController {
                     if (folder) {
                         size = "—";
                     } else {
+                        if (!names.disclosable("/" + childPath, ServableNames.Policy.HIDE_WITHHELD_AND_GONE)) {
+                            return;                      // a leaf a GET would not serve: do not disclose its name
+                        }
                         Optional<String> located = publication.located("/" + childPath);
                         if (located.isEmpty()) {
-                            return;                      // a leaf a GET would not serve: do not disclose its name
+                            return;                      // raced away between the screen and the size read
                         }
                         long bytes = store.size(located.get());
                         size = bytes < 0 ? "—" : humanSize(bytes);
@@ -248,7 +252,7 @@ public class BrowseController {
             if (segment.isEmpty() || segment.equals(".") || segment.equals("..") || segment.indexOf('\\') >= 0) {
                 continue;
             }
-            if (safe.length() == 0 && segment.equals(QUARANTINE)) {
+            if (safe.length() == 0 && ServableNames.reviewSubtree(segment)) {
                 // A leading "quarantine" segment would navigate into the withheld-artifact review subtree, whose paths
                 // and sizes a GET does not serve; drop it (a deeper "quarantine" is a legitimate artifact-path segment
                 // and is kept), so a crafted ?path=quarantine/... cannot enumerate held artifacts.

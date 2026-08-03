@@ -3,6 +3,7 @@ package build.jenesis.repository.format.raw;
 import module java.base;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.Publication;
+import build.jenesis.repository.store.ServableNames;
 import build.jenesis.repository.format.FormatExchange;
 import build.jenesis.repository.format.ProxyFormat;
 import build.jenesis.repository.format.RepositoryFormat;
@@ -115,18 +116,20 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat, Repositor
 
     private void listing(String path, ArtifactStore store, FormatExchange exchange) throws IOException {
         String prefix = "publish" + path.substring(0, path.length() - 1);
-        // The directory listing must not disclose a leaf a GET/HEAD would not serve: located() applies the withheld
-        // (quarantine/retraction) screens, so a withheld artifact 404s on GET but its pointer name still lives under
-        // publish/, and writing every child verbatim leaked the existence - and the name - of a withheld artifact.
-        // Screen each leaf the same way the item routes do. A child that is itself a directory (it has its own
-        // children under publish/) is a sub-listing, not a servable leaf, so it is kept unconditionally; a leaf is
-        // kept only when located() resolves it (published, blob present, not withheld).
+        // The directory listing must not disclose a leaf a GET/HEAD would not serve: the servable-name seam applies the
+        // withheld (quarantine/retraction) screen under HIDE_WITHHELD_AND_GONE - serve-parity - so a withheld artifact
+        // 404s on GET but its pointer name still lives under publish/, and writing every child verbatim leaked the
+        // existence - and the name - of a withheld artifact. Screen each leaf through the one seam the item routes'
+        // located() also delegates to, so the listing can never disagree with a GET on what is held. A child that is
+        // itself a directory (it has its own children under publish/) is a sub-listing, not a servable leaf, so it is
+        // kept unconditionally; a leaf is kept only when the seam judges it servable (published, blob present, not
+        // withheld).
         //
         // Page the immediate children rather than materialising the whole directory as one list() snapshot, and probe
         // folder-ness with a bounded one-element page instead of listing (and discarding) each child's entire subtree -
         // the old list(child).isEmpty() was a full subtree scan per child, quadratic across a large directory. Only the
         // screened-visible names are retained (they are rendered anyway); the raw child set is never held whole.
-        Publication publication = new Publication(store);
+        ServableNames names = new ServableNames(store, new Publication(store));
         List<String> visible = new ArrayList<>();
         List<String> page = new ArrayList<>();
         String startAfter = "";
@@ -134,7 +137,8 @@ public final class RawFormat implements RepositoryFormat, ProxyFormat, Repositor
             page.clear();
             store.page(prefix, startAfter, LISTING_PAGE, page::add);
             for (String child : page) {
-                if (hasChild(store, prefix + "/" + child) || publication.located(path + child).isPresent()) {
+                if (hasChild(store, prefix + "/" + child)
+                        || names.disclosable(path + child, ServableNames.Policy.HIDE_WITHHELD_AND_GONE)) {
                     visible.add(child);
                 }
             }

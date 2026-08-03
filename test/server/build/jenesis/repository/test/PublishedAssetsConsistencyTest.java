@@ -80,6 +80,30 @@ class PublishedAssetsConsistencyTest {
         }
     }
 
+    @Test
+    void a_leaf_a_get_would_not_serve_is_screened_out_of_both_surfaces() throws IOException {
+        // A pointer whose blob a garbage collection reclaimed (or a retraction left unlocatable): a GET 404s it, so
+        // the enumeration - routed through the servable-name seam's state() == SERVABLE screen rather than a bespoke
+        // per-surface check - must omit it from both the catalogue and the shared walk, exactly as the per-leaf
+        // located() screen did before the migration. Without the screen the pointer name (and its tree position)
+        // would leak into an enumeration a GET does not back.
+        String hash = publication.storeBlob(
+                new ByteArrayInputStream("reclaimed bytes".getBytes(StandardCharsets.UTF_8)));
+        publication.link("/maven/com/acme/app/3.0/app-3.0.pom", hash);
+        store.delete("blobs/" + hash);
+
+        List<AssetCatalog.Asset> catalogued = catalog.page(null, 100).assets();
+        List<PublishedAssets.Entry> walked = new ArrayList<>();
+        assets.walk(null, Integer.MAX_VALUE, walked::add);
+
+        assertThat(walked).extracting(PublishedAssets.Entry::path)
+                .as("a leaf whose blob a GET would 404 is screened out of the shared walk")
+                .doesNotContain("/maven/com/acme/app/3.0/app-3.0.pom");
+        assertThat(catalogued).extracting(AssetCatalog.Asset::path)
+                .as("and out of the format-enriched catalogue the two surfaces share")
+                .doesNotContain("/maven/com/acme/app/3.0/app-3.0.pom");
+    }
+
     private void link(String path, String content) throws IOException {
         publication.link(path, publication.storeBlob(
                 new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))));

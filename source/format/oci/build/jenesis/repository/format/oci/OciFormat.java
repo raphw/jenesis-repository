@@ -8,6 +8,7 @@ import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
+import build.jenesis.repository.store.ServableNames;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -462,6 +463,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         }
         String last = exchange.queryParameter("last");
         String base = "oci/" + name + "/tags";
+        ServableNames names = new ServableNames(store);
         List<String> tags = new ArrayList<>();
         boolean more = false;
         String cursor = last == null ? "" : last;
@@ -474,7 +476,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             }
             cursor = batch.getLast();
             for (String tag : batch) {
-                if (tagWithheld(store, name, tag)) {
+                if (tagWithheld(names, store, name, tag)) {
                     continue;                                   // over-fetch past a withheld tag, never disclosing it
                 }
                 if (tags.size() == limit) {
@@ -522,14 +524,22 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
      *  {@code oci/<name>/tags/<tag>} pointer to a digest, then screened by the same {@code withheld/<hash>} marker the
      *  blob and manifest serve paths honour (the one seam a held image 404s through). A tag whose pointer is missing or
      *  does not resolve to a real digest is not treated as withheld here - it is not a held artifact, and the serve
-     *  path's own guards answer it - so only a genuinely held tag is dropped from the catalog and the tags/list. */
-    private static boolean tagWithheld(ArtifactStore store, String name, String tag) throws IOException {
+     *  path's own guards answer it - so only a genuinely held tag is dropped from the catalog and the tags/list.
+     *
+     *  <p>The tag pointer stores the digest in its {@code sha256:<hex>} display form (see {@link #linkTag}), so the
+     *  marker probe is routed through {@link ServableNames#withheldHash} on the bare {@code hex} the {@code withheld/}
+     *  marker is keyed by - not {@link ServableNames#disclosableKey}, which would probe {@code withheld/} with the
+     *  {@code sha256:}-prefixed pointer content and so never match the bare-hex marker. This is the same seam face the
+     *  blob and manifest serve paths honour, kept behaviour-identical to the former inline
+     *  {@code store.exists("withheld/" + hex)}. */
+    private static boolean tagWithheld(ServableNames names, ArtifactStore store, String name, String tag)
+            throws IOException {
         Optional<ArtifactStore.Versioned> pointer = store.readVersioned("oci/" + name + "/tags/" + tag);
         if (pointer.isEmpty()) {
             return false;
         }
         String hex = hex(new String(pointer.get().content(), StandardCharsets.UTF_8).trim());
-        return isDigestHex(hex) && store.exists("withheld/" + hex);
+        return isDigestHex(hex) && names.withheldHash(hex);
     }
 
     /**
@@ -558,7 +568,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             return;                                             // a non-numeric or non-positive n is a 400, already sent
         }
         String last = exchange.queryParameter("last");
-        CatalogPage catalog = catalogPage(store, last, limit);
+        CatalogPage catalog = catalogPage(store, new ServableNames(store), last, limit);
         List<String> repositories = catalog.names();
         if (catalog.more()) {
             exchange.setResponseHeader("Link", "</v2/_catalog?n=" + limit + "&last="
@@ -590,10 +600,11 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
      * <p>Resume is a seek, not a rescan: {@link #seed} primes the frontier with cursors that only ever yield names
      * strictly greater than {@code last}, so a page never re-walks the names already served on earlier pages.
      */
-    private CatalogPage catalogPage(ArtifactStore store, String last, int limit) throws IOException {
+    private CatalogPage catalogPage(ArtifactStore store, ServableNames names, String last, int limit)
+            throws IOException {
         PriorityQueue<DirCursor> frontier = new PriorityQueue<>(Comparator.comparing(DirCursor::peekFull));
         seed(store, last, frontier);
-        List<String> names = new ArrayList<>();
+        List<String> repositories = new ArrayList<>();
         boolean more = false;
         while (!frontier.isEmpty()) {
             DirCursor cursor = frontier.poll();
@@ -609,15 +620,15 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
             // An image is catalogued only if it has a surviving (non-withheld) tag: a fully-held image - every tag's
             // manifest withheld - must not be disclosed while its bytes 404 (AUDIT §5/§8), just as a held tag is
             // dropped from tags/list. A childless parent name (no tags of its own) is screened out the same way.
-            if (hasSurvivingTag(store, name)) {
-                if (names.size() == limit) {
+            if (hasSurvivingTag(names, store, name)) {
+                if (repositories.size() == limit) {
                     more = true;                                // a servable name beyond the page proves a next page
                     break;
                 }
-                names.add(name);
+                repositories.add(name);
             }
         }
-        return new CatalogPage(names, more);
+        return new CatalogPage(repositories, more);
     }
 
     /** Prime the merge frontier so every name it yields is strictly greater than {@code last} - the resume seek. With
@@ -739,9 +750,9 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
     /** Whether {@code name} carries at least one non-withheld tag - the catalog inclusion test. Short-circuits at the
      *  first surviving tag, so an image with any servable tag costs one pointer resolve, and a wholly-withheld one is
      *  screened over the tag listing already in hand (bounded, §7 - never an unbounded re-list per image). */
-    private static boolean hasSurvivingTag(ArtifactStore store, String name) throws IOException {
+    private static boolean hasSurvivingTag(ServableNames names, ArtifactStore store, String name) throws IOException {
         for (String tag : store.list("oci/" + name + "/tags")) {
-            if (!tagWithheld(store, name, tag)) {
+            if (!tagWithheld(names, store, name, tag)) {
                 return true;
             }
         }
