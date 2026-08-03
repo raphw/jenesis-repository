@@ -7,6 +7,7 @@ import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.authorization.AuthorizationResult;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
+import org.springframework.web.util.UriUtils;
 
 import module java.base;
 
@@ -42,7 +43,18 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
         String required = method.equals("GET") || method.equals("HEAD")
                 ? Authorization.REPOSITORY_READ
                 : Authorization.REPOSITORY_WRITE;
-        String uri = request.getRequestURI();
+        // Classify on the percent-DECODED, normalized path Spring actually routes on, not the raw request URI. Spring
+        // matches the mapping against the decoded path, so a percent-encoded route (e.g. GET /api/%6cogs, /api/%61ssets)
+        // reaches RecentLogsController / the asset enumeration while a raw-URI equals() below would miss it - letting a
+        // repository-scoped key evade the deployment-wide "*" rebind (/api/logs, /api/consistency, /api/posture) or the
+        // /api/assets ?repo re-scope and read another scope's content. Decode, then reject an un-normalized URI (an empty
+        // "//" or dot "/./"/"/.." segment, incl. a %2f/%2e that decodes into one) outright - never a legitimate artifact,
+        // /api or /actuator route - so it cannot slip a deployment-wide read past these equals() checks either.
+        String uri = UriUtils.decode(request.getRequestURI(), StandardCharsets.UTF_8);
+        if (!normalized(uri)) {
+            request.setAttribute("jenesis.repository.decision", Authorization.Decision.FORBIDDEN);
+            return new AuthorizationDecision(false);
+        }
         String scope = request.getHeader("Jenesis-Repository-Name");
         // The asset enumeration scopes the store it reads by the ?repo= parameter, not the routed name, so authorize
         // the repository that is actually enumerated - otherwise a key scoped to repository A could satisfy the header
@@ -103,5 +115,16 @@ public class RepositoryAuthorizationManager implements AuthorizationManager<Requ
     private static String clientAddress(HttpServletRequest request) {
         return Authorization.clientAddress(
                 request.getRemoteAddr(), request.getHeader("X-Forwarded-For"), List.of());
+    }
+
+    /** Whether the (already percent-decoded) request path is normalized - carries no empty ({@code //}) or dot
+     *  ({@code /.}, {@code /..}) segment. Spring routes on the normalized path, so an un-normalized URI would reach a
+     *  controller while the equals()-based scope rebinds above misread it; a legitimate artifact, {@code /api} or
+     *  {@code /actuator} route never carries such a segment, so a request that does is rejected rather than classified.
+     *  A trailing single slash is left alone - it does not shift an equals() match. Public for a direct unit test. */
+    public static boolean normalized(String path) {
+        return !path.contains("//")
+                && !path.contains("/./") && !path.contains("/../")
+                && !path.endsWith("/.") && !path.endsWith("/..");
     }
 }

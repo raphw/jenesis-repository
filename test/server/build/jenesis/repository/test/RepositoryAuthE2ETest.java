@@ -167,6 +167,20 @@ public class RepositoryAuthE2ETest {
     }
 
     @Test
+    public void a_percent_encoded_deployment_wide_route_cannot_evade_the_scope_rebind() throws Exception {
+        // The "*"-scope rebind classifies on the DECODED path Spring routes on, not the raw request URI. Spring matches
+        // the mapping against the decoded path, so /api/po%73ture still routes to PostureController; without decoding
+        // here a raw-URI equals() would miss it and revert to the caller's self-named scope, letting a repository-scoped
+        // key read the deployment-wide posture. StrictHttpFirewall permits an encoded alphanumeric like %73, so only
+        // decoding closes this. The repo-scoped key is refused the encoded route; the wildcard key still reads it.
+        assertThat(apiGet("/api/po%73ture", releasesRo).statusCode())
+                .as("a percent-encoded deployment-wide route is refused a repository-scoped key, not bypassed")
+                .isEqualTo(403);
+        assertThat(apiGet("/api/po%73ture", ro).statusCode())
+                .as("a wildcard (*) key still reads the route on its decoded path").isEqualTo(200);
+    }
+
+    @Test
     public void the_admin_import_trigger_is_authorized_as_a_write() throws Exception {
         // W9.1: POST /repository/admin/import is a state-changing background-job trigger; it is a repository:write like
         // any other mutation. No key is 401; a repository:read-only key is refused (403); a write key clears
