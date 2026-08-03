@@ -74,12 +74,29 @@ public final class Publication {
      *  the path - the quarantine read side, so a verdict that changes after the fact retracts a linked artifact from
      *  every serving surface without touching its pointer. */
     public Optional<String> located(String requestPath) throws IOException {
+        // Delegate the servable-vs-not discrimination to the one enumeration seam so serve and enumeration can never
+        // disagree (located empty iff state != SERVABLE); the seam composes this same publication's interceptor chain
+        // and the withheld/<hash> marker convention. This is a behaviour-preserving refactor of the former inline
+        // "chain withheld -> pointer resolve -> blobs/<hash> exists" (with the one gain the seam brings: a hostile,
+        // unresolvable request path now fails closed to empty rather than throwing an InvalidPathException out of a
+        // serve), so a linked, present, non-withheld path still resolves to blobs/<hash> exactly as before.
+        if (new ServableNames(store, this).state(requestPath) != ServableNames.State.SERVABLE) {
+            return Optional.empty();
+        }
+        return blob(requestPath).map(hash -> "blobs/" + hash);
+    }
+
+    /** Whether any interceptor in this publication's chain withholds the request path from serving - the chain probe
+     *  {@link #located} runs, factored out so {@link ServableNames} composes the caller's interceptor list rather than
+     *  discovering a second one. A verdict-bearing {@code withheld} that fails closed by throwing propagates exactly as
+     *  it does through {@link #located}. */
+    boolean withheld(String requestPath) throws IOException {
         for (PublishInterceptor interceptor : interceptors) {
             if (interceptor.withheld(requestPath, store)) {
-                return Optional.empty();
+                return true;
             }
         }
-        return blob(requestPath).map(hash -> "blobs/" + hash).filter(store::exists);
+        return false;
     }
 
     /** Stream content once, content-addressed while it is read, and return its hash - so a large artifact goes from the
