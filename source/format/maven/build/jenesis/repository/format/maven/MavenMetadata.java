@@ -144,9 +144,15 @@ public final class MavenMetadata {
         // listed is kept exactly as before; only a held one is dropped.
         ServableNames servableNames = new ServableNames(store);
         SequencedSet<String> union = new LinkedHashSet<>();
+        boolean withheldAny = false;
         for (String version : listed) {
             if (servableNames.disclosableVersionFolder("/maven/" + coordinatePath + "/" + version)) {
                 union.add(version);
+            } else {
+                // A version the publisher's stored document lists has since been withheld: it drops from the
+                // reconciled <versions>, and (F5) its name must also not survive in <latest>/<release>, which the
+                // stored document preserves verbatim. Re-derive those below over the screened set only.
+                withheldAny = true;
             }
         }
         union.addAll(folders);
@@ -169,7 +175,55 @@ public final class MavenMetadata {
         }
         rebuilt.append('\n').append(baseIndent).append("</versions>");
         rebuilt.append(xml, selfClosed ? contentStart : contentEnd + "</versions>".length(), xml.length());
-        return rebuilt.toString().getBytes(StandardCharsets.UTF_8);
+        String reconciledXml = rebuilt.toString();
+        if (withheldAny) {
+            // A withheld version's name must never survive in <latest>/<release> (the reconcile's own invariant). The
+            // stored document preserves them verbatim, so re-derive both from the SCREENED set exactly as the sibling
+            // derivation path metadata() does: latest = newest screened version, release = newest screened
+            // non-SNAPSHOT (Maven semantics). Only touched when a version was actually withheld, so an add-only
+            // reconcile leaves the publisher's latest/release exactly as before. An element the publisher did not
+            // write stays absent (a withheld name cannot leak through a field that is not there); a null re-derivation
+            // (screened set empty, or no non-SNAPSHOT for release) removes the element rather than name a held version.
+            String latest = reconciled.isEmpty() ? null : reconciled.getLast();
+            String release = null;
+            for (String version : reconciled) {
+                if (!version.endsWith("-SNAPSHOT")) {
+                    release = version;
+                }
+            }
+            reconciledXml = rederiveElement(reconciledXml, "latest", latest);
+            reconciledXml = rederiveElement(reconciledXml, "release", release);
+        }
+        return reconciledXml.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Re-derive a single {@code <name>...</name>} element the reconcile must not leave naming a withheld version:
+     *  replace its text with {@code value} (XML-escaped as the derivation path escapes it), or remove the whole element
+     *  when {@code value} is null so no held name survives. A document that does not carry the element is returned
+     *  unchanged - a name cannot leak through a field the publisher never wrote. Only the first occurrence is rewritten;
+     *  {@code <latest>}/{@code <release>} are single-valued in a well-formed {@code maven-metadata.xml}. */
+    private static String rederiveElement(String xml, String name, String value) {
+        String openTag = "<" + name + ">";
+        String closeTag = "</" + name + ">";
+        int open = xml.indexOf(openTag);
+        if (open < 0) {
+            return xml; // element absent (or self-closed) - nothing the publisher wrote can name a held version here
+        }
+        int close = xml.indexOf(closeTag, open + openTag.length());
+        if (close < 0) {
+            return xml;
+        }
+        int end = close + closeTag.length();
+        if (value != null) {
+            return xml.substring(0, open) + openTag + xmlText(value) + closeTag + xml.substring(end);
+        }
+        // Remove the element together with the whitespace-only run leading up to it on its own line, so dropping a
+        // release whose value went away leaves no dangling blank line in the reconciled document.
+        int lineStart = xml.lastIndexOf('\n', open);
+        if (lineStart >= 0 && xml.substring(lineStart + 1, open).isBlank()) {
+            return xml.substring(0, lineStart) + xml.substring(end);
+        }
+        return xml.substring(0, open) + xml.substring(end);
     }
 
     /** Escape a text node for the hand-built reconcile document - the character-data escapes {@code XMLStreamWriter

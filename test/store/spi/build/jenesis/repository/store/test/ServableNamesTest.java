@@ -255,6 +255,54 @@ class ServableNamesTest {
                 .as("the chain withholding a leaf hides the whole version folder").isFalse();
     }
 
+    @Test
+    void a_chain_withheld_leaf_beyond_the_old_32_cap_is_now_screened_by_the_raised_cap() throws IOException {
+        // FIX 3: the chain leg formerly probed only the first 32 leaves and failed OPEN past that - a folder with a
+        // withheld leaf sitting beyond leaf 32 leaked its version name. The cap is raised well above any legitimate
+        // version folder, so this 40-leaf folder is probed in full and the held leaf at sorted index 35 is now found.
+        MapStore store = new MapStore();
+        for (int leaf = 0; leaf < 40; leaf++) {
+            store.pointer(String.format("publish/maven/g/a/1/leaf-%03d.jar", leaf), HASH_A);
+        }
+        store.blob(HASH_A);
+        Withholding chain = new Withholding("/maven/g/a/1/leaf-035.jar");   // sorts at index 35 - past the old 32 cap
+        ServableNames names = new ServableNames(store, new Publication(store, List.of(chain)));
+
+        assertThat(names.disclosableVersionFolder("/maven/g/a/1"))
+                .as("a withheld leaf beyond the old 32-probe prefix is now caught (was fail-open leak)").isFalse();
+    }
+
+    @Test
+    void a_normal_folder_wider_than_the_old_cap_but_within_the_raised_cap_still_discloses() throws IOException {
+        // The control: a folder wider than the old 32 cap but within the raised bound, with NO withheld leaf, is
+        // probed in full and still discloses - the raise does not wrongly hide a legitimately large version folder.
+        MapStore store = new MapStore();
+        for (int leaf = 0; leaf < 40; leaf++) {
+            store.pointer(String.format("publish/maven/g/a/2/leaf-%03d.jar", leaf), HASH_A);
+        }
+        store.blob(HASH_A);
+        ServableNames names = new ServableNames(store);   // empty chain, no quarantine
+
+        assertThat(names.disclosableVersionFolder("/maven/g/a/2"))
+                .as("a normal >old-cap folder within the raised bound still discloses").isTrue();
+    }
+
+    @Test
+    void a_folder_wider_than_the_raised_cap_fails_closed() throws IOException {
+        // FIX 3: past the raised probe bound the folder fails CLOSED rather than fail-open - a pathologically wide
+        // folder cannot be probed exhaustively without unbounding the chain fan-out, so it is screened even with no
+        // withheld leaf and the free (empty) chain. (PROBE_CAP is 512; 700 leaves exceeds it.)
+        MapStore store = new MapStore();
+        for (int leaf = 0; leaf < 700; leaf++) {
+            store.pointer(String.format("publish/maven/g/a/9/leaf-%04d.jar", leaf), HASH_A);
+        }
+        store.blob(HASH_A);
+        ServableNames names = new ServableNames(store);   // empty chain, no quarantine, no withheld leaf
+
+        assertThat(names.disclosableVersionFolder("/maven/g/a/9"))
+                .as("a folder wider than the raised probe bound is screened (fail-closed past the cap)").isFalse();
+    }
+
     // ---- doubles -----------------------------------------------------------------------------------------------
 
     /** An interceptor that withholds exactly the request paths it is constructed with - the free chain is empty, so

@@ -228,6 +228,37 @@ class MavenMetadataTest {
         assertThat(xml).contains("<version>1.0</version>");
     }
 
+    @Test
+    void reconcile_re_derives_latest_and_release_over_the_screened_set_when_a_version_is_withheld() throws IOException {
+        // FIX 1: a stored document's <latest>/<release> were preserved verbatim while only <versions> was screened, so
+        // a withheld newest version's name still leaked through <latest>/<release>. Reconcile must re-derive both from
+        // the SCREENED set: latest = newest screened, release = newest screened non-SNAPSHOT (matching metadata()).
+        store = ArtifactStoreProvider.resolve("filesystem",
+                key -> "JENESIS_STORE_ROOT".equals(key) ? root.toString() : null);
+        Publication publication = new Publication(store);
+        publication.link("/maven/org/example/lib/1.0/lib-1.0.jar", "abc1");
+        publication.link("/maven/org/example/lib/2.0/lib-2.0.jar", "abc2");
+        withhold("2.0", "lib-2.0.jar");                                       // 2.0 held after the document was authored
+        String stored = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata>\n  <groupId>org.example</groupId>\n"
+                + "  <artifactId>lib</artifactId>\n  <versioning>\n    <latest>2.0</latest>\n    <release>2.0</release>\n"
+                + "    <versions>\n      <version>1.0</version>\n      <version>2.0</version>\n    </versions>\n"
+                + "  </versioning>\n</metadata>\n";
+        publication.link("/maven/org/example/lib/maven-metadata.xml",
+                publication.storeBlob(new ByteArrayInputStream(stored.getBytes(StandardCharsets.UTF_8))));
+        metadata = new MavenMetadata(store);
+
+        String xml = new String(metadata.computed("/maven/org/example/lib/maven-metadata.xml").orElseThrow(),
+                StandardCharsets.UTF_8);
+
+        assertThat(xml).as("the withheld version's name never survives anywhere in the reconciled document")
+                .doesNotContain("2.0");
+        assertThat(xml).as("<versions> keeps only the surviving version").contains("<version>1.0</version>");
+        assertThat(xml).as("latest is re-derived to the newest screened version")
+                .contains("<latest>1.0</latest>");
+        assertThat(xml).as("release is re-derived to the newest screened non-SNAPSHOT")
+                .contains("<release>1.0</release>");
+    }
+
     private static boolean order(String xml, String... versions) {
         int previous = -1;
         for (String version : versions) {

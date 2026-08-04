@@ -45,6 +45,22 @@ public final class Publication {
             .map(observer -> (PublishInterceptor) observer)
             .toList();
 
+    /** The reserved review-subtree request-path root ({@code /quarantine}) - the pointer face of the hold convention
+     *  whose enumeration face is {@link ServableNames#QUARANTINE}. A hold writer links a review pointer at
+     *  {@code /quarantine/<servedPath>}; this is that {@code /quarantine} prefix as a request path. */
+    private static final String QUARANTINE_PATH = "/quarantine";
+
+    /** Whether a request path is a {@code /quarantine} review pointer - the pointer face of the withhold-change feed -
+     *  matched on the exact {@code /}-subtree boundary the enumeration seam ({@link ServableNames#reviewSubtree}) uses:
+     *  the path is a hold pointer iff it equals {@value #QUARANTINE_PATH} or lies under {@value #QUARANTINE_PATH}{@code /}.
+     *  A bare {@code startsWith("/quarantine")} would misclassify a sibling like {@code /quarantined/foo} or
+     *  {@code /quarantine-cache/x} as a hold and fire a spurious withhold-feed signal with a mangled served path (the
+     *  substring below would eat the leading slash and one more char), so the two seams would disagree on the boundary. */
+    private static boolean isQuarantinePath(String requestPath) {
+        return requestPath != null
+                && (requestPath.equals(QUARANTINE_PATH) || requestPath.startsWith(QUARANTINE_PATH + "/"));
+    }
+
     private final ArtifactStore store;
     private final List<PublishInterceptor> interceptors;
     private final List<PublicationObserver> observers;
@@ -124,7 +140,7 @@ public final class Publication {
         // (prior read absent, not an overwrite) fires onWithheld after the write. Transition-only: the sweeps guard on
         // presence before re-linking, so their idempotent converge passes overwrite rather than freshly link and raise
         // no event.
-        boolean quarantine = requestPath.startsWith("/quarantine");
+        boolean quarantine = isQuarantinePath(requestPath);
         for (int attempt = 0; attempt < 3; attempt++) {
             Optional<ArtifactStore.Versioned> prior = store.readVersioned("publish" + requestPath);
             Object token = prior.map(ArtifactStore.Versioned::token).orElse(null);
@@ -134,7 +150,7 @@ public final class Publication {
                     store.delete(condemned);
                 }
                 if (quarantine && prior.isEmpty()) {
-                    notifyWithheld(ArtifactDescriptor.at(null, requestPath.substring("/quarantine".length()))
+                    notifyWithheld(ArtifactDescriptor.at(null, requestPath.substring(QUARANTINE_PATH.length()))
                             .withBlob(hash, -1L));
                 }
                 return;
@@ -167,8 +183,8 @@ public final class Publication {
         // pointer clears that hold, so fire onWithholdCleared with the served path (the /quarantine prefix stripped) and
         // the pointer's hash - IN ADDITION TO the onDeleted above, which for a quarantine path carries no coordinate the
         // coordinate-keyed observers act on. A non-quarantine unpublish pays only one startsWith.
-        if (requestPath.startsWith("/quarantine")) {
-            ArtifactDescriptor cleared = ArtifactDescriptor.at(null, requestPath.substring("/quarantine".length()));
+        if (isQuarantinePath(requestPath)) {
+            ArtifactDescriptor cleared = ArtifactDescriptor.at(null, requestPath.substring(QUARANTINE_PATH.length()));
             notifyWithholdCleared(hash(named) ? cleared.withBlob(named, -1L) : cleared);
         }
     }
@@ -187,8 +203,9 @@ public final class Publication {
         notifyDeleted(described.hash() == null && hash(named) ? described.withBlob(named, described.size()) : described);
         // The withhold-change feed's transition-OFF pointer leg, exactly as the string variant: a removed
         // /quarantine<servedPath> pointer fires onWithholdCleared with the stripped served path and the pointer's hash.
-        if (described.path() != null && described.path().startsWith("/quarantine")) {
-            ArtifactDescriptor cleared = ArtifactDescriptor.at(null, described.path().substring("/quarantine".length()));
+        if (isQuarantinePath(described.path())) {
+            ArtifactDescriptor cleared =
+                    ArtifactDescriptor.at(null, described.path().substring(QUARANTINE_PATH.length()));
             notifyWithholdCleared(hash(named) ? cleared.withBlob(named, -1L) : cleared);
         }
     }

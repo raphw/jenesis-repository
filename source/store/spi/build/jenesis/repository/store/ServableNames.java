@@ -35,8 +35,15 @@ public final class ServableNames {
     /** The number of a version folder's leaves the interceptor chain is probed against in
      *  {@link #disclosableVersionFolder}: a bound so a pathologically wide folder cannot turn one folder's disclosure
      *  decision into an unbounded chain fan-out. The quarantine-pointer probe (a) is a single listing and is not
-     *  capped; this caps only the chain leg (b). */
-    private static final int PROBE_CAP = 32;
+     *  capped; this caps only the chain leg (b).
+     *
+     *  <p>Raised well above any legitimate single-version folder: a real Maven version folder holds a handful of
+     *  artifacts (main jar + pom + sources + javadoc + classifiers) each with up to five checksum/signature sidecars,
+     *  a few dozen leaves at the extreme - so the exact fast path below (probe every leaf when the folder fits the cap)
+     *  still covers every genuine release. Only a pathologically wide folder exceeds it, and past the cap
+     *  {@link #disclosableVersionFolder} now fails CLOSED (screens the folder) rather than the former fail-OPEN, so an
+     *  interceptor-only-withheld leaf beyond the probe bound can no longer leak its version name into maven-metadata. */
+    private static final int PROBE_CAP = 512;
 
     /** The first-class discrimination {@link Publication#located} conflates into an empty {@link Optional}. */
     public enum State {
@@ -116,9 +123,10 @@ public final class ServableNames {
      *  it is held - either (a) {@code publish/quarantine<folder>} has &ge;1 child (the free-core review-pointer
      *  convention every hold writer uses: {@code Publication.screen}'s QUARANTINE branch and the retroactive sweeps
      *  link {@code /quarantine<servedPath>} per served path), or (b) the interceptor chain withholds any of the
-     *  folder's first {@value #PROBE_CAP} leaves. It never stats a blob, so a fake-hash / no-blob / non-jar version
-     *  keeps listing; with the free (empty) chain and no quarantine pointer the folder always lists. Fail-closed on a
-     *  hostile folder name. */
+     *  folder's leaves, up to the {@value #PROBE_CAP}-leaf bound past which it fails CLOSED (a folder wider than the
+     *  bound is screened, since its unprobed leaves cannot be proven un-held). It never stats a blob, so a fake-hash /
+     *  no-blob / non-jar version keeps listing; with the free (empty) chain and no quarantine pointer a folder within
+     *  the bound always lists. Fail-closed on a hostile folder name. */
     public boolean disclosableVersionFolder(String folder) throws IOException {
         try {
             // (a) The review-pointer convention: a held version has >=1 /quarantine<servedPath> pointer under it, so
@@ -126,13 +134,16 @@ public final class ServableNames {
             if (!store.list("publish/quarantine" + folder).isEmpty()) {
                 return false;
             }
-            // (b) The interceptor chain withholds one of the version's leaves. Bounded, and stats no blob.
+            // (b) The interceptor chain withholds one of the version's leaves. Bounded, and stats no blob. A folder
+            // wider than the bound fails CLOSED: it cannot be probed exhaustively without unbounding the chain
+            // fan-out, and a fail-OPEN past the bound would leak the version name of an interceptor-only-withheld leaf
+            // sitting beyond the probed prefix. The bound is well above any legitimate version folder, so this screens
+            // only pathologically wide folders; every real release is probed in full by the exact loop below.
             List<String> leaves = store.list("publish" + folder);
-            int probed = 0;
+            if (leaves.size() > PROBE_CAP) {
+                return false;
+            }
             for (String leaf : leaves) {
-                if (probed++ >= PROBE_CAP) {
-                    break;
-                }
                 if (publication.withheld(folder + "/" + leaf)) {
                     return false;
                 }
