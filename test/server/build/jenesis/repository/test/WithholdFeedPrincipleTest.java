@@ -22,11 +22,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       {@code mark} body contains the transition-ON notify ({@code Publication.notifyWithheld}) and its {@code clear}
  *       body the transition-OFF notify ({@code Publication.notifyWithholdCleared}). A refactor that drops either leg
  *       (marking without signalling) fails here.</li>
- *   <li><b>Pointer face.</b> {@code store/spi/.../Publication.java}'s {@code link} body contains the quarantine-prefix
- *       notify branch (both the {@code "/quarantine"} guard and {@code notifyWithheld(}), and its {@code unpublish}
- *       bodies (both the string and the descriptor variant) the cleared-notify ({@code notifyWithholdCleared(}). So a
- *       new hold writer routes through {@code link}/{@code unpublish} and fires the feed for free, and unhooking the
- *       branch fails the build.</li>
+ *   <li><b>Pointer face.</b> {@code store/spi/.../Publication.java}'s {@code link} body contains the quarantine-gate
+ *       notify branch (both the {@code isQuarantinePath(} boundary-helper guard and {@code notifyWithheld(}), and its
+ *       {@code unpublish} bodies (both the string and the descriptor variant) that same gate plus the cleared-notify
+ *       ({@code notifyWithholdCleared(}). So a new hold writer routes through {@code link}/{@code unpublish} and fires
+ *       the feed for free, and unhooking the branch fails the build. (The gate was the raw {@code "/quarantine"} literal
+ *       before it was hardened into the exact-boundary {@code isQuarantinePath} helper; the scan tracks the helper.)</li>
  *   <li><b>Raw-marker hygiene.</b> Any source file whose comment-stripped body still contains the raw {@code "withheld/}
  *       string literal - other than {@code Withheld.java}, which owns the {@code ROOT} constant - is an offender. This is
  *       what makes "every marker write fires the feed" structural rather than aspirational: a raw {@code store.write(
@@ -49,6 +50,13 @@ class WithholdFeedPrincipleTest {
     /** The transition-ON / transition-OFF notify tokens the feed fires through. */
     private static final String WITHHELD_NOTIFY = "notifyWithheld";
     private static final String CLEARED_NOTIFY = "notifyWithholdCleared";
+
+    /** The quarantine-convention gate token the pointer face's choke points must carry: the {@code /quarantine}
+     *  boundary literal was refactored into a {@code Publication.isQuarantinePath(...)} helper (an exact {@code /}-subtree
+     *  match, not a bare {@code startsWith("/quarantine")}), so the choke-point bodies now name the helper rather than the
+     *  raw literal. Tracking the helper token keeps the ratchet's intent - link/unpublish gate on the quarantine
+     *  convention - without re-pinning the moved literal. */
+    private static final String QUARANTINE_GATE = "isQuarantinePath(";
 
     /** The raw marker-literal that must not appear outside {@code Withheld.java} - a write of it bypasses the feed. */
     private static final String RAW_MARKER = "\"withheld/";
@@ -90,19 +98,24 @@ class WithholdFeedPrincipleTest {
 
         String linkBody = methodBody(publication, "void link(");
         assertThat(linkBody)
-                .as("Publication.link must fire the transition-ON signal on a fresh /quarantine pointer - the pointer "
-                        + "face of the feed, so every hold writer that links a review pointer signals by construction")
-                .contains("/quarantine")
+                .as("Publication.link must GATE on the quarantine convention (the %s boundary helper) AND fire the "
+                        + "transition-ON signal on a fresh /quarantine pointer - the pointer face of the feed, so every "
+                        + "hold writer that links a review pointer signals by construction", QUARANTINE_GATE)
+                .contains(QUARANTINE_GATE)
                 .contains(WITHHELD_NOTIFY + "(");
 
         String unpublishString = methodBody(publication, "void unpublish(String requestPath)");
         assertThat(unpublishString)
-                .as("Publication.unpublish(String) must fire the transition-OFF signal when a /quarantine pointer is removed")
+                .as("Publication.unpublish(String) must gate on the quarantine convention (%s) AND fire the "
+                        + "transition-OFF signal when a /quarantine pointer is removed", QUARANTINE_GATE)
+                .contains(QUARANTINE_GATE)
                 .contains(CLEARED_NOTIFY + "(");
 
         String unpublishDescriptor = methodBody(publication, "void unpublish(ArtifactDescriptor described)");
         assertThat(unpublishDescriptor)
-                .as("Publication.unpublish(ArtifactDescriptor) must fire the transition-OFF signal likewise")
+                .as("Publication.unpublish(ArtifactDescriptor) must gate on the quarantine convention (%s) AND fire the "
+                        + "transition-OFF signal likewise", QUARANTINE_GATE)
+                .contains(QUARANTINE_GATE)
                 .contains(CLEARED_NOTIFY + "(");
     }
 

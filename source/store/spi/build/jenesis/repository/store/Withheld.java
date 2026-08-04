@@ -29,18 +29,6 @@ public final class Withheld {
     /** The store prefix of the marker convention, {@code withheld/<lower-case sha256 hex>}. */
     public static final String ROOT = "withheld/";
 
-    /** How many compare-and-set attempts {@link #clear} makes before giving up. A clear races only another clearer of
-     *  the very same hash (a converge re-run, a duplicate release), so contention is low and a small bound suffices -
-     *  the same {@code MARK_ATTEMPTS}-shaped bound {@link DirtyIndexFeed} uses on its marker CAS. */
-    private static final int CLEAR_ATTEMPTS = 8;
-
-    /** A non-empty body a clearer stamps over a real (empty-body) marker to CLAIM the present-&gt;absent transition
-     *  before it deletes: the store has an atomic-create ({@code writeVersioned(..., null)}) but no atomic-delete, so
-     *  the delete transition is won by CASing this sentinel onto the marker's read token - exactly one racing clearer
-     *  wins that CAS and reaches the notify. A loser reading a non-empty (claimed) marker knows the winner already owns
-     *  the transition and stays silent; presence is still "withheld" through the brief claim window. */
-    private static final byte[] CLEARING = "clearing".getBytes(StandardCharsets.UTF_8);
-
     private Withheld() {
     }
 
@@ -66,32 +54,17 @@ public final class Withheld {
     /** Lift the withhold marker for this hash so blobs-namespace serving resumes. Idempotent. On an actual transition
      *  (the marker was present) the withhold-change feed's transition-OFF leg fires after the durable delete.
      *
-     *  <p>The store has no atomic-delete, so the present-&gt;absent transition is won the way the store's atomic-delete
-     *  idiom is expressed with the primitives it does have: CAS a {@link #CLEARING claim} sentinel onto the marker's
-     *  read token, and only the observer whose CAS lands deletes the marker and fires the notify. Two concurrent clears
-     *  of one hash both formerly observed "present" and both fired the transition-OFF leg; now the loser sees either an
-     *  absent marker (the winner already deleted it) or a non-empty claimed one, and stays silent. Idempotent: a clear
-     *  of an unmarked hash is a no-op raising no event. */
+     *  <p>Deliberately NOT gated on the marker body: a marker may carry a non-empty disposition body (an OCI/older hold
+     *  writes {@code REJECT} or similar), and any present marker - whatever its body - clears. The clear is a present
+     *  read-then-delete rather than a CAS on the transition edge, so under a rare concurrent double-clear both observers
+     *  could fire {@code onWithholdCleared}; that is bounded and idempotent (the feed consumer re-derives from truth),
+     *  and it is what P3 shipped - the exactly-once discipline the {@link #mark} CAS enforces is only required on the
+     *  transition-ON leg (the actual finding). */
     public static void clear(ArtifactStore store, String hash) throws IOException {
-        String key = ROOT + hash;
-        for (int attempt = 0; attempt < CLEAR_ATTEMPTS; attempt++) {
-            Optional<ArtifactStore.Versioned> current = store.readVersioned(key);
-            if (current.isEmpty()) {
-                return; // idempotent: nothing marked, or a racing clearer already won and removed it - no event
-            }
-            if (current.get().content().length != 0) {
-                return; // a racing clearer already CLAIMED the transition; it fires the one transition-OFF event
-            }
-            // Claim the transition by CASing the sentinel onto the token just read. Winner alone reaches the delete
-            // and notify; a loser's write returns false and the loop re-reads (now absent or claimed) and stays silent.
-            if (store.writeVersioned(key, CLEARING, current.get().token())) {
-                store.delete(key);
-                Publication.notifyWithholdCleared(ArtifactDescriptor.at(null, null).withBlob(hash, -1L), store);
-                return;
-            }
+        if (store.readVersioned(ROOT + hash).isPresent()) {
+            store.delete(ROOT + hash);
+            Publication.notifyWithholdCleared(ArtifactDescriptor.at(null, null).withBlob(hash, -1L), store);
         }
-        throw new IOException("could not clear withhold marker for " + hash
-                + " after " + CLEAR_ATTEMPTS + " attempts");
     }
 
     /** Whether the blob with this hash is withheld - the read a blobs-namespace serve makes before streaming, so a
