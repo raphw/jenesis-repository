@@ -11,8 +11,9 @@ The free core: the repository / build-cache server modules consumed by downstrea
 
 ## Local gotchas (a red here is often the environment, not a regression)
 
-- Container-backed tests (MinIO / Nexus, driven through the `docker` CLI) **self-skip without Docker**; the strict CI lane (`-Djenesis.project.properties=ci`) makes them *fail* instead.
-- A few tests need a **UTF-8 locale** (non-ASCII path cases) or a **`GITHUB_TOKEN`** (the live advisory-feed smoke). Set `LANG=C.UTF-8` for the former.
+- **Docker is the only host tool the suite needs** (besides JDK 25). Ecosystem clients run from pinned images through `ToolContainer`, never from the host `PATH` — Maven from `maven:3.9.9-eclipse-temurin-21`, Helm from `alpine/helm:3.16.3` — so there is no `mvn` or `helm` to install. The backing services are containers too: MinIO (`s3`/`gcs`), Azurite (`azure`), Nexus, Artifactory OSS and `selenium/standalone-chrome`. Only the `docker` CLI itself is executed on the host, by the suites that drive a real client against the registry (`OciDockerTest`, `OciProxyTest`) and by the Artifactory boot.
+- Container-backed tests **self-skip without Docker**; the strict CI lane (`-Djenesis.project.properties=ci`) makes them *fail* instead. A full local run is therefore `java -Djenesis.project.properties=ci build/jenesis/Project.java` — a green run there is a run that really executed every tagged suite.
+- A few tests need a **UTF-8 locale**: `MavenMetadataTest` publishes non-ASCII versions (`naïve`, `café`) into a filesystem store, where they become real filenames and so depend on `sun.jnu.encoding`. Set `LANG=C.UTF-8` if your locale is not already UTF-8.
 
 ## Engineering principles (operative summary)
 

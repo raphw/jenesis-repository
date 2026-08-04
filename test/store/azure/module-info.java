@@ -9,9 +9,9 @@
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.store.azure
- * @jenesis.pin com.azure.storage.blob 12.35.0
  * @jenesis.alias org.testcontainers org.testcontainers/testcontainers 2.0.5
  * @jenesis.alias wiremock.standalone org.wiremock/wiremock-standalone 4.0.0-beta.38
+ * @jenesis.pin com.azure.storage.blob 12.35.0
  * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin com.github.docker-java/docker-java-api 3.7.1 SHA-256/dad153d484b1f4ef009e2fdbad27e07aeb3191122da52b8985507ac504300081
  * @jenesis.pin com.github.docker-java/docker-java-transport 3.7.1 SHA-256/d15eec8034bf0f92c2a48ca9172691804048115c96dc853272f9486fa2695c3c

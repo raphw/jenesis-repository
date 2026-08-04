@@ -21,9 +21,10 @@ env:
 # the full suite. The "docker" tag also covers the OCI pull-through proxy against Docker
 # Hub, "proxy" covers the Maven pull-through proxy against Maven Central, "maven" is the
 # Maven deploy/resolve round-trip driven by the real mvn client, and "nexus"/"artifactory" migrate from a real
-# Sonatype Nexus / JFrog Artifactory OSS (pulled via the docker CLI, seeded with mvn). Tools are installed only when
-# their suite is selected: docker and mvn are preinstalled on the runner; helm is fetched on
-# demand; MinIO/Azurite, Nexus and Artifactory are started by their tests through the docker CLI. The mvn, nexus and
+# Sonatype Nexus / JFrog Artifactory OSS (seeded with mvn). No tool is installed on the runner: every
+# ecosystem client runs from a pinned image through ToolContainer (mvn from maven:3.9.9-eclipse-temurin-21,
+# helm from alpine/helm:3.16.3), and MinIO/Azurite, Nexus, Artifactory and Selenium are containers their
+# tests start themselves. Only the preinstalled docker CLI is used from the host. The mvn, nexus and
 # artifactory suites route their plugin resolution through MAVEN_REPOSITORY_URI, so they hit the same mirror.
 jobs:
   build:
@@ -52,7 +53,6 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
             echo "event=$GITHUB_EVENT_NAME -> running the full suite"
-            echo "NEED_HELM=true" >> "$GITHUB_ENV"
             echo "REQUIRE_TOOLS=true" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -61,7 +61,6 @@ jobs:
           match() { printf '%s\n' "$CHANGED" | grep -qE "$1"; }
           if match '^(build/|\.github/|source/format/spi/|source/store/spi/|source/store/filesystem/|source/server/|source/proxy/|test/server/module-info\.java)'; then
             echo "core change -> running the full suite"
-            echo "NEED_HELM=true" >> "$GITHUB_ENV"
             echo "REQUIRE_TOOLS=true" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -95,7 +94,6 @@ jobs:
             echo "TAG=!(${joined})" >> "$GITHUB_ENV"
             echo "Excluding tags: ${joined}"
           fi
-          $inc_oci && echo "NEED_HELM=true" >> "$GITHUB_ENV"
           true
 
       - name: Log in to Docker Hub (optional, avoids anonymous pull rate limits)
@@ -105,25 +103,14 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
-      - name: Install Helm
-        if: env.NEED_HELM == 'true'
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.local/helm"
-          curl -fsSL https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz | tar -xz -C "$RUNNER_TEMP"
-          mv "$RUNNER_TEMP/linux-amd64/helm" "$HOME/.local/helm/helm"
-          chmod +x "$HOME/.local/helm/helm"
-          # The test resolves helm from the PATH (never an absolute path), so the install must land here.
-          echo "$HOME/.local/helm" >> "$GITHUB_PATH"
-          "$HOME/.local/helm/helm" version
-
       - name: Build and test
         shell: bash
         run: |
           # A full-suite run selects the `ci` profile: its process-override properties inject
           # -Djenesis.test.required into the forked test JVMs, so a tool/network-gated test FAILS
-          # instead of self-skipping (docker/mvn are preinstalled, helm installed above). A pull
-          # request's partial run stays lenient - its excluded suites make missing tools expected.
+          # instead of self-skipping (the runner's docker CLI is all that is needed - every other
+          # client and service is a container the tests start). A pull request's partial run stays
+          # lenient - its excluded suites make an unreachable dependency expected.
           ARGS=()
           if [ "${REQUIRE_TOOLS:-}" = "true" ]; then
             ARGS+=("-Djenesis.project.properties=ci")
