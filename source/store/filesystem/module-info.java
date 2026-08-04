@@ -5,6 +5,7 @@
  * selects when no other backend is named. Depends only on the store SPI and java.base.
  *
  * @jenesis.release 25
+ * @jenesis.pin org.slf4j/slf4j-api 2.0.18 SHA-256/44508fd1576500688c790b190acdd16fec4f8c79a3e0b900afd70503cf055f55
  */
 module build.jenesis.repository.store.filesystem {
     requires build.jenesis.repository.store;

@@ -10,8 +10,8 @@
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.bundle
- * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
- * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
+ * @jenesis.pin ch.qos.logback/logback-classic 1.6.1 SHA-256/be8970a67c145e610071817622212b50ee531f2ee8649d70a704e8549b958bbd
+ * @jenesis.pin ch.qos.logback/logback-core 1.6.1 SHA-256/ca24a516db9c9bf43ff5c41ce9648ee546869aa7a30d349c531b3755af4f9db6
  * @jenesis.pin com.azure/azure-core 1.58.1 SHA-256/7b339126e92af79b07fcf96fe16fa5ba2a2854bb8ce7e03ac4776b9474fe7df5
  * @jenesis.pin com.azure/azure-core-http-netty 1.16.5 SHA-256/61091ba5634e711e396721edfcca5c6782be1c1e86f2ecf856eb57aa20260c0c
  * @jenesis.pin com.azure/azure-json 1.5.1 SHA-256/bad21d5eb306d82b85951b58a1d9e501a9b09970e452bee6d4d445fd5a91c519
@@ -177,6 +177,8 @@
  * @jenesis.pin software.amazon.awssdk/utils 2.46.17 SHA-256/4f9ee28ee6b6d9771fad18bac10cb806d7bebc0b0abfb6515fc7b4952fbb8507
  * @jenesis.pin software.amazon.awssdk/utils-lite 2.46.17 SHA-256/1d5bcc1929c7adb9d82d3f66e95b410602bd567c7704f8c73aca4e62c35ab5dd
  * @jenesis.pin software.amazon.eventstream/eventstream 1.0.1 SHA-256/0c37d8e696117f02c302191b8110b0d0eb20fa412fce34c3a269ec73c16ce822
+ * @jenesis.pin spring.boot 4.1.0
+ * @jenesis.pin spring.context 7.0.8
  * @jenesis.pin tools.jackson.core/jackson-core 3.2.0 SHA-256/5e353ce53c6901105dfcbf183e3220c17072e334e552b818a4bb1b99decea596
  * @jenesis.pin tools.jackson.core/jackson-databind 3.2.0 SHA-256/3ef94a3dddeafc247c50230fad0315981b2ce4ae6e91cfb4368a86f328904e4f
  */

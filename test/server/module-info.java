@@ -14,25 +14,33 @@
  * @jenesis.attach org.mockito
  * @jenesis.pin build.jenesis 0.8.1
  * @jenesis.pin build.jenesis/build.jenesis 0.8.1 SHA-256/b824ecde8b7337fe2ef42194f8a8a98f2eab942313a198db9a369df0f99f18c0
- * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
- * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
+ * @jenesis.pin ch.qos.logback.classic 1.6.1
+ * @jenesis.pin ch.qos.logback.core 1.6.1
+ * @jenesis.pin ch.qos.logback/logback-classic 1.6.1 SHA-256/be8970a67c145e610071817622212b50ee531f2ee8649d70a704e8549b958bbd
+ * @jenesis.pin ch.qos.logback/logback-core 1.6.1 SHA-256/ca24a516db9c9bf43ff5c41ce9648ee546869aa7a30d349c531b3755af4f9db6
  * @jenesis.pin com.fasterxml.jackson.core/jackson-annotations 2.22 SHA-256/21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0
  * @jenesis.pin com.github.docker-java/docker-java-api 3.7.1 SHA-256/dad153d484b1f4ef009e2fdbad27e07aeb3191122da52b8985507ac504300081
  * @jenesis.pin com.github.docker-java/docker-java-transport 3.7.1 SHA-256/d15eec8034bf0f92c2a48ca9172691804048115c96dc853272f9486fa2695c3c
  * @jenesis.pin com.github.docker-java/docker-java-transport-zerodep 3.7.1 SHA-256/b89bdb1754160323597f9ea32a7fe7a4a3aa8f5b3b43b88e8d71fff3b267ab21
  * @jenesis.pin com.nimbusds/nimbus-jose-jwt 10.9 SHA-256/64d613d91140bad0dab8f0c41960f919ec8705a9ced9418146598b4b3ae71349
+ * @jenesis.pin commons-codec/commons-codec 1.19.0 SHA-256/5c3881e4f556855e9c532927ee0c9dfde94cc66760d5805c031a59887070af5f
+ * @jenesis.pin commons-io/commons-io 2.20.0 SHA-256/df90bba0fe3cb586b7f164e78fe8f8f4da3f2dd5c27fa645f888100ccc25dd72
  * @jenesis.pin commons-logging/commons-logging 1.3.5 SHA-256/6d7a744e4027649fbb50895df9497d109f98c766a637062fe8d2eabbb3140ba4
  * @jenesis.pin io.micrometer/micrometer-commons 1.17.0 SHA-256/03919dc71e2417ec4b5c254c4ba924963c972e124190f73cdcb68ed51c6eede6
  * @jenesis.pin io.micrometer/micrometer-core 1.17.0 SHA-256/73503e701a377fafeaf33b71b9b8910a8d7884cbba88ab27971b33b3753b65aa
  * @jenesis.pin io.micrometer/micrometer-jakarta9 1.17.0 SHA-256/4ae9dbc9072fea8c36684a745e0e944b9540fd15027dfe7af0a186f8df43272c
  * @jenesis.pin io.micrometer/micrometer-observation 1.17.0 SHA-256/2fc95a327578d3b2a81c3ff40e646a4a21e46b0153ccbbf91690142bf80d9661
  * @jenesis.pin jakarta.annotation/jakarta.annotation-api 3.0.0 SHA-256/b01f55552284cfb149411e64eabca75e942d26d2e1786b32914250e4330afaa2
+ * @jenesis.pin net.bytebuddy 1.18.3
  * @jenesis.pin net.bytebuddy/byte-buddy 1.18.3 SHA-256/d78396e3c5bce3f2865c9186647481e5589d34cacc632484715b686108d17c66
  * @jenesis.pin net.bytebuddy/byte-buddy-agent 1.17.7 SHA-256/a9ba887dca252ad61b7d5153294f34e6f3bdf4b2736b04373d13615a695fc0ff
  * @jenesis.pin net.java.dev.jna/jna 5.18.1 SHA-256/260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557
+ * @jenesis.pin org.apache.commons/commons-compress 1.28.0 SHA-256/e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca
+ * @jenesis.pin org.apache.commons/commons-lang3 3.18.0 SHA-256/4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720
  * @jenesis.pin org.apache.logging.log4j/log4j-api 2.25.4 SHA-256/c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d
  * @jenesis.pin org.apache.logging.log4j/log4j-to-slf4j 2.25.4 SHA-256/d7b78fc0aaaa5e8ada388b29d718b0ab187e512965bed0b259bb4ab299f13db2
- * @jenesis.pin org.apache.tomcat.embed/tomcat-embed-core 11.0.22 SHA-256/78cd7cd7c104b6b87142c1b0bd902e1ce005b0245c3cefa8a06759148947200b
+ * @jenesis.pin org.apache.tomcat.embed.core 11.0.24
+ * @jenesis.pin org.apache.tomcat.embed/tomcat-embed-core 11.0.24 SHA-256/e7b966dcaac8c5ffa4f10e44031ebf5b71f2123560c08ac8b7120028615aea08
  * @jenesis.pin org.apache.tomcat.embed/tomcat-embed-el 11.0.22 SHA-256/1b34c33b858c141df36c501b4d809e68036c406bca3671a86facae297917c7de
  * @jenesis.pin org.apache.tomcat.embed/tomcat-embed-websocket 11.0.22 SHA-256/210e0c7ab194a76cc7283df0be365276091b042369dae125fb477828ba67e922
  * @jenesis.pin org.apache.tomcat/tomcat-annotations-api 11.0.22 SHA-256/fbe1a2ee12ea472b773bf3a6237d95b66a002c5c4fa6d38a54e69c019558cfd4
@@ -40,6 +48,7 @@
  * @jenesis.pin org.assertj.core 3.27.7
  * @jenesis.pin org.assertj/assertj-core 3.27.7 SHA-256/c4a445426c3c2861666863b842cc4ec7bbb1c4226fefd370b6d2fe83d6c4ff0f
  * @jenesis.pin org.hdrhistogram/HdrHistogram 2.2.2 SHA-256/22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8
+ * @jenesis.pin org.jetbrains/annotations 17.0.0 SHA-256/195fb0da046d55bb042e91543484cf1da68b02bb7afbfe031f229e45ac84b3f2
  * @jenesis.pin org.jspecify/jspecify 1.0.0 SHA-256/1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab
  * @jenesis.pin org.junit.jupiter 6.1.0
  * @jenesis.pin org.junit.jupiter/junit-jupiter 6.1.0 SHA-256/a4e420b5c6e8170323b4c5c97ae35bca0d620be9f9cfe37006820f53931f27a3
@@ -47,16 +56,18 @@
  * @jenesis.pin org.junit.jupiter/junit-jupiter-engine 6.1.0 SHA-256/ea707b9647084619a0fc911cefb25037540d58b2800f8ead1fc6a2baf58b1da5
  * @jenesis.pin org.junit.jupiter/junit-jupiter-params 6.1.0 SHA-256/b987eea3205185a76f3659a39e67503cb7b682d8b7be03be4b9f92b710f0eec0
  * @jenesis.pin org.junit.platform.console 6.1.0
- * @jenesis.pin org.mockito/mockito-core 5.23.0 SHA-256/ae295bebd5d11fab97ab297815dc7617188b86003cbce3dfd5c0d5c3a6cc4a0c
- * @jenesis.pin org.objenesis/objenesis 3.3 SHA-256/02dfd0b0439a5591e35b708ed2f5474eb0948f53abf74637e959b8e4ef69bfeb
  * @jenesis.pin org.junit.platform/junit-platform-commons 6.1.0 SHA-256/1d9046ab17ec7edafb0bc7945d2e59d7180fff4f28c734b823b51001e769f71b
  * @jenesis.pin org.junit.platform/junit-platform-console 6.1.0 SHA-256/715f2e54d39e02edd76c33e934341c0562769955e9ad7682898623e73485a729
  * @jenesis.pin org.junit.platform/junit-platform-engine 6.1.0 SHA-256/3fb6be76c26ab0f94fe084e3fd0a39e1d25e22129929a61b29bd80a052b93ea5
  * @jenesis.pin org.junit.platform/junit-platform-launcher 6.1.0 SHA-256/0995e6ed244d66196cbda019e2f879504d0b48971edae9cc3dea46a1b31c0377
  * @jenesis.pin org.junit.platform/junit-platform-reporting 6.1.0 SHA-256/6bceb2bb75a5b32774beaa7c520201b863463cf922f2f2b0b6492a850af06a8b
+ * @jenesis.pin org.mockito 5.23.0
+ * @jenesis.pin org.mockito/mockito-core 5.23.0 SHA-256/ae295bebd5d11fab97ab297815dc7617188b86003cbce3dfd5c0d5c3a6cc4a0c
+ * @jenesis.pin org.objenesis/objenesis 3.3 SHA-256/02dfd0b0439a5591e35b708ed2f5474eb0948f53abf74637e959b8e4ef69bfeb
  * @jenesis.pin org.opentest4j.reporting/open-test-reporting-tooling-spi 0.2.5 SHA-256/df237b68847637747f0bfdb88fa9cdd9c72cc85550fad0c41ddb33869a5ca516
  * @jenesis.pin org.opentest4j/opentest4j 1.3.0 SHA-256/48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b
  * @jenesis.pin org.rnorth.duct-tape/duct-tape 1.0.8 SHA-256/31cef12ddec979d1f86d7cf708c41a17da523d05c685fd6642e9d0b2addb7240
+ * @jenesis.pin org.slf4j 2.0.18
  * @jenesis.pin org.slf4j/jul-to-slf4j 2.0.18 SHA-256/cbb7d1aaaa9e871eb1a06594abd911bf97027152976edf1edc315be75239204e
  * @jenesis.pin org.slf4j/slf4j-api 2.0.18 SHA-256/44508fd1576500688c790b190acdd16fec4f8c79a3e0b900afd70503cf055f55
  * @jenesis.pin org.springframework.boot/spring-boot 4.1.0 SHA-256/b23951a3a7f867e38db4729b8594e1b72374516f386b1dd9cf4d5317d6d3f91f
@@ -98,6 +109,8 @@
  * @jenesis.pin org.testcontainers/testcontainers 2.0.5 SHA-256/0466f481343d5f350a91274cd7bf984308cbaf90d706247fd1cf4b1a8010c2e1
  * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin org.yaml/snakeyaml 2.6 SHA-256/c8f7a98e7394adda02f6317249710e4d1b4c7a25aa8c7eace0c2eea52eb8bf85
+ * @jenesis.pin spring.security.core 7.1.0
+ * @jenesis.pin spring.security.web 7.1.0
  * @jenesis.pin tools.jackson.core/jackson-core 3.2.0 SHA-256/5e353ce53c6901105dfcbf183e3220c17072e334e552b818a4bb1b99decea596
  * @jenesis.pin tools.jackson.core/jackson-databind 3.2.0 SHA-256/3ef94a3dddeafc247c50230fad0315981b2ce4ae6e91cfb4368a86f328904e4f
  * @jenesis.pin tools.jackson.databind 3.2.0

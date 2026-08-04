@@ -19,8 +19,8 @@
  *
  * @jenesis.release 25
  * @jenesis.main build.jenesis.repository.bundle.AllInOne
- * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
- * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
+ * @jenesis.pin ch.qos.logback/logback-classic 1.6.1 SHA-256/be8970a67c145e610071817622212b50ee531f2ee8649d70a704e8549b958bbd
+ * @jenesis.pin ch.qos.logback/logback-core 1.6.1 SHA-256/ca24a516db9c9bf43ff5c41ce9648ee546869aa7a30d349c531b3755af4f9db6
  * @jenesis.pin com.azure/azure-core 1.58.1 SHA-256/7b339126e92af79b07fcf96fe16fa5ba2a2854bb8ce7e03ac4776b9474fe7df5
  * @jenesis.pin com.azure/azure-core-http-netty 1.16.5 SHA-256/61091ba5634e711e396721edfcca5c6782be1c1e86f2ecf856eb57aa20260c0c
  * @jenesis.pin com.azure/azure-json 1.5.1 SHA-256/bad21d5eb306d82b85951b58a1d9e501a9b09970e452bee6d4d445fd5a91c519

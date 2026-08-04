@@ -14,15 +14,13 @@
  * @jenesis.test build.jenesis.repository.store.gcs
  * @jenesis.alias org.testcontainers org.testcontainers/testcontainers 2.0.5
  * @jenesis.alias wiremock.standalone org.wiremock/wiremock-standalone 4.0.0-beta.38
- * @jenesis.pin com.google.code.findbugs/jsr305 3.0.2 SHA-256/766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7
- * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
+ * @jenesis.pin com.fasterxml.jackson.core/jackson-annotations 2.20 SHA-256/959a2ffb2d591436f51f183c6a521fc89347912f711bf0cae008cdf045d95319
  * @jenesis.pin com.github.docker-java/docker-java-api 3.7.1 SHA-256/dad153d484b1f4ef009e2fdbad27e07aeb3191122da52b8985507ac504300081
  * @jenesis.pin com.github.docker-java/docker-java-transport 3.7.1 SHA-256/d15eec8034bf0f92c2a48ca9172691804048115c96dc853272f9486fa2695c3c
  * @jenesis.pin com.github.docker-java/docker-java-transport-zerodep 3.7.1 SHA-256/b89bdb1754160323597f9ea32a7fe7a4a3aa8f5b3b43b88e8d71fff3b267ab21
- * @jenesis.pin net.java.dev.jna/jna 5.18.1 SHA-256/260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557
- * @jenesis.pin org.rnorth.duct-tape/duct-tape 1.0.8 SHA-256/31cef12ddec979d1f86d7cf708c41a17da523d05c685fd6642e9d0b2addb7240
- * @jenesis.pin org.testcontainers/testcontainers 2.0.5 SHA-256/0466f481343d5f350a91274cd7bf984308cbaf90d706247fd1cf4b1a8010c2e1
+ * @jenesis.pin com.google.code.findbugs/jsr305 3.0.2 SHA-256/766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7
  * @jenesis.pin com.google.code.gson/gson 2.8.9 SHA-256/d3999291855de495c94c743761b8ab5176cfeabe281a5ab0d8e8d45326fd703e
+ * @jenesis.pin commons-codec/commons-codec 1.19.0 SHA-256/5c3881e4f556855e9c532927ee0c9dfde94cc66760d5805c031a59887070af5f
  * @jenesis.pin commons-io/commons-io 2.20.0 SHA-256/df90bba0fe3cb586b7f164e78fe8f8f4da3f2dd5c27fa645f888100ccc25dd72
  * @jenesis.pin io.netty/netty-buffer 4.1.135.Final SHA-256/2a194f99fc93d07c4d442d04ac71bd2dc56d3188cd0e4270cdc2a953d1956bf9
  * @jenesis.pin io.netty/netty-codec 4.1.135.Final SHA-256/7252171264dbb5bb8ed38e77f89643b31e3cabc96144ec27b6882435d718a61e
@@ -36,6 +34,9 @@
  * @jenesis.pin io.netty/netty-transport-native-unix-common 4.1.135.Final SHA-256/a7895075f112611d1640a596c2678a28aab92d5681c1c14755b109b8998f995e
  * @jenesis.pin net.bytebuddy/byte-buddy 1.18.3 SHA-256/d78396e3c5bce3f2865c9186647481e5589d34cacc632484715b686108d17c66
  * @jenesis.pin net.bytebuddy/byte-buddy-agent 1.12.10 SHA-256/5e8606d14a844c1ec70d2eb8f50c4009fb16138905dee8ca50a328116c041257
+ * @jenesis.pin net.java.dev.jna/jna 5.18.1 SHA-256/260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557
+ * @jenesis.pin org.apache.commons/commons-compress 1.28.0 SHA-256/e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca
+ * @jenesis.pin org.apache.commons/commons-lang3 3.18.0 SHA-256/4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720
  * @jenesis.pin org.apache.httpcomponents.client5/httpclient5 5.6.1 SHA-256/1e3d8444c3c27772e4b9d42a790f06b3345a8ece4fd16d00981f2f2460e1e772
  * @jenesis.pin org.apache.httpcomponents.core5/httpcore5 5.4.2 SHA-256/7c34a25506e7207b6748cef9e91163ed03081bee805cef930d82e1d8761d62f1
  * @jenesis.pin org.apache.httpcomponents.core5/httpcore5-h2 5.4 SHA-256/2e0f4ace15db2d1609c2b06eca6012e7582afe4a99ad8d15073f62dd8edb3460
@@ -43,6 +44,7 @@
  * @jenesis.pin org.assertj.core 3.27.7
  * @jenesis.pin org.assertj/assertj-core 3.27.7 SHA-256/c4a445426c3c2861666863b842cc4ec7bbb1c4226fefd370b6d2fe83d6c4ff0f
  * @jenesis.pin org.javassist/javassist 3.28.0-GA SHA-256/57d0a9e9286f82f4eaa851125186997f811befce0e2060ff0a15a77f5a9dd9a7
+ * @jenesis.pin org.jetbrains/annotations 17.0.0 SHA-256/195fb0da046d55bb042e91543484cf1da68b02bb7afbfe031f229e45ac84b3f2
  * @jenesis.pin org.jspecify/jspecify 1.0.0 SHA-256/1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab
  * @jenesis.pin org.junit.jupiter 6.1.0
  * @jenesis.pin org.junit.jupiter.api 6.1.0
@@ -65,7 +67,10 @@
  * @jenesis.pin org.opentest4j/opentest4j 1.3.0 SHA-256/48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b
  * @jenesis.pin org.reactivestreams/reactive-streams 1.0.4 SHA-256/f75ca597789b3dac58f61857b9ac2e1034a68fa672db35055a8fb4509e325f28
  * @jenesis.pin org.reflections/reflections 0.10.2 SHA-256/938a2d08fe54050d7610b944d8ddc3a09355710d9e6be0aac838dbc04e9a2825
- * @jenesis.pin org.slf4j/slf4j-api 1.7.36 SHA-256/d3ef575e3e4979678dc01bf1dcce51021493b4d11fb7f1be8ad982877c16a1c0
+ * @jenesis.pin org.rnorth.duct-tape/duct-tape 1.0.8 SHA-256/31cef12ddec979d1f86d7cf708c41a17da523d05c685fd6642e9d0b2addb7240
+ * @jenesis.pin org.slf4j/slf4j-api 2.0.18 SHA-256/44508fd1576500688c790b190acdd16fec4f8c79a3e0b900afd70503cf055f55
+ * @jenesis.pin org.testcontainers/testcontainers 2.0.5 SHA-256/0466f481343d5f350a91274cd7bf984308cbaf90d706247fd1cf4b1a8010c2e1
+ * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin software.amazon.awssdk.auth 2.46.15
  * @jenesis.pin software.amazon.awssdk.http.urlconnection 2.46.15
  * @jenesis.pin software.amazon.awssdk.regions 2.46.15

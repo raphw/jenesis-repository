@@ -10,7 +10,6 @@
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.proxy
  * @jenesis.alias wiremock.standalone org.wiremock/wiremock-standalone 4.0.0-beta.38
- * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  * @jenesis.pin net.bytebuddy/byte-buddy 1.18.3 SHA-256/d78396e3c5bce3f2865c9186647481e5589d34cacc632484715b686108d17c66
  * @jenesis.pin org.apiguardian/apiguardian-api 1.1.2 SHA-256/b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38
  * @jenesis.pin org.assertj.core 3.27.7
@@ -32,6 +31,8 @@
  * @jenesis.pin org.opentest4j 1.3.0
  * @jenesis.pin org.opentest4j.reporting/open-test-reporting-tooling-spi 0.2.5 SHA-256/df237b68847637747f0bfdb88fa9cdd9c72cc85550fad0c41ddb33869a5ca516
  * @jenesis.pin org.opentest4j/opentest4j 1.3.0 SHA-256/48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b
+ * @jenesis.pin org.slf4j/slf4j-api 2.0.18 SHA-256/44508fd1576500688c790b190acdd16fec4f8c79a3e0b900afd70503cf055f55
+ * @jenesis.pin org.wiremock/wiremock-standalone 4.0.0-beta.38 SHA-256/76353b4feae89bff66583a48010272c452df74d969452bf50977afe9db441211
  */
 open module build.jenesis.repository.proxy.test {
     requires build.jenesis.repository.proxy;

@@ -11,8 +11,10 @@
  * @jenesis.release 25
  * @jenesis.main build.jenesis.repository.server.RepositoryApplication
  *
- * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
- * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
+ * @jenesis.pin ch.qos.logback.classic 1.6.1
+ * @jenesis.pin ch.qos.logback.core 1.6.1
+ * @jenesis.pin ch.qos.logback/logback-classic 1.6.1 SHA-256/be8970a67c145e610071817622212b50ee531f2ee8649d70a704e8549b958bbd
+ * @jenesis.pin ch.qos.logback/logback-core 1.6.1 SHA-256/ca24a516db9c9bf43ff5c41ce9648ee546869aa7a30d349c531b3755af4f9db6
  * @jenesis.pin com.fasterxml.jackson.core/jackson-annotations 2.22 SHA-256/21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0
  * @jenesis.pin commons-logging/commons-logging 1.3.5 SHA-256/6d7a744e4027649fbb50895df9497d109f98c766a637062fe8d2eabbb3140ba4
  * @jenesis.pin io.micrometer/micrometer-commons 1.17.0 SHA-256/03919dc71e2417ec4b5c254c4ba924963c972e124190f73cdcb68ed51c6eede6

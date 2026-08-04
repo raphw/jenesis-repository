@@ -21,16 +21,13 @@
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.ui
  * @jenesis.alias org.testcontainers org.testcontainers/testcontainers 2.0.5
- * @jenesis.pin com.github.docker-java/docker-java-api 3.7.1 SHA-256/dad153d484b1f4ef009e2fdbad27e07aeb3191122da52b8985507ac504300081
- * @jenesis.pin com.github.docker-java/docker-java-transport 3.7.1 SHA-256/d15eec8034bf0f92c2a48ca9172691804048115c96dc853272f9486fa2695c3c
- * @jenesis.pin com.github.docker-java/docker-java-transport-zerodep 3.7.1 SHA-256/b89bdb1754160323597f9ea32a7fe7a4a3aa8f5b3b43b88e8d71fff3b267ab21
- * @jenesis.pin net.java.dev.jna/jna 5.18.1 SHA-256/260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557
- * @jenesis.pin org.rnorth.duct-tape/duct-tape 1.0.8 SHA-256/31cef12ddec979d1f86d7cf708c41a17da523d05c685fd6642e9d0b2addb7240
- * @jenesis.pin org.testcontainers/testcontainers 2.0.5 SHA-256/0466f481343d5f350a91274cd7bf984308cbaf90d706247fd1cf4b1a8010c2e1
  * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
  * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
  * @jenesis.pin com.fasterxml.jackson.annotation 2.22
  * @jenesis.pin com.fasterxml.jackson.core/jackson-annotations 2.22 SHA-256/21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0
+ * @jenesis.pin com.github.docker-java/docker-java-api 3.7.1 SHA-256/dad153d484b1f4ef009e2fdbad27e07aeb3191122da52b8985507ac504300081
+ * @jenesis.pin com.github.docker-java/docker-java-transport 3.7.1 SHA-256/d15eec8034bf0f92c2a48ca9172691804048115c96dc853272f9486fa2695c3c
+ * @jenesis.pin com.github.docker-java/docker-java-transport-zerodep 3.7.1 SHA-256/b89bdb1754160323597f9ea32a7fe7a4a3aa8f5b3b43b88e8d71fff3b267ab21
  * @jenesis.pin com.github.stephenc.jcip/jcip-annotations 1.0-1 SHA-256/4fccff8382aafc589962c4edb262f6aa595e34f1e11e61057d1c6a96e8fc7323
  * @jenesis.pin com.google.auto.service/auto-service-annotations 1.1.1 SHA-256/16a76dd00a2650568447f5d6e3a9e2c809d9a42367d56b45215cfb89731f4d24
  * @jenesis.pin com.google.errorprone/error_prone_annotations 2.36.0 SHA-256/77440e270b0bc9a249903c5a076c36a722c4886ca4f42675f2903a1c53ed61a5
@@ -42,6 +39,8 @@
  * @jenesis.pin com.nimbusds/lang-tag 1.7 SHA-256/e8c1c594e2425bdbea2d860de55c69b69fc5d59454452449a0f0913c2a5b8a31
  * @jenesis.pin com.nimbusds/nimbus-jose-jwt 10.9 SHA-256/64d613d91140bad0dab8f0c41960f919ec8705a9ced9418146598b4b3ae71349
  * @jenesis.pin com.nimbusds/oauth2-oidc-sdk 11.37.2 SHA-256/b66e74746dcf516d77f20344e6fbcbcffe1b483b5cf1ad41ea81cec83cb27b3c
+ * @jenesis.pin commons-codec/commons-codec 1.19.0 SHA-256/5c3881e4f556855e9c532927ee0c9dfde94cc66760d5805c031a59887070af5f
+ * @jenesis.pin commons-io/commons-io 2.20.0 SHA-256/df90bba0fe3cb586b7f164e78fe8f8f4da3f2dd5c27fa645f888100ccc25dd72
  * @jenesis.pin commons-logging/commons-logging 1.3.5 SHA-256/6d7a744e4027649fbb50895df9497d109f98c766a637062fe8d2eabbb3140ba4
  * @jenesis.pin io.micrometer/micrometer-commons 1.17.0 SHA-256/03919dc71e2417ec4b5c254c4ba924963c972e124190f73cdcb68ed51c6eede6
  * @jenesis.pin io.micrometer/micrometer-core 1.17.0 SHA-256/73503e701a377fafeaf33b71b9b8910a8d7884cbba88ab27971b33b3753b65aa
@@ -61,10 +60,13 @@
  * @jenesis.pin jakarta.annotation/jakarta.annotation-api 3.0.0 SHA-256/b01f55552284cfb149411e64eabca75e942d26d2e1786b32914250e4330afaa2
  * @jenesis.pin micrometer.observation 1.17.0
  * @jenesis.pin net.bytebuddy/byte-buddy 1.17.6 SHA-256/d26382a839cb26d5c62a0b0f04715bcef55a531f96ac6ce40de452a1c0539e70
+ * @jenesis.pin net.java.dev.jna/jna 5.18.1 SHA-256/260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557
  * @jenesis.pin net.minidev/accessors-smart 2.6.0 SHA-256/222c9f547bb20a99fc486403a398352d1306fb671b38abd7ecab6401df170e61
  * @jenesis.pin net.minidev/json-smart 2.6.0 SHA-256/1ae4b561458afb540be8ec5c6dbb4f2e715a319a7ae64854998aaf924770d61b
  * @jenesis.pin ognl/ognl 3.3.4 SHA-256/47fdd450407ff09b57df02f466f9b4c7d32818962d65f9d98e445c8b4d047603
+ * @jenesis.pin org.apache.commons/commons-compress 1.28.0 SHA-256/e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca
  * @jenesis.pin org.apache.commons/commons-exec 1.5.0 SHA-256/d52d35801747902527826cca30734034e65baa7f36836cc0facf67131025f703
+ * @jenesis.pin org.apache.commons/commons-lang3 3.18.0 SHA-256/4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720
  * @jenesis.pin org.apache.logging.log4j/log4j-api 2.25.4 SHA-256/c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d
  * @jenesis.pin org.apache.logging.log4j/log4j-to-slf4j 2.25.4 SHA-256/d7b78fc0aaaa5e8ada388b29d718b0ab187e512965bed0b259bb4ab299f13db2
  * @jenesis.pin org.apache.tomcat.embed.core 11.0.22
@@ -78,6 +80,7 @@
  * @jenesis.pin org.attoparser/attoparser 2.0.7.RELEASE SHA-256/75dd1c045492bff8e1963aabb28bfe903c2064e11e27fe2f0f0aff1ad3d84476
  * @jenesis.pin org.hdrhistogram/HdrHistogram 2.2.2 SHA-256/22d1d4316c4ec13a68b559e98c8256d69071593731da96136640f864fa14fad8
  * @jenesis.pin org.javassist/javassist 3.29.0-GA SHA-256/62d4065362e8969ce654f2b5541de1efb5b5bca6c146dbd38a595ea4df64cd31
+ * @jenesis.pin org.jetbrains/annotations 17.0.0 SHA-256/195fb0da046d55bb042e91543484cf1da68b02bb7afbfe031f229e45ac84b3f2
  * @jenesis.pin org.jspecify/jspecify 1.0.0 SHA-256/1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab
  * @jenesis.pin org.junit.jupiter 6.1.0
  * @jenesis.pin org.junit.jupiter/junit-jupiter 6.1.0 SHA-256/a4e420b5c6e8170323b4c5c97ae35bca0d620be9f9cfe37006820f53931f27a3
@@ -93,6 +96,7 @@
  * @jenesis.pin org.opentest4j.reporting/open-test-reporting-tooling-spi 0.2.5 SHA-256/df237b68847637747f0bfdb88fa9cdd9c72cc85550fad0c41ddb33869a5ca516
  * @jenesis.pin org.opentest4j/opentest4j 1.3.0 SHA-256/48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b
  * @jenesis.pin org.ow2.asm/asm 9.7.1 SHA-256/8cadd43ac5eb6d09de05faecca38b917a040bb9139c7edeb4cc81c740b713281
+ * @jenesis.pin org.rnorth.duct-tape/duct-tape 1.0.8 SHA-256/31cef12ddec979d1f86d7cf708c41a17da523d05c685fd6642e9d0b2addb7240
  * @jenesis.pin org.seleniumhq.selenium.api 4.35.0
  * @jenesis.pin org.seleniumhq.selenium.chrome_driver 4.35.0
  * @jenesis.pin org.seleniumhq.selenium.chromium_driver 4.35.0
@@ -149,6 +153,7 @@
  * @jenesis.pin org.springframework/spring-expression 7.0.8 SHA-256/3c97c38ab59c77ee886e08ccf8096f6bb58a1245f68dfed7a40e93f41c435f9a
  * @jenesis.pin org.springframework/spring-web 7.0.8 SHA-256/4d4ed7ecb0453d25d735ea27d025ea36b003c3d29cb7d006bedd6d5188a2f5c0
  * @jenesis.pin org.springframework/spring-webmvc 7.0.8 SHA-256/48f7e1e2d0d46e98ed3fa30d5a64cb1f7ed2aa339a82edcd87289ed8ff216f04
+ * @jenesis.pin org.testcontainers/testcontainers 2.0.5 SHA-256/0466f481343d5f350a91274cd7bf984308cbaf90d706247fd1cf4b1a8010c2e1
  * @jenesis.pin org.thymeleaf/thymeleaf 3.1.5.RELEASE SHA-256/4011795f8494dd69e764b7709443dd13d3068ba8ac37624f61d7084f4429cbe2
  * @jenesis.pin org.thymeleaf/thymeleaf-spring6 3.1.5.RELEASE SHA-256/fd5d306052d7aa6769a8ec77778d328e6f7c83af5ac074df38035bbb1e9cd72b
  * @jenesis.pin org.unbescape/unbescape 1.1.6.RELEASE SHA-256/597cf87d5b1a4f385b9d1cec974b7b483abb3ee85fc5b3f8b62af8e4bec95c2c
