@@ -444,44 +444,111 @@ public final class StoreArtifactWalk implements ArtifactWalk, ObservabilitySourc
             token = current.get().token();
         }
 
-        /** Ordered depth-first descent: a stored object is a leaf, anything with children a container. */
+        /** Ordered depth-first descent: a stored object is a leaf, anything with children a container. Driven by an
+         *  explicit stack of container {@link Frame cursors} rather than self-recursion, so the descent's memory cost
+         *  is the stack of in-progress containers - O(key-path depth), one buffered page per level - and an
+         *  arbitrarily deep publish key (a many-segment Maven groupId, a multi-segment OCI name) can never overflow
+         *  the call stack. The visit sequence is byte-for-byte the pre-order name-sorted descent the former recursion
+         *  produced: {@link #open} performs each node's leaf-emit / intersects prune exactly as the recursion's head
+         *  did, and {@link Frame#next} yields a container's children in the identical order - the seek-path child
+         *  first (the resume/range-start seek, unguarded by {@code to} just as the recursion descended it before the
+         *  bound loop), then the paged siblings up to the {@code to} bound. */
         private void node(String key, KeyVisitor visitor) throws IOException {
+            Frame root = open(key, visitor);
+            if (root == null) {
+                return; // the root was a leaf (emitted if in range) or a non-intersecting subtree
+            }
+            Deque<Frame> stack = new ArrayDeque<>();
+            stack.push(root);
+            while (!stack.isEmpty()) {
+                String child = stack.peek().next();
+                if (child == null) {
+                    stack.pop(); // this container is drained (or reached the upper bound); ascend
+                    continue;
+                }
+                Frame descended = open(child, visitor);
+                if (descended != null) {
+                    stack.push(descended); // a container to descend into, before its later siblings - pre-order
+                }
+            }
+        }
+
+        /** Process one node exactly as the recursion's head did: a stored key is a leaf ({@link #emit} it when in
+         *  range) and yields no frame; a non-intersecting subtree is pruned and yields no frame; any other name is a
+         *  container to descend, returned as a fresh {@link Frame}. */
+        private Frame open(String key, KeyVisitor visitor) throws IOException {
             if (store.exists(key)) {
                 if (includes(key)) {
                     emit(key, visitor);
                 }
-                return;
+                return null;
             }
             if (!intersects(key)) {
-                return;
+                return null;
             }
-            String startAfter = "";
-            String low = lower();
-            if (low != null && low.startsWith(key + "/")) {
-                // The resume point (or range start) lies inside this container: handle its child on that path
-                // first, then page strictly after it - so a resume deep inside a huge flat namespace is a seek,
-                // not a re-list. A cut-point name that is no real child probes as neither leaf nor container
-                // and falls through harmlessly.
-                String rest = low.substring(key.length() + 1);
-                int slash = rest.indexOf('/');
-                String child = slash < 0 ? rest : rest.substring(0, slash);
-                node(key + "/" + child, visitor);
-                startAfter = child;
+            return new Frame(key);
+        }
+
+        /** One container's child cursor: the ordered enumeration a recursion frame drove inline, made resumable so
+         *  the driver holds a stack of them instead of a call stack. {@link #next} returns the next child key to
+         *  descend, in the exact order the former {@code node} loop produced - the seek-path child first, then the
+         *  paged siblings, ending (yielding {@code null}) at the {@code to} bound or when the last short page drains. */
+        private final class Frame {
+
+            private final String key;
+            /** The seek-path child name to descend first, or {@code null} when the seek (resume/range start) is not
+             *  inside this container - mirrors the former {@code low.startsWith(key + "/")} branch. */
+            private final String seekChild;
+            private boolean seekYielded;
+            private List<String> page;
+            private int position;
+
+            private Frame(String key) {
+                this.key = key;
+                String low = lower();
+                if (low != null && low.startsWith(key + "/")) {
+                    String rest = low.substring(key.length() + 1);
+                    int slash = rest.indexOf('/');
+                    this.seekChild = slash < 0 ? rest : rest.substring(0, slash);
+                } else {
+                    this.seekChild = null;
+                }
             }
-            while (true) {
-                List<String> children = new ArrayList<>();
-                store.page(key, startAfter, PAGE, children::add);
-                for (String child : children) {
-                    String full = key + "/" + child;
-                    if (to != null && order(full, to) >= 0) {
-                        return; // sorted siblings: nothing at or past the upper bound can be in range
+
+            /** The next child key to descend, or {@code null} once this container is exhausted. */
+            private String next() {
+                if (seekChild != null && !seekYielded) {
+                    // The seek-path child, descended first and WITHOUT the to-bound guard - exactly as the recursion
+                    // descended node(key + "/" + child) before entering its bounded paging loop; its own intersects()
+                    // prune (in open) still applies the upper bound.
+                    seekYielded = true;
+                    return key + "/" + seekChild;
+                }
+                while (true) {
+                    if (page != null && position < page.size()) {
+                        String child = page.get(position++);
+                        String full = key + "/" + child;
+                        if (to != null && order(full, to) >= 0) {
+                            return null; // sorted siblings: nothing at or past the upper bound can be in range
+                        }
+                        return full;
                     }
-                    node(full, visitor);
+                    if (page != null && page.size() < PAGE) {
+                        return null; // the last page was short: this container is drained
+                    }
+                    // First page starts after the seek child (or at the range start when no seek); each subsequent
+                    // page resumes strictly after the previous page's last name - the recursion's startAfter cursor.
+                    String startAfter = page == null
+                            ? (seekChild != null ? seekChild : "")
+                            : page.getLast();
+                    List<String> next = new ArrayList<>();
+                    store.page(key, startAfter, PAGE, next::add);
+                    page = next;
+                    position = 0;
+                    if (page.isEmpty()) {
+                        return null;
+                    }
                 }
-                if (children.size() < PAGE) {
-                    return;
-                }
-                startAfter = children.getLast();
             }
         }
 

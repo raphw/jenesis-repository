@@ -122,6 +122,21 @@ final class OciManifests {
                 if (new ServableNames(store).disclosable(path, ServableNames.Policy.HIDE_WITHHELD)
                         && !new Publication(store).quarantineAliasExists(hex, Set.of(path))) {
                     Withheld.clear(store, hex);
+                    // The guard above is a read-then-clear: a concurrent enforce sweep (KEV/license/reachability) that
+                    // links a byte-identical SIBLING's /quarantine pointer for this hash AFTER the guard read but
+                    // before this clear would leave that sibling's still-live hold with its content-addressed marker
+                    // gone - and the OCI serve gate keys withheld on the MARKER, so the held sibling would disclose for
+                    // up to one enforce interval. This is the request-path twin of the reconcile-vs-enforce race #207
+                    // closed on the WithheldReconcileTask path with a post-clear re-verify. Re-run the SAME cross-alias
+                    // probe against fresh truth now that the clear has landed; if a sibling pointer for the hash
+                    // appeared in the window, RE-MARK. The marker is absent post-clear, so Withheld.mark's atomic-create
+                    // CAS lands and the hold is re-established. The no-sibling case (the free-standing rule-change
+                    // re-push that clears a stale REJECT marker) finds nothing and the marker stays cleared. Per-entry
+                    // hostile pointers are contained inside quarantineAliasExists; a genuine store IOException
+                    // propagates (fail-closed, exactly as the guard read does) rather than re-marking on an error.
+                    if (new Publication(store).quarantineAliasExists(hex, Set.of(path))) {
+                        Withheld.mark(store, hex);
+                    }
                 }
                 // The after-commit observers ride the accepted manifest with its blob identity, exactly as the deploy
                 // and import edges fire published() once they have laid an accepted artifact out.

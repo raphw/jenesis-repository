@@ -11,6 +11,7 @@ import module org.junit.jupiter.api;
 import module java.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -126,6 +127,194 @@ class StoreWalkTest {
                     .as("an explicit selection of another implementation skips this one").isEmpty();
         } finally {
             Features.reset();
+        }
+    }
+
+    /** Audit-27 A3-F1: the reference walk's depth descent used to self-recurse one call frame per key path segment,
+     *  so a single deep publish key (a many-segment Maven groupId, a multi-segment OCI name - depth is client-planted
+     *  and uncapped at the routing edge) overflowed the stack with a {@link StackOverflowError}, aborting the shared
+     *  walk every background sweep drives (reconcile, inventory rebuild, retroactive-hold enforcement). The descent is
+     *  now an explicit-stack traversal, so an arbitrarily deep key is walked to completion. A real filesystem cannot
+     *  hold a {@value #DEEP} directory chain ({@code PATH_MAX}), so this drives an in-memory store whose only synthetic
+     *  publish object is a single {@value #DEEP}-segment-deep key - far past any stack the old recursion could hold. */
+    @Test
+    void a_pathologically_deep_key_walks_without_overflowing_the_stack() {
+        MemoryStore store = new MemoryStore();
+        StringBuilder key = new StringBuilder("publish");
+        for (int depth = 0; depth < DEEP; depth++) {
+            key.append("/a");
+        }
+        key.append("/leaf");
+        String deepKey = key.toString();
+        store.seed(deepKey);
+
+        List<String> visited = new ArrayList<>();
+        assertThatCode(() -> walk(100, 1).walk(store, "test", List.of("publish"), visited::add))
+                .as("a %d-segment-deep key must not overflow the stack (an iterative descent, not recursion)", DEEP)
+                .doesNotThrowAnyException();
+        assertThat(visited)
+                .as("the deep key was actually reached and visited, the descent did not stop short")
+                .containsExactly(deepKey);
+    }
+
+    /** Audit-27 A3-F1 order-equivalence: the iterative descent must visit exactly the keys, in exactly the path order,
+     *  the former recursion produced. This mixed fixture stresses depth (a deep chain), width (a > {@code PAGE}
+     *  sibling fan-out that forces multi-page paging inside one container) and multiple roots at once, and asserts the
+     *  visited sequence is the one total path order - run under several segment counts, since the static range plan
+     *  cuts the key space differently each time yet every cut must reassemble into the identical total order (the
+     *  contiguous half-open ranges the seek-first + {@code to}-bounded descent walks). */
+    @Test
+    void the_iterative_descent_visits_a_mixed_deep_and_wide_fixture_in_the_identical_path_order() throws IOException {
+        List<String> keys = new ArrayList<>(List.of(
+                "publish/com/acme/app/1.0/app-1.0.jar",
+                "publish/com/acme/app/1.0/app-1.0.pom",
+                "publish/com/acme/app/2.0/app-2.0.jar",
+                "npm/left/x",
+                "npm/right/y"));
+        StringBuilder deep = new StringBuilder("publish/deep");
+        for (int level = 0; level < 60; level++) {
+            deep.append("/n");
+        }
+        keys.add(deep + "/leaf");
+        for (int index = 0; index <= 2500; index++) {           // a wide container past PAGE (1000): multi-page paging
+            keys.add(String.format("publish/wide/pkg-%04d", index));
+        }
+        // The chosen names avoid the directory-vs-file prefix anomaly (no sibling is a strict prefix of another before
+        // a separator), so the walk's path order coincides with natural string order - the expected total sequence.
+        List<String> expected = keys.stream().sorted().toList();
+
+        for (int segments : new int[] {1, 4, 16}) {
+            MemoryStore store = new MemoryStore();
+            for (String key : keys) {
+                store.seed(key);
+            }
+            List<String> visited = new ArrayList<>();
+            WalkPass pass = walk(50, segments).walk(store, "test", List.of("publish", "npm"), visited::add);
+            assertThat(pass.complete()).as("the pass completes with %d segments", segments).isTrue();
+            assertThat(visited)
+                    .as("the iterative descent yields the identical path-order key sequence with %d segments", segments)
+                    .containsExactlyElementsOf(expected);
+        }
+    }
+
+    private static final int DEEP = 12_000;
+
+    /** An in-memory {@link ArtifactStore} the depth and order tests drive so a synthetic key tree of any shape (a
+     *  deep chain no filesystem could hold, a wide fan-out) is walked without touching disk. Objects live in a sorted
+     *  map keyed by full object key; immediate-child enumeration is derived from that map, and the small-object
+     *  compare-and-set is a version-token check - exactly what the walk needs to persist its manifest and segments. */
+    private static final class MemoryStore implements ArtifactStore {
+
+        private final NavigableMap<String, byte[]> objects = new TreeMap<>();
+        private final Map<String, Long> tokens = new HashMap<>();
+        private long counter;
+
+        /** Seed a bare leaf object at {@code key} (empty body): the walk emits a key on {@link #exists}, never reading
+         *  its content, so no body is needed to exercise the descent. */
+        private void seed(String key) {
+            objects.put(key, new byte[0]);
+            tokens.put(key, ++counter);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return objects.containsKey(key);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) {
+            byte[] content = objects.get(key);
+            return content == null ? Optional.empty() : Optional.of(new Versioned(content, tokens.get(key)));
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) {
+            Long current = tokens.get(key);
+            if (expected == null ? current != null : !Objects.equals(current, expected)) {
+                return false;   // the compare-and-set lost: the stored version no longer matches
+            }
+            objects.put(key, content);
+            tokens.put(key, ++counter);
+            return true;
+        }
+
+        @Override
+        public void delete(String key) {
+            objects.remove(key);
+            tokens.remove(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return children(prefix, "", Integer.MAX_VALUE);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            for (String child : children(prefix, startAfter, limit)) {
+                consumer.accept(child);
+            }
+        }
+
+        /** The immediate child names under {@code prefix}, lexicographic, strictly after {@code startAfter}, up to
+         *  {@code limit} - the ordered-paging contract {@link ArtifactStore#page} documents, derived from the flat key
+         *  map. */
+        private List<String> children(String prefix, String startAfter, int limit) {
+            String base = prefix.isEmpty() ? "" : prefix + "/";
+            NavigableSet<String> names = new TreeSet<>();
+            for (String key : objects.keySet()) {
+                if (!base.isEmpty() && !key.startsWith(base)) {
+                    continue;
+                }
+                String rest = key.substring(base.length());
+                if (rest.isEmpty()) {
+                    continue;   // the prefix itself is a stored leaf, not a child
+                }
+                int slash = rest.indexOf('/');
+                names.add(slash < 0 ? rest : rest.substring(0, slash));
+            }
+            List<String> result = new ArrayList<>();
+            for (String name : names) {
+                if (name.compareTo(startAfter) <= 0) {
+                    continue;
+                }
+                if (result.size() >= limit) {
+                    break;
+                }
+                result.add(name);
+            }
+            return result;
+        }
+
+        @Override
+        public long size(String key) {
+            byte[] content = objects.get(key);
+            return content == null ? -1L : content.length;
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return this;
+        }
+
+        @Override
+        public void read(String key, OutputStream out) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public InputStream open(String key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void write(String key, InputStream in) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String writeBlob(InputStream in) {
+            throw new UnsupportedOperationException();
         }
     }
 

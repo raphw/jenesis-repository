@@ -42,9 +42,13 @@ class OciCrossAliasClearTest {
     }
 
     private int pushManifest(String name, String reference, byte[] manifest) throws IOException {
+        return pushManifest(name, reference, manifest, store);
+    }
+
+    private int pushManifest(String name, String reference, byte[] manifest, ArtifactStore against) throws IOException {
         FakeExchange put = new FakeExchange("PUT", "/v2/" + name + "/manifests/" + reference, manifest,
                 Map.of(), Map.of("Content-Type", TYPE));
-        format.handle(put, store);
+        format.handle(put, against);
         return put.status();
     }
 
@@ -98,6 +102,43 @@ class OciCrossAliasClearTest {
         assertThat(getStatus("/v2/liba/app/manifests/1.0")).as("A also stays 404 on the shared marker").isEqualTo(404);
     }
 
+    /** Audit-27 A5-F2: the ACCEPT-clear cross-alias guard is a read-THEN-clear, a TOCTOU twin of the reconcile-vs-
+     *  enforce race #207. A concurrent enforce sweep that links a byte-identical sibling's {@code /quarantine} pointer
+     *  in the window between the guard read and the clear would leave the still-live hold's content-addressed marker
+     *  gone - and the OCI serve gate keys withheld on the MARKER - so the KEV-held sibling would disclose. This pins
+     *  the post-clear re-verify: a delegating store injects sibling B's pointer at the exact instant the clear deletes
+     *  {@code withheld/<hex>} (the enforce landing inside the window), and the re-verify must find it and RE-MARK, so
+     *  the marker ends up PRESENT and the sibling stays withheld. */
+    @Test
+    void an_enforce_that_links_a_sibling_in_the_clear_window_is_caught_by_the_post_clear_reverify()
+            throws IOException {
+        byte[] manifest = ("{\"mediaType\":\"" + TYPE + "\",\"config\":{}}").getBytes(StandardCharsets.UTF_8);
+        String hex = sha256(manifest);
+
+        // A and B serve the identical bytes. A retroactive sweep has written the shared content-addressed marker, but
+        // NO /quarantine pointer stands for the hash yet - so at guard-read time the cross-alias probe sees nothing and
+        // the ACCEPT re-push of A would clear (the correct read-time verdict: nothing holds it at that instant).
+        assertThat(pushManifest("liba/app", "1.0", manifest)).isEqualTo(201);
+        assertThat(pushManifest("libb/app", "1.0", manifest)).isEqualTo(201);
+        Withheld.mark(store, hex);
+        assertThat(getStatus("/v2/liba/app/manifests/1.0")).as("A is 404 while the marker stands").isEqualTo(404);
+
+        // The window: a delegating store that, at the instant Withheld.clear deletes withheld/<hex>, first links the
+        // byte-identical sibling B's /quarantine pointer (body == hex) - a concurrent enforce sweep landing its hold
+        // AFTER the guard read but BEFORE (interleaved with) the clear. The post-clear re-verify must then observe B's
+        // fresh pointer and re-mark, so the sibling's live hold is not stranded marker-less.
+        ArtifactStore racy = new InjectingStore(store, "withheld/" + hex,
+                () -> holdAlias("libb/app", "1.0", hex));
+
+        assertThat(pushManifest("liba/app", "1.0", manifest, racy)).as("the re-push is accepted (201)").isEqualTo(201);
+        assertThat(Withheld.is(store, hex))
+                .as("the post-clear re-verify re-marked, so the marker the enforce raced in survives").isTrue();
+        assertThat(getStatus("/v2/libb/app/manifests/1.0")).as("the sibling B the enforce held stays 404")
+                .isEqualTo(404);
+        assertThat(getStatus("/v2/liba/app/manifests/1.0")).as("A also stays 404 on the re-marked shared marker")
+                .isEqualTo(404);
+    }
+
     @Test
     void once_the_last_holding_alias_is_released_an_accepted_repush_clears_the_marker() throws IOException {
         byte[] manifest = ("{\"mediaType\":\"" + TYPE + "\",\"config\":{}}").getBytes(StandardCharsets.UTF_8);
@@ -117,5 +158,94 @@ class OciCrossAliasClearTest {
         assertThat(Withheld.is(store, hex)).as("with no alias still holding the hash the marker clears").isFalse();
         assertThat(getStatus("/v2/liba/app/manifests/1.0")).as("A serves again once nothing holds the hash")
                 .isEqualTo(200);
+    }
+
+    /** A store action that can fail with {@link IOException} - the sibling-linking injection the window test runs. */
+    @FunctionalInterface
+    private interface StoreAction {
+        void run() throws IOException;
+    }
+
+    /** A delegating {@link ArtifactStore} that reproduces the ACCEPT-clear TOCTOU window deterministically: the first
+     *  time the clear deletes the withhold marker ({@code delete("withheld/<hex>")}), it FIRST runs {@code inject}
+     *  (which links a byte-identical sibling's {@code /quarantine} pointer) and then performs the delete - modelling a
+     *  concurrent enforce sweep that lands its hold between the guard read and the clear. Every other operation is a
+     *  straight pass-through to the real store, so the post-clear re-verify reads fresh truth through this same view. */
+    private static final class InjectingStore implements ArtifactStore {
+
+        private final ArtifactStore delegate;
+        private final String markerKey;
+        private final StoreAction inject;
+        private boolean injected;
+
+        private InjectingStore(ArtifactStore delegate, String markerKey, StoreAction inject) {
+            this.delegate = delegate;
+            this.markerKey = markerKey;
+            this.inject = inject;
+        }
+
+        @Override
+        public void delete(String key) throws IOException {
+            if (key.equals(markerKey) && !injected) {
+                injected = true;   // the enforce links the sibling's /quarantine pointer inside the clear window, once
+                inject.run();
+            }
+            delegate.delete(key);
+        }
+
+        @Override
+        public ArtifactStore scope(String tenant) {
+            return delegate.scope(tenant);
+        }
+
+        @Override
+        public boolean exists(String key) {
+            return delegate.exists(key);
+        }
+
+        @Override
+        public void read(String key, OutputStream out) throws IOException {
+            delegate.read(key, out);
+        }
+
+        @Override
+        public InputStream open(String key) throws IOException {
+            return delegate.open(key);
+        }
+
+        @Override
+        public void write(String key, InputStream in) throws IOException {
+            delegate.write(key, in);
+        }
+
+        @Override
+        public String writeBlob(InputStream in) throws IOException {
+            return delegate.writeBlob(in);
+        }
+
+        @Override
+        public long size(String key) throws IOException {
+            return delegate.size(key);
+        }
+
+        @Override
+        public List<String> list(String prefix) {
+            return delegate.list(prefix);
+        }
+
+        @Override
+        public void page(String prefix, String startAfter, int limit, Consumer<String> consumer) {
+            delegate.page(prefix, startAfter, limit, consumer);
+        }
+
+        @Override
+        public Optional<Versioned> readVersioned(String key) throws IOException {
+            return delegate.readVersioned(key);
+        }
+
+        @Override
+        public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+            return delegate.writeVersioned(key, content, expected);
+        }
     }
 }
