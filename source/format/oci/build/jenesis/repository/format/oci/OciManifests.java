@@ -123,18 +123,29 @@ final class OciManifests {
                         && !new Publication(store).quarantineAliasExists(hex, Set.of(path))) {
                     Withheld.clear(store, hex);
                     // The guard above is a read-then-clear: a concurrent enforce sweep (KEV/license/reachability) that
-                    // links a byte-identical SIBLING's /quarantine pointer for this hash AFTER the guard read but
-                    // before this clear would leave that sibling's still-live hold with its content-addressed marker
-                    // gone - and the OCI serve gate keys withheld on the MARKER, so the held sibling would disclose for
-                    // up to one enforce interval. This is the request-path twin of the reconcile-vs-enforce race #207
-                    // closed on the WithheldReconcileTask path with a post-clear re-verify. Re-run the SAME cross-alias
-                    // probe against fresh truth now that the clear has landed; if a sibling pointer for the hash
-                    // appeared in the window, RE-MARK. The marker is absent post-clear, so Withheld.mark's atomic-create
-                    // CAS lands and the hold is re-established. The no-sibling case (the free-standing rule-change
-                    // re-push that clears a stale REJECT marker) finds nothing and the marker stays cleared. Per-entry
-                    // hostile pointers are contained inside quarantineAliasExists; a genuine store IOException
-                    // propagates (fail-closed, exactly as the guard read does) rather than re-marking on an error.
-                    if (new Publication(store).quarantineAliasExists(hex, Set.of(path))) {
+                    // links a /quarantine pointer for this hash AFTER the guard read but before this clear would leave
+                    // that hold's still-live claim with its content-addressed marker gone - and the OCI serve gate keys
+                    // withheld on the MARKER, so the held image would disclose for up to one enforce interval. This is
+                    // the request-path twin of the reconcile-vs-enforce race #207 closed on the WithheldReconcileTask
+                    // path with a post-clear re-verify. Re-run the FULL guard face against fresh truth now that the clear
+                    // has landed and RE-MARK if a hold reappeared on the hash by ANY route - covering both landing sites:
+                    //  - the pointer face (quarantineAliasExists with an EMPTY exclusion set): a /quarantine pointer for
+                    //    the hash on ANY served path, including THIS manifest's own path. The earlier reverify re-ran the
+                    //    cross-alias probe with `path` EXCLUDED (Set.of(path)) - mirroring the guard, which relies on the
+                    //    interceptor face below to cover this path - so a same-path enforce that links /quarantine<path>
+                    //    in the window was invisible to it and the marker stayed wrongly cleared (Audit-28 A5-F1). The
+                    //    empty exclusion catches the same-path pointer too, and it stays testable without an interceptor.
+                    //    (A clean ACCEPT writes no /quarantine<path> pointer, so the no-race case still finds nothing.)
+                    //  - the interceptor face (!disclosable(path)): an enterprise deployment's hold interceptor withholds
+                    //    the path directly; in the free core, with no interceptor, this leg is inert and the pointer scan
+                    //    carries the proof.
+                    // The marker is absent post-clear, so Withheld.mark's atomic-create CAS lands and the hold is
+                    // re-established. The no-hold case (the free-standing rule-change re-push that clears a stale REJECT
+                    // marker) finds neither face and the marker stays cleared. Per-entry hostile pointers are contained
+                    // inside the seam faces; a genuine store IOException propagates (fail-closed, exactly as the guard
+                    // read does) rather than re-marking on an error.
+                    if (!new ServableNames(store).disclosable(path, ServableNames.Policy.HIDE_WITHHELD)
+                            || new Publication(store).quarantineAliasExists(hex, Set.of())) {
                         Withheld.mark(store, hex);
                     }
                 }

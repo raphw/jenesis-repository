@@ -139,6 +139,42 @@ class OciCrossAliasClearTest {
                 .isEqualTo(404);
     }
 
+    /** Audit-28 A5-F1: the post-clear re-verify must re-run the FULL guard face, not only the cross-alias probe. The
+     *  guard passes on two faces - the same-path chain probe (disclosable(path), THIS path carries no /quarantine
+     *  pointer) AND the cross-alias scan (no OTHER alias holds the hash). The earlier re-verify re-ran only the
+     *  cross-alias scan with {@code path} EXCLUDED, so an enforce that lands its hold on THIS SAME path in the clear
+     *  window - linking {@code /quarantine<path>} and marking - was invisible to it: the marker stayed wrongly cleared
+     *  and the freshly KEV-held manifest disclosed by digest for up to one enforce interval, with no reconcile owner on
+     *  the free side to re-mark it. This pins the same-path variant: a delegating store links THIS path's own pointer
+     *  at the instant the clear deletes {@code withheld/<hex>}, and the re-verify must observe {@code disclosable(path)}
+     *  now false and RE-MARK. */
+    @Test
+    void an_enforce_that_holds_this_same_path_in_the_clear_window_is_caught_by_the_post_clear_reverify()
+            throws IOException {
+        byte[] manifest = ("{\"mediaType\":\"" + TYPE + "\",\"config\":{}}").getBytes(StandardCharsets.UTF_8);
+        String hex = sha256(manifest);
+
+        // One image A. A retroactive sweep has written the shared content-addressed marker, but NO /quarantine pointer
+        // stands for the hash yet - so at guard-read time BOTH faces pass (disclosable(A) is true, no cross-alias
+        // sibling holds the hash) and the ACCEPT re-push of A would clear (the correct read-time verdict: nothing holds
+        // it at that instant).
+        assertThat(pushManifest("liba/app", "1.0", manifest)).isEqualTo(201);
+        Withheld.mark(store, hex);
+        assertThat(getStatus("/v2/liba/app/manifests/1.0")).as("A is 404 while the marker stands").isEqualTo(404);
+
+        // The window: a concurrent enforce sweep lands its hold on A's OWN path (links /quarantine<A> pointer, body ==
+        // hex) at the instant Withheld.clear deletes withheld/<hex> - AFTER the guard read but interleaved with the
+        // clear. The post-clear re-verify must then observe disclosable(A) now false (its own pointer stands) and
+        // re-mark, so A's freshly-landed hold is not stranded marker-less.
+        ArtifactStore racy = new InjectingStore(store, "withheld/" + hex,
+                () -> holdAlias("liba/app", "1.0", hex));
+
+        assertThat(pushManifest("liba/app", "1.0", manifest, racy)).as("the re-push is accepted (201)").isEqualTo(201);
+        assertThat(Withheld.is(store, hex))
+                .as("the post-clear re-verify re-marked on the same-path face, so the raced-in hold survives").isTrue();
+        assertThat(getStatus("/v2/liba/app/manifests/1.0")).as("A stays 404 on the re-marked marker").isEqualTo(404);
+    }
+
     @Test
     void once_the_last_holding_alias_is_released_an_accepted_repush_clears_the_marker() throws IOException {
         byte[] manifest = ("{\"mediaType\":\"" + TYPE + "\",\"config\":{}}").getBytes(StandardCharsets.UTF_8);
