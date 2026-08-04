@@ -32,17 +32,23 @@ public final class Withheld {
     private Withheld() {
     }
 
-    /** Mark the blob with this hash as withheld from blobs-namespace serving. Idempotent. */
+    /** Mark the blob with this hash as withheld from blobs-namespace serving. Idempotent. On an actual transition
+     *  (the marker was absent) the withhold-change feed's transition-ON leg fires after the durable write, keyed by the
+     *  content hash (path null - one marker retracts every alias of the bytes); the converge passes' idempotent re-marks
+     *  are no-ops and raise no event. */
     public static void mark(ArtifactStore store, String hash) throws IOException {
         if (store.readVersioned(ROOT + hash).isEmpty()) {
             store.write(ROOT + hash, new ByteArrayInputStream(new byte[0]));
+            Publication.notifyWithheld(ArtifactDescriptor.at(null, null).withBlob(hash, -1L), store);
         }
     }
 
-    /** Lift the withhold marker for this hash so blobs-namespace serving resumes. Idempotent. */
+    /** Lift the withhold marker for this hash so blobs-namespace serving resumes. Idempotent. On an actual transition
+     *  (the marker was present) the withhold-change feed's transition-OFF leg fires after the durable delete. */
     public static void clear(ArtifactStore store, String hash) throws IOException {
         if (store.readVersioned(ROOT + hash).isPresent()) {
             store.delete(ROOT + hash);
+            Publication.notifyWithholdCleared(ArtifactDescriptor.at(null, null).withBlob(hash, -1L), store);
         }
     }
 

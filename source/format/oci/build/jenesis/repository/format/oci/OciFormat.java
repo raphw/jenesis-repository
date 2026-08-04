@@ -9,6 +9,7 @@ import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.ServableNames;
+import build.jenesis.repository.store.Withheld;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -140,7 +141,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         // store-layout convention, like gc/condemned/<hash>): OCI serves by digest straight from blobs/, which no
         // publish/ pointer hold ever reached, so a compliance hold on these bytes retracts serving here through the
         // marker instead. Absent marker, zero-cost beyond one existence probe.
-        if (!store.exists(key) || store.exists("withheld/" + hex)) {
+        if (!store.exists(key) || Withheld.is(store, hex)) {
             exchange.respond(404);
             return;
         }
@@ -415,7 +416,7 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         String key = "blobs/" + hex;
         // A withheld manifest 404s exactly as a withheld blob does (the withheld/<hash> convention above), so a held
         // image cannot be pulled by digest or tag while its layers 404.
-        if (!store.exists(key) || store.exists("withheld/" + hex)) {
+        if (!store.exists(key) || Withheld.is(store, hex)) {
             exchange.respond(404);
             return;
         }

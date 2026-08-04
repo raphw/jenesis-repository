@@ -118,12 +118,24 @@ public final class Publication {
      *  collecting sweep's final marker re-read. One existence probe per link, a no-op wherever collection never
      *  condemned the blob; the marker key is the store-layout convention the {@code gc} SPI documents. */
     public void link(String requestPath, String hash) throws IOException {
+        // The one cheap check the publish hot path pays: a non-quarantine link is exactly the write below and nothing
+        // more. A /quarantine<path> link is the pointer face of the withhold-change feed - a hold writer (the gate's
+        // QUARANTINE branch, a retroactive KEV/license/reachability sweep) links a review pointer here - so a FRESH one
+        // (prior read absent, not an overwrite) fires onWithheld after the write. Transition-only: the sweeps guard on
+        // presence before re-linking, so their idempotent converge passes overwrite rather than freshly link and raise
+        // no event.
+        boolean quarantine = requestPath.startsWith("/quarantine");
         for (int attempt = 0; attempt < 3; attempt++) {
-            Object token = store.readVersioned("publish" + requestPath).map(ArtifactStore.Versioned::token).orElse(null);
+            Optional<ArtifactStore.Versioned> prior = store.readVersioned("publish" + requestPath);
+            Object token = prior.map(ArtifactStore.Versioned::token).orElse(null);
             if (store.writeVersioned("publish" + requestPath, hash.getBytes(StandardCharsets.UTF_8), token)) {
                 String condemned = "gc/condemned/" + hash;
                 if (store.exists(condemned)) {
                     store.delete(condemned);
+                }
+                if (quarantine && prior.isEmpty()) {
+                    notifyWithheld(ArtifactDescriptor.at(null, requestPath.substring("/quarantine".length()))
+                            .withBlob(hash, -1L));
                 }
                 return;
             }
@@ -151,6 +163,14 @@ public final class Publication {
         String named = new String(pointer.get().content(), StandardCharsets.UTF_8).trim();
         ArtifactDescriptor removed = ArtifactDescriptor.at(null, requestPath);
         notifyDeleted(hash(named) ? removed.withBlob(named, -1L) : removed);
+        // The pointer face of the withhold-change feed's transition-OFF leg: removing a /quarantine<servedPath> review
+        // pointer clears that hold, so fire onWithholdCleared with the served path (the /quarantine prefix stripped) and
+        // the pointer's hash - IN ADDITION TO the onDeleted above, which for a quarantine path carries no coordinate the
+        // coordinate-keyed observers act on. A non-quarantine unpublish pays only one startsWith.
+        if (requestPath.startsWith("/quarantine")) {
+            ArtifactDescriptor cleared = ArtifactDescriptor.at(null, requestPath.substring("/quarantine".length()));
+            notifyWithholdCleared(hash(named) ? cleared.withBlob(named, -1L) : cleared);
+        }
     }
 
     /** Remove the pointer at {@code described.path()} exactly like {@link #unpublish(String)}, but notify the
@@ -165,6 +185,12 @@ public final class Publication {
         store.delete("publish" + described.path());
         String named = new String(pointer.get().content(), StandardCharsets.UTF_8).trim();
         notifyDeleted(described.hash() == null && hash(named) ? described.withBlob(named, described.size()) : described);
+        // The withhold-change feed's transition-OFF pointer leg, exactly as the string variant: a removed
+        // /quarantine<servedPath> pointer fires onWithholdCleared with the stripped served path and the pointer's hash.
+        if (described.path() != null && described.path().startsWith("/quarantine")) {
+            ArtifactDescriptor cleared = ArtifactDescriptor.at(null, described.path().substring("/quarantine".length()));
+            notifyWithholdCleared(hash(named) ? cleared.withBlob(named, -1L) : cleared);
+        }
     }
 
     /** Notify every observer of a serving-pointer removal this primitive did not perform - the seam a layout-aware
@@ -221,6 +247,59 @@ public final class Publication {
             } catch (Exception exception) {
                 LOGGER.warn("publication observer "
                         + observer.getClass().getName() + " failed for " + published.path(), exception);
+            }
+        }
+    }
+
+    /** The withhold-change feed's transition-ON notify - the pointer face {@link #link} fires over this publication's
+     *  observer list, contained exactly like {@link #notifyDeleted}. */
+    private void notifyWithheld(ArtifactDescriptor subject) {
+        for (PublicationObserver observer : observers) {
+            try {
+                observer.onWithheld(subject, store);
+            } catch (Exception exception) {
+                LOGGER.warn("publication observer "
+                        + observer.getClass().getName() + " failed for withhold of " + subject.path(), exception);
+            }
+        }
+    }
+
+    /** The transition-OFF mirror {@link #unpublish} fires when a {@code /quarantine} review pointer is removed. */
+    private void notifyWithholdCleared(ArtifactDescriptor subject) {
+        for (PublicationObserver observer : observers) {
+            try {
+                observer.onWithholdCleared(subject, store);
+            } catch (Exception exception) {
+                LOGGER.warn("publication observer " + observer.getClass().getName()
+                        + " failed for withhold-clear of " + subject.path(), exception);
+            }
+        }
+    }
+
+    /** The withhold-change feed's transition-ON notify over the ServiceLoader-discovered {@link #OBSERVERS} - the
+     *  package-private static seam the same-package {@link Withheld#mark} (a static primitive with no {@code Publication}
+     *  instance) fires the marker face through, reusing the one discovered observer list rather than a second discovery.
+     *  Failures are logged and contained exactly as on the instance notify paths, so a hold's marker write never fails
+     *  open because a downstream consumer is down. */
+    static void notifyWithheld(ArtifactDescriptor subject, ArtifactStore store) {
+        for (PublicationObserver observer : OBSERVERS) {
+            try {
+                observer.onWithheld(subject, store);
+            } catch (Exception exception) {
+                LOGGER.warn("publication observer " + observer.getClass().getName()
+                        + " failed for withhold of hash " + subject.hash(), exception);
+            }
+        }
+    }
+
+    /** The transition-OFF mirror the same-package {@link Withheld#clear} fires through - the marker-cleared face. */
+    static void notifyWithholdCleared(ArtifactDescriptor subject, ArtifactStore store) {
+        for (PublicationObserver observer : OBSERVERS) {
+            try {
+                observer.onWithholdCleared(subject, store);
+            } catch (Exception exception) {
+                LOGGER.warn("publication observer " + observer.getClass().getName()
+                        + " failed for withhold-clear of hash " + subject.hash(), exception);
             }
         }
     }

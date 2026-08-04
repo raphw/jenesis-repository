@@ -46,4 +46,9 @@ open module build.jenesis.repository.store.test {
     requires org.assertj.core;
     provides build.jenesis.repository.store.ArtifactStoreProvider
             with build.jenesis.repository.store.test.NeedyArtifactStoreProvider;
+    // The withhold-change feed guard (WithholdFeedTest) needs a discovered PublicationObserver, since Withheld.mark /
+    // Withheld.clear are static and fire through Publication's ServiceLoader-discovered OBSERVERS list, not an injected
+    // one. A base-only observer, so it never joins the verdict chain.
+    provides build.jenesis.repository.store.PublicationObserver
+            with build.jenesis.repository.store.test.RecordingWithholdObserver;
 }

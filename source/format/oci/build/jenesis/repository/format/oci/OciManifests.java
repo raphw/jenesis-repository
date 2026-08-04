@@ -5,6 +5,8 @@ import build.jenesis.repository.store.ArtifactDescriptor;
 import build.jenesis.repository.store.ArtifactStore;
 import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.store.PublishInterceptor;
+import build.jenesis.repository.store.ServableNames;
+import build.jenesis.repository.store.Withheld;
 
 /**
  * The OCI manifest choke point (EPIC 26): the one place a manifest write - a {@code docker push} PUT, a pull-through
@@ -67,7 +69,6 @@ final class OciManifests {
         // publish/ pointer: OCI owns its own layout below.
         Publication.Published outcome = new Publication(store).screen(descriptor, new ByteArrayInputStream(content));
         String hex = outcome.hash();
-        String marker = "withheld/" + hex;
         switch (outcome.disposition()) {
             case ACCEPT -> {
                 store.write("oci/types/" + hex, new ByteArrayInputStream(
@@ -76,9 +77,14 @@ final class OciManifests {
                     OciFormat.linkTag(store, "oci/" + name + "/tags/" + reference, "sha256:" + hex);
                 }
                 // Clear a stale hold: an identical manifest previously withheld and now accepted (a lifted advisory, a
-                // re-push after a rule change) must serve again - the marker is the only thing retracting blobs/<hex>.
-                if (store.exists(marker)) {
-                    store.delete(marker);
+                // re-push after a rule change) must serve again - the marker keyed by content hash is the only thing
+                // retracting blobs/<hex>. But do NOT clear it while a retroactive hold's review pointer still stands on
+                // this path (§6 Q-D): a screen-time ACCEPT must not tear down a standing KEV/license/reachability hold on
+                // the same bytes. The chain probe (ServableNames.disclosable under HIDE_WITHHELD - the /quarantine<path>
+                // review pointer face, no blob stat) narrows the clear; where the OCI request path carries no such
+                // pointer the guard passes and the clear happens exactly as before, so it is safe either way.
+                if (new ServableNames(store).disclosable(path, ServableNames.Policy.HIDE_WITHHELD)) {
+                    Withheld.clear(store, hex);
                 }
                 // The after-commit observers ride the accepted manifest with its blob identity, exactly as the deploy
                 // and import edges fire published() once they have laid an accepted artifact out.
@@ -86,9 +92,10 @@ final class OciManifests {
             }
             case QUARANTINE, REJECT -> {
                 // Load-bearing: screen() already stored the bytes at the serving key blobs/<hex>, so without this marker
-                // the withheld manifest would be pullable by digest. No sidecar, no tag link - the manifest never serves.
-                store.write(marker, new ByteArrayInputStream(
-                        outcome.disposition().name().getBytes(StandardCharsets.UTF_8)));
+                // the withheld manifest would be pullable by digest. Routing through Withheld.mark (rather than a raw
+                // withheld/<hex> write) joins the OCI choke point to the withhold-change feed and the one marker idiom;
+                // the disposition body is dropped (marker presence is the signal, never read). No sidecar, no tag link.
+                Withheld.mark(store, hex);
             }
         }
         return new Ingested(outcome.disposition(), hex);

@@ -42,5 +42,6 @@ open module build.jenesis.repository.format.oci.test {
     // WSPI.2 (b): a PublishInterceptor IS a PublicationObserver, discovered through the single seam and split into
     // the verdict chain by instanceof.
     provides build.jenesis.repository.store.PublicationObserver
-            with build.jenesis.repository.format.oci.test.OciScreenInterceptor;
+            with build.jenesis.repository.format.oci.test.OciScreenInterceptor,
+                    build.jenesis.repository.format.oci.test.OciHoldInterceptor;
 }
