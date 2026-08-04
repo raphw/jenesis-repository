@@ -123,6 +123,7 @@ public final class AzureArtifactStore implements ArtifactStore {
 
     @Override
     public void write(String key, InputStream in) throws IOException {
+        ArtifactStore.key(key);
         BlockBlobClient blob = container.getBlobClient(keyPrefix + key).getBlockBlobClient();
         // Close only after a complete transfer: BlobOutputStream commits its staged block list in close(), even
         // when the source failed mid-stream, which would land a truncated blob at the key - breaking the SPI's
@@ -306,6 +307,7 @@ public final class AzureArtifactStore implements ArtifactStore {
 
     @Override
     public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+        ArtifactStore.key(key);
         BlobRequestConditions conditions = new BlobRequestConditions();
         if (expected == null) {
             conditions.setIfNoneMatch("*");

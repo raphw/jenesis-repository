@@ -35,6 +35,55 @@ public interface ArtifactStore {
         return segment;
     }
 
+    /**
+     * The maximum number of {@code '/'}-separated segments a stored key may carry, enforced by {@link #key(String)}
+     * in every backend's write path. 64 sits far above any legitimate ecosystem - Maven's deepest real groupIds run
+     * under 20 segments, an OCI repository name a handful more - and far below the few-thousand call frames a naive
+     * recursive descent of a key path would push before it overflows a default thread stack: a ceiling no real
+     * publish ever reaches, yet one that makes an attacker-planted pathological key depth unrepresentable at the
+     * source, so any descent anywhere - even a hand-rolled recursive one - is bounded by construction.
+     */
+    int MAX_SEGMENTS = 64;
+
+    /**
+     * The maximum length in UTF-8 bytes of a stored key, enforced by {@link #key(String)} in every backend's write
+     * path. 4096 comfortably exceeds any real coordinate-derived key yet bounds the per-key work (path resolution, an
+     * object-store round trip, a directory chain) a single attacker-controlled write can force.
+     */
+    int MAX_KEY_BYTES = 4096;
+
+    /**
+     * Validate {@code key} as a storable object key of bounded shape and return it - the write-path companion of the
+     * {@link #segment(String)} scope screen, applied at the same choke point each backend already screens a key on
+     * before a write lands. A key is rejected with the same {@link IllegalArgumentException} a traversal violation
+     * raises when it exceeds {@link #MAX_SEGMENTS} {@code '/'}-separated segments or {@link #MAX_KEY_BYTES} UTF-8
+     * bytes, so an attacker-controlled coordinate can never plant a key deep or long enough to drive an unbounded
+     * recursive descent, or an outsized per-key cost, anywhere downstream. Enforced on new writes only: any key
+     * already stored predates the cap and stays readable and walkable (the iterative store walk bounds traversal
+     * regardless of a legacy key's depth).
+     */
+    static String key(String key) {
+        if (key == null) {
+            throw new IllegalArgumentException("Not a storable key: null");
+        }
+        int bytes = key.getBytes(StandardCharsets.UTF_8).length;
+        if (bytes > MAX_KEY_BYTES) {
+            throw new IllegalArgumentException(
+                    "Key exceeds the " + MAX_KEY_BYTES + "-byte cap (" + bytes + " bytes): " + key);
+        }
+        int segments = 1;
+        for (int index = 0; index < key.length(); index++) {
+            if (key.charAt(index) == '/') {
+                segments++;
+            }
+        }
+        if (segments > MAX_SEGMENTS) {
+            throw new IllegalArgumentException(
+                    "Key exceeds the " + MAX_SEGMENTS + "-segment cap (" + segments + " segments): " + key);
+        }
+        return key;
+    }
+
     /** Whether a blob exists at this object key. */
     boolean exists(String key);
 

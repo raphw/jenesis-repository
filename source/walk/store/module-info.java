@@ -14,8 +14,7 @@
 module build.jenesis.repository.walk.store {
     requires build.jenesis.repository.walk;
     requires build.jenesis.repository.observation;
-    exports build.jenesis.repository.walk.store to build.jenesis.repository.walk.test,
-            build.jenesis.repository.gc.test;
+    exports build.jenesis.repository.walk.store;
     provides build.jenesis.repository.walk.WalkProvider
             with build.jenesis.repository.walk.store.StoreWalkProvider;
 }

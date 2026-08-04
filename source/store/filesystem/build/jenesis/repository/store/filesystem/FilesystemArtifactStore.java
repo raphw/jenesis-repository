@@ -89,7 +89,7 @@ public final class FilesystemArtifactStore implements ArtifactStore {
 
     @Override
     public void write(String key, InputStream in) throws IOException {
-        Path path = resolve(key);
+        Path path = resolve(ArtifactStore.key(key));
         Path temp = createUploadTemp(path.getParent());
         try {
             try (OutputStream out = Files.newOutputStream(temp)) {
@@ -228,7 +228,7 @@ public final class FilesystemArtifactStore implements ArtifactStore {
 
     @Override
     public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
-        Path path = resolve(key);
+        Path path = resolve(ArtifactStore.key(key));
         synchronized (LOCKS[Math.floorMod(path.hashCode(), LOCKS.length)]) {
             Object current = Files.isRegularFile(path) ? Files.getLastModifiedTime(path).toMillis() : null;
             if (!Objects.equals(current, expected)) {

@@ -140,6 +140,7 @@ public final class GcsArtifactStore implements ArtifactStore {
 
     @Override
     public void write(String key, InputStream in) throws IOException {
+        ArtifactStore.key(key);
         // The XML API needs the content length up front, so buffer the (possibly large) body to an owner-only
         // temp file rather than into memory, then upload from the file.
         Path temporary = spool();
@@ -333,6 +334,7 @@ public final class GcsArtifactStore implements ArtifactStore {
 
     @Override
     public boolean writeVersioned(String key, byte[] content, Object expected) throws IOException {
+        ArtifactStore.key(key);
         String generation = expected == null ? "0" : (String) expected;
         try {
             s3.putObject(b -> b.bucket(bucket).key(keyPrefix + key)
