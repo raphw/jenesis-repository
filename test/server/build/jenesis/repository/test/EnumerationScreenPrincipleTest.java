@@ -110,6 +110,10 @@ class EnumerationScreenPrincipleTest {
         allow.put("walk/store/build/jenesis/repository/walk/store/StoreArtifactWalk.java",
                 "layout-neutral store DFS: pages every key of every namespace to walk consumers; the consumer "
                         + "(RebuildPass) screens via ServableNames.state - the walker discloses no served name itself");
+        allow.put("walk/store/build/jenesis/repository/walk/store/Trees.java",
+                "the iterative descent primitive extracted from StoreArtifactWalk (which now delegates to it): "
+                        + "pages every key of every namespace to a visitor; screening lives in the visitor/consumer, "
+                        + "not the walk internal - it discloses no served name itself");
 
         return Map.copyOf(allow);
     }
