@@ -361,8 +361,18 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
                         + "\"manifest exceeds the " + MAX_MANIFEST + "-byte limit\"}]}").getBytes(StandardCharsets.UTF_8));
                 return;
             }
-            OciManifests.Ingested ingested = OciManifests.ingest(
-                    name, reference, body, exchange.requestHeader("Content-Type"), store);
+            OciManifests.Ingested ingested;
+            try {
+                ingested = OciManifests.ingest(
+                        name, reference, body, exchange.requestHeader("Content-Type"), store);
+            } catch (OciManifests.InvalidManifest invalid) {
+                // A manifest that is not parseable JSON (or over the cap - the 413 above pre-catches the PUT edge, this
+                // is the choke-point belt) is refused with the Distribution error envelope, storing/laying out nothing.
+                exchange.setResponseHeader("Content-Type", "application/json");
+                exchange.respond(400, ("{\"errors\":[{\"code\":\"MANIFEST_INVALID\",\"message\":"
+                        + "\"the manifest is not a valid JSON manifest\"}]}").getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             String hex = ingested.hex();
             // A push BY DIGEST must actually hash to that digest - the manifest-side counterpart of the blob store()
             // content-address check. Without this a client could PUT /manifests/sha256:<X> with a body that hashes to
@@ -861,7 +871,20 @@ public final class OciFormat implements RepositoryFormat, ProxyFormat, Repositor
         // Screen a proxied manifest through the same OCI choke point a push takes (EPIC 26): a withheld upstream
         // manifest gets its withheld/<hex> marker set, so the handle() serve below 404s it by digest and by tag. There
         // is no separate proxy client response - the local serve is the response.
-        OciManifests.ingest(name, reference, body, fetched.get().header("Content-Type"), store);
+        try {
+            OciManifests.ingest(name, reference, body, fetched.get().header("Content-Type"), store);
+        } catch (OciManifests.InvalidManifest invalid) {
+            // Serve-through-without-caching (F4): an oversized (> 4 MiB, reachable only on this proxy leg) or unparseable
+            // upstream manifest is never stored or laid out - nothing stored means nothing that can later need an
+            // un-enumerable hold - but the client still receives the upstream body; only the local cache is skipped.
+            String type = fetched.get().header("Content-Type");
+            if (type != null) {
+                exchange.setResponseHeader("Content-Type", type);
+            }
+            exchange.setResponseHeader("Docker-Content-Digest", "sha256:" + hex);
+            exchange.respond(200, body);
+            return true;
+        }
         handle(exchange, store);
         return true;
     }

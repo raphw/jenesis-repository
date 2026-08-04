@@ -17,6 +17,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class OciImporter implements RepositoryImporter {
 
+    private static final System.Logger LOGGER = System.getLogger(OciImporter.class.getName());
+
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
@@ -63,7 +65,16 @@ public final class OciImporter implements RepositoryImporter {
         // exactly as a push and a proxy do - what OciImporter.describe() returning empty (an unscreened import edge)
         // deferred to this manifest gate. The media type is read from the manifest's own field (an import carries no
         // response headers); a withheld verdict lays out no sidecar or tag pointer, so the manifest never serves.
-        OciManifests.ingest(name, reference, content, mediaType(content), store);
+        try {
+            OciManifests.ingest(name, reference, content, mediaType(content), store);
+        } catch (OciManifests.InvalidManifest invalid) {
+            // An oversized/unparseable source manifest is a refused entry: logged and skipped, storing/laying out
+            // nothing (F4) - the migration continues rather than half-ingesting a manifest whose layers no later hold
+            // could enumerate. The MAX_MANIFEST cap above already refuses the oversized case with an IOException; this is
+            // the parse belt at the shared choke point.
+            LOGGER.log(System.Logger.Level.WARNING, "skipping unparseable imported OCI manifest "
+                    + name + "/manifests/" + reference + ": " + invalid.getMessage());
+        }
     }
 
     private static String mediaType(byte[] manifest) {

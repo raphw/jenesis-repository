@@ -165,6 +165,57 @@ public final class Publication {
                 .map(versioned -> new String(versioned.content(), StandardCharsets.UTF_8).trim());
     }
 
+    /**
+     * Whether a live {@code /quarantine} review pointer OUTSIDE {@code excludedPaths} currently holds {@code hash} - the
+     * cross-alias proof an automated content-addressed marker clear must run before lifting the marker. The withhold
+     * marker is content-addressed (one {@code withheld/<hash>} marker withholds the bytes wherever served) and the
+     * blobs-namespace serve gate keys withheld on the MARKER, not the per-path {@code /quarantine} pointer - so clearing
+     * {@code hash} while a byte-identical sibling coordinate is still held would un-withhold that sibling. This is the
+     * free-store owner of the {@code publish/quarantine} pointer convention (the {@link #isQuarantinePath} face)
+     * answering the same question the enterprise release paths' cross-alias guard asks before a release-time clear, so a
+     * free-only clear (the OCI manifest ACCEPT-clear) can prove no-other-alias without reaching into enterprise gate code.
+     *
+     * <p>The scan is a bounded depth-first walk of the {@code publish/quarantine} pointer subtree only - the review
+     * queue, bounded by the number of currently held paths, never the whole repository - with an early exit on the first
+     * live alias found. {@code excludedPaths} is in served-path form (the {@code /quarantine} prefix stripped), the
+     * caller's own served path(s), so a pointer that maps back to the caller's own coordinate does not keep the marker
+     * on its own account. A garbled / encoding-hostile pointer key is skipped defensively (never thrown out of the guard
+     * on one bad entry); a genuine store {@link IOException} propagates, so the caller does NOT clear - fail-closed,
+     * since leaving a marker is always safe and clearing wrongly is the disclosure.
+     */
+    public boolean quarantineAliasExists(String hash, Set<String> excludedPaths) throws IOException {
+        return aliasHeld("publish" + QUARANTINE_PATH, "publish" + QUARANTINE_PATH, hash, excludedPaths);
+    }
+
+    /** Depth-first search of the {@code publish/quarantine} pointer subtree for a live review pointer, outside
+     *  {@code excludedPaths}, whose body is {@code hash}. {@code prefix} is the current key, its immediate children are
+     *  enumerated with {@link ArtifactStore#list}, and a leaf is a key with no children. Each non-root node is probed as
+     *  a pointer (a directory node reads empty and is skipped), so a pointer that also has descendants is not missed, and
+     *  the walk short-circuits on the first alias. Mirror of the enterprise {@code HoldLifecycle.aliasHeld}. */
+    private boolean aliasHeld(String root, String prefix, String hash, Set<String> excludedPaths) throws IOException {
+        if (!prefix.equals(root)) {
+            String servedPath = prefix.substring(root.length());   // the /quarantine prefix stripped == the served path
+            if (!excludedPaths.contains(servedPath)) {
+                try {
+                    Optional<String> pointer = store.readVersioned(prefix)
+                            .map(versioned -> new String(versioned.content(), StandardCharsets.UTF_8).trim());
+                    if (pointer.isPresent() && pointer.get().equals(hash)) {
+                        return true;   // a byte-identical sibling coordinate still holds the hash
+                    }
+                } catch (RuntimeException hostile) {
+                    // a garbled / encoding-hostile pointer key (an InvalidPathException out of resolve): skip it, never
+                    // throw out of the guard on one bad entry - the marker simply stays if it is the only alias
+                }
+            }
+        }
+        for (String child : store.list(prefix)) {
+            if (aliasHeld(root, prefix + "/" + child, hash, excludedPaths)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Remove a single published pointer; the blob it referenced is left for a later garbage collection, since
      *  another pointer may still reference it. Every discovered {@link PublicationObserver} is notified of the
      *  removal ({@code onDeleted}, once per removed pointer) with what this site knows - the request path and the

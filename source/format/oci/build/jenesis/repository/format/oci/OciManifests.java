@@ -7,6 +7,7 @@ import build.jenesis.repository.store.Publication;
 import build.jenesis.repository.store.PublishInterceptor;
 import build.jenesis.repository.store.ServableNames;
 import build.jenesis.repository.store.Withheld;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The OCI manifest choke point (EPIC 26): the one place a manifest write - a {@code docker push} PUT, a pull-through
@@ -41,7 +42,21 @@ final class OciManifests {
 
     private static final String OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
     private OciManifests() {
+    }
+
+    /** Thrown by {@link #ingest} when the body is not a servable manifest - larger than {@link OciFormat#MAX_MANIFEST}
+     *  (4 MiB) or not parseable as a JSON object - so nothing was stored or laid out. Each ingest edge maps it to its own
+     *  fail-closed response: a PUT to {@code 400 MANIFEST_INVALID}, a proxy to serve-through-without-caching, an import to
+     *  a logged skip. Validating here (before {@code screen} content-addresses the bytes at {@code blobs/<hex>}) keeps an
+     *  unparseable manifest from ever being laid out - which would otherwise degrade a later retroactive hold's layer
+     *  enumeration to manifest-only, leaving the named layers servable by digest under a standing hold. */
+    static final class InvalidManifest extends Exception {
+        InvalidManifest(String message) {
+            super(message);
+        }
     }
 
     /** The outcome of a screened manifest write: the chain's {@link PublishInterceptor.Disposition} and the SHA-256 hex
@@ -58,7 +73,21 @@ final class OciManifests {
      * write the {@code withheld/<hex>} marker the serving path reads and lay out nothing.
      */
     static Ingested ingest(String name, String reference, byte[] content, String mediaTypeOrNull, ArtifactStore store)
-            throws IOException {
+            throws IOException, InvalidManifest {
+        // Validate the manifest is a servable manifest BEFORE screen() content-addresses it at blobs/<hex>: screen
+        // stores the bytes before the chain runs, so a rejected-here body is never laid out and can never later need an
+        // un-enumerable hold (OciBlobLayout.blobHashes degrades a malformed/over-cap manifest to manifest-only, leaving
+        // its named layers servable by direct digest under a standing KEV/license hold). The size check is load-bearing:
+        // the PUT and import edges pre-cap at MAX_MANIFEST, but the PROXY edge feeds a body bounded only by the 64 MiB
+        // fetch cap, so a > 4 MiB proxied manifest can reach here. isObject() (not merely "parses") is the servable-
+        // manifest shape - a top-level array/scalar has no config/layers to enumerate, the same degrade the parse guard
+        // prevents. A hostile / non-JSON body is contained, never thrown as a raw Jackson RuntimeException out of ingest.
+        if (content.length > OciFormat.MAX_MANIFEST) {
+            throw new InvalidManifest("manifest exceeds the " + OciFormat.MAX_MANIFEST + "-byte limit");
+        }
+        if (!parsesAsJsonObject(content)) {
+            throw new InvalidManifest("manifest is not a parseable JSON object");
+        }
         String path = "/v2/" + name + "/manifests/" + reference;
         // The neutral descriptor other formats build for the edge: ecosystem oci, coordinate the image name, version
         // the reference, path the request path - what a deny-list interceptor keys on and a metric/observer records.
@@ -83,7 +112,15 @@ final class OciManifests {
                 // the same bytes. The chain probe (ServableNames.disclosable under HIDE_WITHHELD - the /quarantine<path>
                 // review pointer face, no blob stat) narrows the clear; where the OCI request path carries no such
                 // pointer the guard passes and the clear happens exactly as before, so it is safe either way.
-                if (new ServableNames(store).disclosable(path, ServableNames.Policy.HIDE_WITHHELD)) {
+                // The same-path probe above reads only THIS path's pointer: a byte-identical sibling image held under a
+                // DIFFERENT alias keeps its own /quarantine pointer body == hex, which the same-path probe never sees, so
+                // an accepted re-push under a released alias would un-withhold the still-held sibling. The cross-alias
+                // scan (Publication.quarantineAliasExists - the enterprise release paths' withheldByAnotherAlias proof,
+                // homed in the free store that owns the /quarantine convention) closes that: clear only when no OTHER live
+                // quarantine pointer outside this manifest's own served path still holds the hash. Fail-closed - it only
+                // ever NARROWS the clear, so worst case a marker that should clear waits for the review flow.
+                if (new ServableNames(store).disclosable(path, ServableNames.Policy.HIDE_WITHHELD)
+                        && !new Publication(store).quarantineAliasExists(hex, Set.of(path))) {
                     Withheld.clear(store, hex);
                 }
                 // The after-commit observers ride the accepted manifest with its blob identity, exactly as the deploy
@@ -99,5 +136,16 @@ final class OciManifests {
             }
         }
         return new Ingested(outcome.disposition(), hex);
+    }
+
+    /** Whether the bytes parse as a JSON object - the shape every OCI manifest and image index takes, the shape whose
+     *  {@code config}/{@code layers}/{@code manifests} a hold's layer enumeration reads. A parse failure or a non-object
+     *  top level (array/scalar) is contained here rather than thrown as a raw Jackson {@code RuntimeException}. */
+    private static boolean parsesAsJsonObject(byte[] content) {
+        try {
+            return JSON.readTree(new String(content, StandardCharsets.UTF_8)).isObject();
+        } catch (RuntimeException notJson) {
+            return false;
+        }
     }
 }

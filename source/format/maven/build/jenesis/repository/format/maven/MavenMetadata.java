@@ -156,27 +156,49 @@ public final class MavenMetadata {
             }
         }
         union.addAll(folders);
-        if (union.equals(new LinkedHashSet<>(listed))) {
-            // Nothing to add and nothing withheld to drop - preserve the publisher's document byte-for-byte.
+        // Screen the currently-named <latest>/<release> value DIRECTLY (disclosure Finding 2): a version named there but
+        // ABSENT from <versions> is never seen by the loop above, so a hold on it would otherwise survive verbatim in
+        // the served document (the loop's withheldAny stays false, the document is returned untouched, and the held
+        // name leaks in <latest>/<release>). Screening the named value through the same HIDE_WITHHELD seam catches that
+        // edge independently of whether the version is listed. Only a withheld named value trips this; when nothing is
+        // withheld the stored latest/release are preserved exactly.
+        String latestNamed = element(xml, "latest");
+        String releaseNamed = element(xml, "release");
+        boolean latestWithheld = latestNamed != null && !latestNamed.isEmpty()
+                && !servableNames.disclosableVersionFolder("/maven/" + coordinatePath + "/" + latestNamed);
+        boolean releaseWithheld = releaseNamed != null && !releaseNamed.isEmpty()
+                && !servableNames.disclosableVersionFolder("/maven/" + coordinatePath + "/" + releaseNamed);
+        boolean namedWithheld = latestWithheld || releaseWithheld;
+        boolean versionsChanged = !union.equals(new LinkedHashSet<>(listed));
+        if (!versionsChanged && !namedWithheld) {
+            // Nothing to add, nothing withheld to drop, and the named latest/release are both servable - preserve the
+            // publisher's document byte-for-byte.
             return storedXml;
         }
         List<String> reconciled = new ArrayList<>(union);
         reconciled.sort(MavenMetadata::compareVersions);
-        String baseIndent = indentBefore(xml, open);
-        StringBuilder rebuilt = new StringBuilder(xml.length() + reconciled.size() * 32);
-        rebuilt.append(xml, 0, open).append("<versions>");
-        for (String version : reconciled) {
-            // Escape the version text exactly as the StAX derivation path does (element() -> writeCharacters): a version
-            // is a published folder name off store.list, so it is attacker-controlled and may legitimately carry an
-            // ampersand (a valid path/filename char) or an angle bracket. Appended raw it would emit malformed XML - a
-            // bare '&' breaks every fetching client's metadata parse (a self-inflicted index DoS) - or inject markup.
-            rebuilt.append('\n').append(baseIndent).append("  <version>").append(xmlText(version))
-                    .append("</version>");
+        String reconciledXml;
+        if (versionsChanged) {
+            String baseIndent = indentBefore(xml, open);
+            StringBuilder rebuilt = new StringBuilder(xml.length() + reconciled.size() * 32);
+            rebuilt.append(xml, 0, open).append("<versions>");
+            for (String version : reconciled) {
+                // Escape the version text exactly as the StAX derivation path does (element() -> writeCharacters): a
+                // version is a published folder name off store.list, so it is attacker-controlled and may legitimately
+                // carry an ampersand (a valid path/filename char) or an angle bracket. Appended raw it would emit
+                // malformed XML - a bare '&' breaks every fetching client's metadata parse - or inject markup.
+                rebuilt.append('\n').append(baseIndent).append("  <version>").append(xmlText(version))
+                        .append("</version>");
+            }
+            rebuilt.append('\n').append(baseIndent).append("</versions>");
+            rebuilt.append(xml, selfClosed ? contentStart : contentEnd + "</versions>".length(), xml.length());
+            reconciledXml = rebuilt.toString();
+        } else {
+            // Only the named latest/release is withheld; the <versions> block is unchanged, so leave it byte-for-byte and
+            // rewrite just the offending name element(s) below.
+            reconciledXml = xml;
         }
-        rebuilt.append('\n').append(baseIndent).append("</versions>");
-        rebuilt.append(xml, selfClosed ? contentStart : contentEnd + "</versions>".length(), xml.length());
-        String reconciledXml = rebuilt.toString();
-        if (withheldAny) {
+        if (withheldAny || namedWithheld) {
             // A withheld version's name must never survive in <latest>/<release> (the reconcile's own invariant). The
             // stored document preserves them verbatim, so re-derive both from the SCREENED set exactly as the sibling
             // derivation path metadata() does: latest = newest screened version, release = newest screened
@@ -224,6 +246,23 @@ public final class MavenMetadata {
             return xml.substring(0, lineStart) + xml.substring(end);
         }
         return xml.substring(0, open) + xml.substring(end);
+    }
+
+    /** The raw text of a single-valued {@code <name>...</name>} element, decoded from its character-data escapes to the
+     *  same form a version folder name off {@code store.list} takes (so it screens through the same seam), or null when
+     *  the element is absent or self-closed. Only the first occurrence is read; {@code <latest>}/{@code <release>} are
+     *  single-valued in a well-formed {@code maven-metadata.xml}. */
+    private static String element(String xml, String name) {
+        String openTag = "<" + name + ">";
+        int open = xml.indexOf(openTag);
+        if (open < 0) {
+            return null;
+        }
+        int close = xml.indexOf("</" + name + ">", open + openTag.length());
+        if (close < 0) {
+            return null;
+        }
+        return xmlUnescape(xml.substring(open + openTag.length(), close).trim());
     }
 
     /** Escape a text node for the hand-built reconcile document - the character-data escapes {@code XMLStreamWriter
