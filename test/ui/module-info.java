@@ -7,6 +7,7 @@
  *
  * @jenesis.release 25
  * @jenesis.test build.jenesis.repository.ui
+ * @jenesis.attach org.mockito
  * @jenesis.pin ch.qos.logback/logback-classic 1.5.34 SHA-256/b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
  * @jenesis.pin ch.qos.logback/logback-core 1.5.34 SHA-256/42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
  * @jenesis.pin com.fasterxml.jackson.annotation 2.22
