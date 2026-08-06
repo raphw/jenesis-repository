@@ -115,6 +115,7 @@
  * @jenesis.pin tools.jackson.databind 3.2.0
  */
 open module build.jenesis.repository.test {
+    requires build.jenesis.repository.contract.testkit;
     requires build.jenesis.repository.server;
     requires build.jenesis.repository.server.spi;
     requires build.jenesis.repository.store;

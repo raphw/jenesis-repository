@@ -2,6 +2,9 @@ package build.jenesis.repository.test;
 
 import module java.base;
 import module org.junit.jupiter.api;
+import build.jenesis.repository.contract.testkit.ContractCensus;
+import build.jenesis.repository.contract.testkit.ContractCensus.Exemption;
+import build.jenesis.repository.contract.testkit.ContractCensus.Provider;
 import build.jenesis.repository.format.RepositoryFormat;
 import build.jenesis.repository.format.RepositoryImporter;
 import build.jenesis.repository.store.ArtifactDescriptor;
@@ -19,9 +22,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * version is a traversal-free store segment, and a leading-slash H2 path resolves identically); {@code raw} returns a
  * descriptor for <em>every</em> asset (it is the un-inspected catch-all, so it never declines) and {@code oci} returns
  * {@code Optional.empty()} for {@code importTarget} by design (OCI owns its own manifest screening choke point). The two
- * special shapes are asserted directly; the ratchet then confirms every discovered importer is one of the three.
+ * special shapes are asserted directly; the shared {@link ContractCensus} ratchet then confirms every statically
+ * declared format provider is runtime-visible and has importer coverage or a reason-bearing exemption.
  */
 class ImporterContractTest {
+
+    private static final String JENESIS_FORMAT =
+            "build.jenesis.repository.format.jenesis.JenesisFormat";
 
     record Case(String format, String deepPath, String nonDistributionPath) {
     }
@@ -30,10 +37,15 @@ class ImporterContractTest {
             new Case("maven", "org/example/lib/1.0/lib-1.0.jar", "org/example/lib/maven-metadata.xml"));
 
     private static List<RepositoryImporter> discovered() {
-        return ServiceLoader.load(RepositoryFormat.class).stream()
-                .map(ServiceLoader.Provider::get)
+        return discoveredFormats().stream()
                 .filter(RepositoryImporter.class::isInstance)
                 .map(RepositoryImporter.class::cast)
+                .toList();
+    }
+
+    private static List<RepositoryFormat> discoveredFormats() {
+        return ServiceLoader.load(RepositoryFormat.class).stream()
+                .map(ServiceLoader.Provider::get)
                 .toList();
     }
 
@@ -82,16 +94,32 @@ class ImporterContractTest {
     }
 
     @Test
-    void every_registered_importer_has_a_contract_row() {
-        List<RepositoryImporter> importers = discovered();
-        assertThat(importers).as("the ServiceLoader discovers the free-core importers").isNotEmpty();
-        for (RepositoryImporter importer : importers) {
-            boolean covered = COORDINATE.stream().anyMatch(testCase -> importer.imports(testCase.format()))
-                    || importer.imports("raw") || importer.imports("oci") || importer.imports("docker");
-            assertThat(covered)
-                    .as("the discovered importer " + importer.getClass().getName() + " has contract coverage - add it "
-                            + "to ImporterContractTest so its coordinate derivation is checked")
-                    .isTrue();
+    void every_declared_importer_provider_has_a_contract_row() throws IOException {
+        List<String> fixtures = Stream.concat(
+                        COORDINATE.stream().map(testCase -> importerFor(testCase.format())),
+                        Stream.of(importerFor("raw"), importerFor("oci")))
+                .map(importer -> importer.getClass().getName())
+                .toList();
+        List<Provider> runtime = discoveredFormats().stream()
+                .map(format -> Provider.runtime(format.name(), format))
+                .toList();
+
+        ContractCensus.of(RepositoryImporter.class,
+                ContractCensus.declaredProviders(repositoryRoot().resolve("source"), RepositoryFormat.class),
+                runtime,
+                fixtures,
+                List.of(new Exemption(JENESIS_FORMAT,
+                        "the Jenesis module layout does not implement the migration-import capability")));
+    }
+
+    private static Path repositoryRoot() {
+        Path candidate = Path.of("").toAbsolutePath();
+        while (candidate != null) {
+            if (Files.isDirectory(candidate.resolve("source").resolve("format"))) {
+                return candidate;
+            }
+            candidate = candidate.getParent();
         }
+        throw new IllegalStateException("cannot locate the repository source tree");
     }
 }
